@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  dbguard-pgvector:
+    image: ankane/pgvector:latest
+    container_name: dbguard-pgvector
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: securepassword123
+      POSTGRES_DB: dbguard_rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgvector_data:

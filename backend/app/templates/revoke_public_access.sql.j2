@@ -1,0 +1,2 @@
+-- Hardening Action: Revoke Public Schema Permissions
+REVOKE ALL ON SCHEMA {{ schema_name | default('public') }} FROM PUBLIC;

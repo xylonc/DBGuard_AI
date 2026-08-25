@@ -1,32 +1,33 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from typing import Dict, Any
+from app.services.ai_service import generate_hardening_plan
+from app.services.template_service import compile_sql_plan
 
-app = FastAPI(
-    title="DBGuard AI Backend",
-    description="AI-Assisted Database Hardening Platform API",
-    version="0.1.0"
-)
+app = FastAPI()
 
-# 2. Define a Pydantic model for incoming data
-class HardeningRequest(BaseModel):
+class HardenRequest(BaseModel):
     user_prompt: str
-    database_product: str = "PostgreSQL"
+    metadata_snapshot: Dict[str, Any]
 
-# 3. Create a health-check endpoint (GET request)
 @app.get("/")
-def health_check():
-    return {
-        "status": "online",
-        "service": "DBGuard AI API"
-    }
+def read_root():
+    return {"status": "healthy", "service": "DBGuardAI API"}
 
-# 4. Create a mock hardening endpoint (POST request)
 @app.post("/api/v1/harden")
-def create_hardening_plan(request: HardeningRequest):
-    # This is a mock response until we wire up LiteLLM and RAG
+def create_hardening_plan(request: HardenRequest):
+    ai_decision = generate_hardening_plan(
+        user_prompt=request.user_prompt,
+        metadata=request.metadata_snapshot
+    )
+
+    full_sql_plan = compile_sql_plan(
+        template_ids=ai_decision.get("template_ids", []),
+        variables=ai_decision.get("parameters", {})
+    )
+
     return {
-        "message": "Request received successfully!",
-        "target_db": request.database_product,
-        "received_prompt": request.user_prompt,
-        "status": "Plan generation pending"
+        "status": "Plan generated successfully",
+        "target_db": request.metadata_snapshot.get("engine", "postgresql"),
+        "ai_plan": full_sql_plan
     }

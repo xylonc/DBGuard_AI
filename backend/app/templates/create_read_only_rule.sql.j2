@@ -1,0 +1,6 @@
+-- Purpose: Creates a new user role with read-only permissions on a targeted schema.
+-- Hardening Action: Create Read-Only Auditor Role
+CREATE ROLE {{ role_name }} WITH LOGIN PASSWORD '{{ placeholder_password }}';
+GRANT CONNECT ON DATABASE {{ database_name }} TO {{ role_name }};
+GRANT USAGE ON SCHEMA {{ schema_name | default('public') }} TO {{ role_name }};
+GRANT SELECT ON ALL TABLES IN SCHEMA {{ schema_name | default('public') }} TO {{ role_name }};

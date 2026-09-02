@@ -109,19 +109,24 @@ run_sql() {
     local remediation="${4:-}"
 
     # Run psql with tab-separated unformatted output, no headers, no pager
+    # Capture both stdout and exit code.  The || true prevents set -e from
+    # killing the function; we check the explicit variable for the status.
     local result
+    local rc=0
     result=$(psql -X -t -A -F$'\t' -q -d "$database" \
         --set ON_ERROR_STOP=off \
-        -c "$sql_text" 2>/dev/null)
+        -c "$sql_text" 2>/dev/null) || rc=$?
 
-    if [ $? -eq 0 ]; then
+    if [ "$rc" -eq 0 ] && [ -n "$result" ]; then
         printf '%s' "$result"
         return 0
     else
-        # Query failed — record gap and produce empty stdout
+        # Query failed or produced no output — record gap and produce empty stdout
         if [ -n "$gap_section" ]; then
-            record_gap "$gap_section" "error" \
-                "Query failed" "$remediation"
+            record_gap "$gap_section" \
+                "$( [ "$rc" -ne 0 ] && echo 'error' || echo 'no_results')" \
+                "$( [ "$rc" -ne 0 ] && echo 'Query failed with exit code' "$rc" || echo 'Query returned no rows')" \
+                "$remediation"
         fi
         # stdout is empty — caller writes []
         return 1

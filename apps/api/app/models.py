@@ -293,3 +293,66 @@ class ReviewPackage(BaseModel):
     disclaimer: str = Field(
         default="DBGuard does not modify production. Approved changes require human review."
     )
+
+
+# ─── RAG / Knowledge ─────────────────────────────────────────────────
+
+class DocumentMetadata(BaseModel):
+    """Metadata for a document in the RAG knowledge base."""
+    document_id: str
+    title: str
+    version: str
+    status: str  # active, superseded, archived
+    effective_date: datetime
+    expiry_date: Optional[datetime] = None
+    postgresql_versions: List[str] = Field(default_factory=lambda: ["15", "16", "17"])
+    environment_applicability: List[str] = Field(default_factory=lambda: ["all"])
+    policy_owner: str = ""
+    classification: str = "internal"  # public, internal, confidential, licensed
+    source_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class KnowledgeChunk(BaseModel):
+    """A chunk of a knowledge document for embedding and retrieval."""
+    document_id: str
+    section: str
+    content: str
+    chunk_hash: str  # SHA-256 of content
+    chunk_index: int
+    postgresql_versions: List[str] = Field(default_factory=lambda: ["15", "16", "17"])
+    environment_applicability: List[str] = Field(default_factory=lambda: ["all"])
+    source_document_title: str = ""
+    source_document_version: str = ""
+
+
+class RetrievalResult(BaseModel):
+    """A result from a RAG knowledge search."""
+    chunk_id: str
+    document_id: str
+    section: str
+    content: str
+    chunk_hash: str
+    postgresql_versions: List[str]
+    environment_applicability: List[str]
+    source_document_title: str
+    source_document_version: str
+    similarity_score: float
+    retrieval_timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class KnowledgePackManifest(BaseModel):
+    """Manifest for a knowledge pack to be ingested."""
+    pack_name: str
+    pack_version: str
+    effective_date: datetime
+    expiry_date: Optional[datetime] = None
+    documents: List[Dict[str, Any]] = Field(default_factory=list)
+    classification: str = "internal"
+
+
+class KnowledgeStatus(str, Enum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    ARCHIVED = "archived"

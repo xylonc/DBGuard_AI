@@ -1,28 +1,19 @@
 #!/usr/bin/env bash
 # DBGuardAI — Shared library: logging, gap recording, JSON helpers
 #
-# OUTPUT CONTRACT (fix for previous empty-section bug):
+# OUTPUT CONTRACT:
 #   run_sql() writes query results to STDOUT.  The caller (dbguard-collect.sh)
 #   captures stdout with a command-substitution variable and writes it to the
 #   section JSON file.
 #   If the query fails, run_sql writes an empty string to stdout and returns
 #   non-zero; collect_section then records a gap.
 #
-# Portability note (2026-09-01):
-#   This library uses POSIX sh constructs plus common GNU utils.
-#   The collector body itself only invokes psql.  Bundling helpers
-#   (bundle.sh) invoke sha256sum for integrity checks.
-#   Uses egrep (POSIX) instead of grep -E (GNU-specific on some systems).
-#   The claim "psql and POSIX sh/bash only" is maintained for the collector
-#   body; lib helpers that invoke sha256sum/stat are for bundling only.
+# DESIGN: This file defines functions and nothing else.  No guards, no
+#   side effects at source time.  The caller must invoke init_runtime()
+#   after setting COLLECTOR_LOG, GAPS_FILE, REDACTIONS_FILE.
 
 # ---- Logging ---------------------------------------------------------------
 # All log lines go to the log file.  Errors also go to stderr.
-
-if [ -z "${COLLECTOR_LOG:-}" ]; then
-    echo "FATAL: COLLECTOR_LOG not set. Source this file from dbguard-collect.sh." >&2
-    exit 1
-fi
 
 log_info() {
     local msg="$*"
@@ -41,13 +32,28 @@ log_error() {
     printf '[ERROR] %s\n' "$msg" >&2
 }
 
+# ---- Runtime initialisation ───────────────────────────────────────────────
+# Called by dbguard-collect.sh after it has set the file-path variables.
+# Exits 1 if paths are missing so the caller fails early with a clear message.
+
+init_runtime() {
+    if [ -z "${COLLECTOR_LOG:-}" ]; then
+        echo "FATAL: COLLECTOR_LOG not set. Call init_runtime() after setting COLLECTOR_LOG." >&2
+        return 1
+    fi
+    if [ -z "${GAPS_FILE:-}" ]; then
+        echo "FATAL: GAPS_FILE not set. Call init_runtime() after setting GAPS_FILE." >&2
+        return 1
+    fi
+    if [ -z "${REDACTIONS_FILE:-}" ]; then
+        echo "FATAL: REDACTIONS_FILE not set. Call init_runtime() after setting REDACTIONS_FILE." >&2
+        return 1
+    fi
+    return 0
+}
+
 # ---- Gap recording ---------------------------------------------------------
 # Records a JSON gap entry.  Called when a query cannot produce data.
-
-if [ -z "${GAPS_FILE:-}" ]; then
-    echo "FATAL: GAPS_FILE not set." >&2
-    exit 1
-fi
 
 record_gap() {
     local section="$1"
@@ -64,11 +70,6 @@ record_gap() {
 }
 
 # ---- Redaction tracking ----------------------------------------------------
-
-if [ -z "${REDACTIONS_FILE:-}" ]; then
-    echo "FATAL: REDACTIONS_FILE not set." >&2
-    exit 1
-fi
 
 record_redaction() {
     local section="$1"
@@ -87,7 +88,7 @@ record_redaction() {
 
 # Escape a string for embedding inside a JSON string value.
 json_escape() {
-    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g'
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e $'s/\t/\\t/g'
 }
 
 # ---- SQL execution ---------------------------------------------------------
@@ -102,6 +103,7 @@ json_escape() {
 # Returns:
 #   0 — success; stdout contains tab-separated psql rows.
 #   1 — failure; stdout is empty; gap recorded.
+
 run_sql() {
     local database="$1"
     local sql_text="$2"
@@ -109,26 +111,41 @@ run_sql() {
     local remediation="${4:-}"
 
     # Run psql with tab-separated unformatted output, no headers, no pager
-    # Capture both stdout and exit code.  The || true prevents set -e from
-    # killing the function; we check the explicit variable for the status.
+    # ON_ERROR_STOP=on: psql returns non-zero on any SQL error.
+    # We capture stderr into a temp so we can report it in the gap.
+    local stderr_file
+    stderr_file="$(mktemp)"
     local result
     local rc=0
-    result=$(psql -X -t -A -F$'\t' -q -d "$database" \
-        --set ON_ERROR_STOP=off \
-        -c "$sql_text" 2>/dev/null) || rc=$?
 
-    if [ "$rc" -eq 0 ] && [ -n "$result" ]; then
+    result=$(psql -X -t -A -F$'\t' -q -d "$database" \
+        --set ON_ERROR_STOP=on \
+        -c "$sql_text" 2>"$stderr_file") || rc=$?
+
+    if [ "$rc" -ne 0 ]; then
+        # Query failed — capture stderr into the gap description
+        local err_text
+        err_text="$(tr '\n' ' ' < "$stderr_file" | sed 's/  */ /g; s/^ *//; s/ *$//')"
+        if [ -n "$gap_section" ]; then
+            record_gap "$gap_section" \
+                "error" \
+                "psql exit code $rc: ${err_text:-unknown error}" \
+                "$remediation"
+        fi
+        rm -f "$stderr_file"
+        return 1
+    fi
+
+    rm -f "$stderr_file"
+
+    if [ -n "$result" ]; then
+        # Query succeeded and returned rows
         printf '%s' "$result"
         return 0
     else
-        # Query failed or produced no output — record gap and produce empty stdout
-        if [ -n "$gap_section" ]; then
-            record_gap "$gap_section" \
-                "$( [ "$rc" -ne 0 ] && echo 'error' || echo 'no_results')" \
-                "$( [ "$rc" -ne 0 ] && echo 'Query failed with exit code' "$rc" || echo 'Query returned no rows')" \
-                "$remediation"
-        fi
-        # stdout is empty — caller writes []
-        return 1
+        # Query succeeded but returned zero rows — not an error
+        # Caller decides whether to treat zero rows as a gap.
+        # For this collector we return success with empty output.
+        return 0
     fi
 }

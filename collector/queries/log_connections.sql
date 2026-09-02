@@ -9,7 +9,7 @@ SELECT jsonb_build_object(
     'sourcefile',       s.sourcefile,
     'sourceline',       s.sourceline,
     'context',          s.context,
-    'pending_restart'   s.pending_restart
+    'pending_restart',  s.pending_restart
 )
 FROM pg_settings s
 WHERE s.name = 'log_connections';

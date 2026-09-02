@@ -3,10 +3,11 @@
 #
 # Must be sourced by dbguard-collect.sh.  Provides _create_bundle().
 #
-# FIXES vs previous submission:
-#   - Removed: find with exec-each-file (executed every collected file as a program)
-#   - Do NOT delete BUNDLE_DIR — it contains files we are packaging
-#   - gaps/redactions are NOT shipped in the tarball
+# ENVELOPE SHAPE:
+#   The on-disk JSON is a single object matching manifest.py's Envelope model.
+#   It contains schema_version, collector_version, collected_at, target_id,
+#   server_version_full, server_version_num, current_user, status,
+#   gaps (JSON array), redactions (JSON array), and has_gap (bool).
 
 # ---------------------------------------------------------------------------
 # _create_bundle: write envelope.json, SHA256SUMS, and .tar.gz
@@ -16,41 +17,45 @@
 # ---------------------------------------------------------------------------
 _create_bundle() {
     local status="$1"
-    local bundle_file="${BUNDLE_DIR}.tar.gz"
 
     # ---- Build gaps/redactions as JSON arrays ------------------------------
     _gaps_json="[]"
     if [ -s "$GAPS_FILE" ]; then
-        _gaps_json="[$(cat "$GAPS_FILE" | tr '\n' ',' | sed 's/,$//')]"
+        _gaps_json="[$(tr '\n' ',' < "$GAPS_FILE" | sed 's/,$//')]"
     fi
 
     _redactions_json="[]"
     if [ -s "$REDACTIONS_FILE" ]; then
-        _redactions_json="[$(cat "$REDACTIONS_FILE" | tr '\n' ',' | sed 's/,$//')]"
+        _redactions_json="[$(tr '\n' ',' < "$REDACTIONS_FILE" | sed 's/,$//')]"
     fi
 
-    # ---- envelope.json -----------------------------------------------------
+    # ---- Determine has_gap ────────────────────────────────────────────────
+    if [ -s "$GAPS_FILE" ]; then
+        _has_gap="true"
+    else
+        _has_gap="false"
+    fi
+
+    # ---- envelope.json (single object, matches Envelope model) ────────────
     cat > "$BUNDLE_DIR/envelope.json" <<_EOF
 {
-  "envelope": {
-    "schema_version": "0.2.0",
-    "collector_version": "${COLLECTOR_VERSION}",
-    "collected_at": "${COLLECTED_AT}",
-    "target_id": "${TARGET_ID}",
-    "server_version_full": "${SERVER_VERSION_FULL}",
-    "server_version_num": ${SERVER_VERSION_NUM:-null},
-    "current_user": "${CURRENT_USER:-null}",
-    "status": "${status}"
-  },
+  "schema_version": "${SCHEMA_VERSION}",
+  "collector_version": "${COLLECTOR_VERSION}",
+  "collected_at": "${COLLECTED_AT}",
+  "target_id": "${TARGET_ID}",
+  "server_version_full": "${SERVER_VERSION_FULL}",
+  "server_version_num": ${SERVER_VERSION_NUM:-null},
+  "current_user": ${CURRENT_USER:-null},
+  "status": "${status}",
   "gaps": ${_gaps_json},
-  "redactions": ${_redactions_json}
+  "redactions": ${_redactions_json},
+  "has_gap": ${_has_gap}
 }
 _EOF
 
     log_info "envelope.json written."
 
     # ---- SHA256SUMS --------------------------------------------------------
-    # Hash all .json files in sections/ and all files in raw/
     : > "$BUNDLE_DIR/SHA256SUMS"
 
     (
@@ -66,11 +71,10 @@ _EOF
     fi
 
     # ---- Tarball -----------------------------------------------------------
-    # Do NOT delete BUNDLE_DIR — it contains the files we are packaging.
     (
         cd "$(dirname "$BUNDLE_DIR")"
-        tar czf "$(basename "$bundle_file")" "$(basename "$BUNDLE_DIR")"
+        tar czf "$(basename "${BUNDLE_DIR}.tar.gz")" "$(basename "$BUNDLE_DIR")"
     )
 
-    log_info "Bundle written to: $bundle_file"
+    log_info "Bundle written to: ${BUNDLE_DIR}.tar.gz"
 }

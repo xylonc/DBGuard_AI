@@ -81,9 +81,9 @@ probe_target() {
     if [ "$DEPLOYMENT_TYPE" = "self-managed" ]; then
         local _managed_settings
         _managed_settings=$(psql -X -A -t -q -d "$PGDATABASE" \
-            -c "SELECT name FROM pg_settings WHERE name LIKE 'rds.%%'
-                 OR name LIKE 'cloudsql.%%'
-                 OR name LIKE 'azure.%%'
+            -c "SELECT name FROM pg_settings WHERE name LIKE 'rds.%'
+                 OR name LIKE 'cloudsql.%'
+                 OR name LIKE 'azure.%'
              LIMIT 1;" 2>/dev/null)
         if [ -n "$_managed_settings" ]; then
             DEPLOYMENT_TYPE="managed"

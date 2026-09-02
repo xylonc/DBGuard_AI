@@ -6,7 +6,7 @@
 # ║  Implements CIS 5.1, 5.2, 5.3 only.                             ║
 # ║                                                                   ║
 # ║  No Python, no jq. Uses psql + POSIX sh/bash + GNU coreutils    ║
-# ║  (sha256sum, stat, egrep).                                       ║
+# ║  (sha256sum, stat, grep -E).                                     ║
 # ║  Never handles credentials. Hashes never leave the SECURITY      ║
 # ║   DEFINER function.                                              ║
 # ╚══════════════════════════════════════════════════════════════════╝
@@ -28,7 +28,7 @@ PGUSER="${PGUSER:-}"
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Libraries declare functions only — no side effects at source time
+# Libraries define functions only — no side effects at source time
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/probe.sh"
 source "$SCRIPT_DIR/lib/bundle.sh"
@@ -69,8 +69,32 @@ fi
 COLLECTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # ---------------------------------------------------------------------------
+# Create output directory (not yet — probe must run first)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Phase 1: Preflight (before any directory creation)
 # ---------------------------------------------------------------------------
+# Set the file-path variables BEFORE any log_info call so that
+# init_runtime() can validate them and log_info() can write to them.
+COLLECTOR_LOG="$BUNDLE_DIR/collector.log"
+GAPS_FILE="$BUNDLE_DIR/gaps.tmp"
+REDACTIONS_FILE="$BUNDLE_DIR/redactions.tmp"
+
+# Create directories now that paths are set (probe may need log_info)
+mkdir -p "$BUNDLE_DIR/sections" "$BUNDLE_DIR/raw"
+
+# Verify that runtime paths are valid
+init_runtime || {
+    _local_exit=$?
+    echo "FATAL: init_runtime() failed with exit code $_local_exit." >&2
+    # Clean up any temp directory created by mktemp
+    if [ -n "$TMP_CLEANUP_DIR" ] && [ -d "$TMP_CLEANUP_DIR" ]; then
+        rm -rf "$TMP_CLEANUP_DIR"
+    fi
+    exit $_local_exit
+}
+
 log_info "=== DBGuardAI Collector $COLLECTOR_VERSION ==="
 log_info "Target: $TARGET_ID | DB: $PGDATABASE"
 
@@ -87,20 +111,6 @@ probe_target || {
 
 log_info "Output directory: $BUNDLE_DIR"
 log_info "Server: $SERVER_VERSION_FULL ($SERVER_VERSION_NUM)"
-
-# ---------------------------------------------------------------------------
-# Create output directory (only after probe passes)
-# ---------------------------------------------------------------------------
-mkdir -p "$BUNDLE_DIR/sections" "$BUNDLE_DIR/raw"
-
-# Initialize tracking files
-: > "$BUNDLE_DIR/collector.log"
-: > "$BUNDLE_DIR/gaps.tmp"
-: > "$BUNDLE_DIR/redactions.tmp"
-
-COLLECTOR_LOG="$BUNDLE_DIR/collector.log"
-GAPS_FILE="$BUNDLE_DIR/gaps.tmp"
-REDACTIONS_FILE="$BUNDLE_DIR/redactions.tmp"
 
 # ---------------------------------------------------------------------------
 # Phase 2: Collect three CIS controls
@@ -121,43 +131,42 @@ collect_section() {
         record_gap "$gap_key" "file_not_readable" \
             "Query file not found: $sql_file" ""
         printf '[]' > "$output_file"
-        return 1
+        return 0
     fi
 
-    # Read SQL and replace version-gated placeholders
+    # Read SQL text
     local sql_text
-    sql_text=$(sed \
-        -e "s|{{SERVER_MAJOR}}|$SERVER_MAJOR|g" \
-        -e "s|{{CAN_SELECT_AUTHID}}|$CAN_SELECT_AUTHID|g" \
-        "$sql_file")
+    sql_text="$(cat "$sql_file")"
 
     # Run SQL — output flows via stdout (see common.sh contract)
     local result
-    if result=$(run_sql "$PGDATABASE" "$sql_text" "$gap_key" "$remediation" 2>/dev/null); then
+    if result="$(run_sql "$PGDATABASE" "$sql_text" "$gap_key" "$remediation" 2>/dev/null)"; then
         if [ -n "$result" ]; then
             printf '%s' "$result" > "$output_file"
         else
+            # Zero rows is not an error — write empty array
             printf '[]' > "$output_file"
         fi
     else
-        # run_sql already recorded the gap; write empty
+        # run_sql already recorded the gap with reason: error
         printf '[]' > "$output_file"
     fi
+    return 0
 }
 
-# ── CIS 5.1: log_connections ──────────────────────────────────────────
-log_info "--- CIS 5.1: log_connections ---"
+# ── CIS 5.1: log_connections ────────────────────────────────────────────
+log_info "--- CIS PostgreSQL 1.8: log_connections ---"
 collect_section "log_connections" \
     "$SCRIPT_DIR/queries/log_connections.sql" \
     "cis.5.1" \
     "GRANT pg_read_all_settings TO dbguard_collector"
 
-# ── CIS 5.2: CREATE on public not granted to PUBLIC ──────────────────
-log_info "--- CIS 5.2: public schema ACL ---"
+# ── CIS 5.2: CREATE on public not granted to PUBLIC ────────────────────
+log_info "--- CIS PostgreSQL 1.9: public schema ACL ---"
 
 # Get list of connectable databases
-DBLIST=$(psql -X -A -t -q -d "$PGDATABASE" \
-    -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname;" 2>/dev/null || echo "")
+DBLIST="$(psql -X -A -t -q -d "$PGDATABASE" \
+    -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname;" 2>/dev/null || echo "")"
 
 if [ -n "$DBLIST" ]; then
     # Collect ACL for each database, then combine into a JSON array
@@ -169,9 +178,9 @@ if [ -n "$DBLIST" ]; then
             continue
         fi
 
-        local_result=$(run_sql "$dbname" \
+        local_result="$(run_sql "$dbname" \
             "$(cat "$SCRIPT_DIR/queries/public_schema_acl.sql")" \
-            "cis.5.2.$dbname" "" 2>/dev/null) || local_result=""
+            "cis.5.2.$dbname" "" 2>/dev/null)" || true
 
         if [ -n "$local_result" ]; then
             # Prepend database name (query doesn't include it — current_database() does)
@@ -204,12 +213,23 @@ else
     printf '[]' > "$BUNDLE_DIR/sections/public_schema_acl.json"
 fi
 
-# ── CIS 5.3: No role uses md5 password storage ───────────────────────
-log_info "--- CIS 5.3: Password storage ---"
+# ── CIS 5.3: No role uses md5 password storage ─────────────────────────
+log_info "--- CIS PostgreSQL 1.10: Password storage ---"
 collect_section "password_storage" \
     "$SCRIPT_DIR/queries/roles_password_type.sql" \
     "cis.5.3" \
     "GRANT EXECUTE ON FUNCTION dbguard_password_types() TO dbguard_collector"
+
+# Record redaction for password_storage: the function returns type,
+# never the hash — explicitly record this S0 redaction.
+if [ -f "$BUNDLE_DIR/sections/password_storage.json" ]; then
+    # Check if any passwords were actually withheld (always true with this function)
+    record_redaction "password_storage" \
+        "pg_authid.rolpassword" \
+        "S0_NEVER_COLLECTED" \
+        "All role password hashes read via SECURITY DEFINER function; " \
+        "the raw hash is never emitted"
+fi
 
 # ---------------------------------------------------------------------------
 # Phase 3: Bundle
@@ -228,7 +248,7 @@ fi
 # Print summary
 log_info "=== Summary ==="
 if [ -s "$GAPS_FILE" ]; then
-    _gap_count=$(wc -l < "$GAPS_FILE" | tr -d ' ')
+    _gap_count="$(wc -l < "$GAPS_FILE" | tr -d ' ')"
     log_info "Collection completed with $_gap_count gap(s)."
 else
     log_info "Collection completed with no gaps."

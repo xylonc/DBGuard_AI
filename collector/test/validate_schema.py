@@ -46,10 +46,6 @@ def validate_section_json(bundle_dir: Path, section_name: str, field_name: str,
             f"{data}"
         )
 
-    if isinstance(data, list) and field_name == "log_connections" and len(data) == 1:
-        # log_connections returns a single object or []
-        pass
-
     return errors
 
 
@@ -80,23 +76,34 @@ def main():
         print(f"FATAL: envelope.json is not valid JSON: {exc}")
         sys.exit(1)
 
+    # The envelope may be flat (new shape) or nested { "envelope": { ... } }
+    env_obj = envelope_data.get("envelope", envelope_data)
+
     # Check envelope model
     try:
-        env = Envelope.model_validate(envelope_data.get("envelope", envelope_data))
+        env = Envelope.model_validate(env_obj)
         print(f"Envelope: VALID")
         print(f"  schema_version  = {env.schema_version}")
         print(f"  collector_version = {env.collector_version}")
         print(f"  status          = {env.status}")
         print(f"  gaps            = {len(env.gaps)}")
         print(f"  redactions      = {len(env.redactions)}")
+
+        # Assert has_gap is consistent with gaps content
+        expected_has_gap = len(env.gaps) > 0
+        if env.has_gap != expected_has_gap:
+            errors.append(
+                f"has_gap={env.has_gap} but gaps count={len(env.gaps)} "
+                f"(expected {expected_has_gap})"
+            )
     except Exception as exc:
         errors.append(f"Envelope validation failed: {exc}")
 
     # ── Sections ─────────────────────────────────────────────────────────
     sections_to_check = [
-        ("log_connections", "CIS 5.1 log_connections setting"),
-        ("public_schema_acl", "CIS 5.2 public schema ACL"),
-        ("password_storage", "CIS 5.3 password storage"),
+        ("log_connections", "log_connections setting"),
+        ("public_schema_acl", "public schema ACL"),
+        ("password_storage", "password storage"),
     ]
 
     for section_name, description in sections_to_check:
@@ -124,6 +131,14 @@ def main():
             errors.append("SHA256SUMS is empty")
     else:
         errors.append("SHA256SUMS not found")
+
+    # ── Redaction assertions ──────────────────────────────────────────────
+    if env_obj.get("redactions"):
+        print(f"Redactions recorded: {len(env_obj['redactions'])}")
+        for r in env_obj["redactions"]:
+            print(f"  - {r.get('section')}/{r.get('file')}: {r.get('class')}")
+    else:
+        print("Redactions: none recorded")
 
     # ── Summary ───────────────────────────────────────────────────────────
     print()

@@ -1,258 +1,98 @@
 #!/usr/bin/env bash
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║  DBGuardAI SQL Collector v1.0.0 (three-CIS-control)             ║
-# ║  ────────────────────────────────────────────────────────────── ║
-# ║  Read-only PostgreSQL security posture snapshot.                ║
-# ║  Implements CIS 5.1, 5.2, 5.3 only.                             ║
-# ║                                                                   ║
-# ║  No Python, no jq. Uses psql + POSIX sh/bash + GNU coreutils    ║
-# ║  (sha256sum, stat, grep -E).                                     ║
-# ║  Never handles credentials. Hashes never leave the SECURITY      ║
-# ║   DEFINER function.                                              ║
-# ╚══════════════════════════════════════════════════════════════════╝
+# DBGuardAI collector — wrapper around collect.sql
+#
+# Usage:
+#   ./dbguard-collect.sh                       # writes ./dbguard-<target>-<ts>.json
+#   ./dbguard-collect.sh -o bundle.json
+#   ./dbguard-collect.sh -t prod-db-01 -d mydb -o bundle.json
+#
+# Connection uses standard libpq environment: PGHOST, PGPORT, PGUSER,
+# PGDATABASE, PGPASSFILE, PGSERVICE. This script never handles a password.
+#
+# Exit codes:
+#   0   bundle written
+#   20  managed platform (RDS / Cloud SQL / Azure) — nothing written
+#   30  could not connect, or psql missing
+#   1   other failure — nothing written
+
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Configuration — override via environment
-# ---------------------------------------------------------------------------
-readonly COLLECTOR_VERSION="1.0.0"
-readonly SCHEMA_VERSION="0.2.0"
-
-TARGET_ID="${TARGET_ID:-unknown}"
-OUTPUT_DIR="${OUTPUT_DIR:-}"
-PGDATABASE="${PGDATABASE:-postgres}"
-PGUSER="${PGUSER:-}"
-
-# ---------------------------------------------------------------------------
-# Derive script directory and source libraries
-# ---------------------------------------------------------------------------
+TARGET_ID="${TARGET_ID:-$(hostname -s 2>/dev/null || echo unknown)}"
+OUTFILE=""
+DB="${PGDATABASE:-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SQL_FILE="$SCRIPT_DIR/collect.sql"
 
-# Libraries define functions only — no side effects at source time
-source "$SCRIPT_DIR/lib/common.sh"
-source "$SCRIPT_DIR/lib/probe.sh"
-source "$SCRIPT_DIR/lib/bundle.sh"
-
-# ---------------------------------------------------------------------------
-# Parse arguments
-# ---------------------------------------------------------------------------
-for arg in "$@"; do
-    case "$arg" in
-        --output=*) OUTPUT_DIR="${arg#--output=}" ;;
-        --target=*) TARGET_ID="${arg#--target=}" ;;
-        --help)
-            echo "Usage: $0 [--output=DIR] [--target=ID]"
-            echo ""
-            echo "Environment variables:"
-            echo "  TARGET_ID   Opaque identifier (default: unknown)"
-            echo "  PGDATABASE  Database to connect to (default: postgres)"
-            echo "  PGUSER      PostgreSQL user (default: current OS user)"
-            echo ""
-            echo "Uses standard libpq authentication."
-            exit 0
-            ;;
+while getopts ":o:t:d:h" opt; do
+    case "$opt" in
+        o) OUTFILE="$OPTARG" ;;
+        t) TARGET_ID="$OPTARG" ;;
+        d) DB="$OPTARG" ;;
+        h) sed -n '2,20p' "$0"; exit 0 ;;
+        *) echo "Unknown option. Use -h." >&2; exit 1 ;;
     esac
 done
 
-# ---------------------------------------------------------------------------
-# Setup output directory path (not yet created)
-# ---------------------------------------------------------------------------
-TIMESTAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
-if [ -n "$OUTPUT_DIR" ]; then
-    BUNDLE_DIR="${OUTPUT_DIR}/dbguard-${TARGET_ID}-${TIMESTAMP}"
-    TMP_CLEANUP_DIR=""
-else
-    TMP_CLEANUP_DIR="$(mktemp -d "/tmp/dbguard-${TARGET_ID}-${TIMESTAMP}.XXXXXXXXXX")"
-    BUNDLE_DIR="$TMP_CLEANUP_DIR"
+command -v psql >/dev/null 2>&1 || { echo "ERROR: psql not found in PATH." >&2; exit 30; }
+[ -f "$SQL_FILE" ] || { echo "ERROR: collect.sql not found beside this script." >&2; exit 1; }
+
+if [ -z "$OUTFILE" ]; then
+    OUTFILE="dbguard-${TARGET_ID}-$(date -u '+%Y%m%dT%H%M%SZ').json"
 fi
 
-COLLECTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-
-# ---------------------------------------------------------------------------
-# Create output directory (not yet — probe must run first)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Phase 1: Preflight (before any directory creation)
-# ---------------------------------------------------------------------------
-# Set the file-path variables BEFORE any log_info call so that
-# init_runtime() can validate them and log_info() can write to them.
-COLLECTOR_LOG="$BUNDLE_DIR/collector.log"
-GAPS_FILE="$BUNDLE_DIR/gaps.tmp"
-REDACTIONS_FILE="$BUNDLE_DIR/redactions.tmp"
-
-# Create directories now that paths are set (probe may need log_info)
-mkdir -p "$BUNDLE_DIR/sections" "$BUNDLE_DIR/raw"
-
-# Verify that runtime paths are valid
-init_runtime || {
-    _local_exit=$?
-    echo "FATAL: init_runtime() failed with exit code $_local_exit." >&2
-    # Clean up any temp directory created by mktemp
-    if [ -n "$TMP_CLEANUP_DIR" ] && [ -d "$TMP_CLEANUP_DIR" ]; then
-        rm -rf "$TMP_CLEANUP_DIR"
-    fi
-    exit $_local_exit
-}
-
-log_info "=== DBGuardAI Collector $COLLECTOR_VERSION ==="
-log_info "Target: $TARGET_ID | DB: $PGDATABASE"
-
-# Invoke probe function (NOT sourced-at-time)
-probe_target || {
-    _local_exit=$?
-    log_error "Preflight failed with exit code $_local_exit."
-    # Clean up any temp directory created by mktemp
-    if [ -n "$TMP_CLEANUP_DIR" ] && [ -d "$TMP_CLEANUP_DIR" ]; then
-        rm -rf "$TMP_CLEANUP_DIR"
-    fi
-    exit $_local_exit
-}
-
-log_info "Output directory: $BUNDLE_DIR"
-log_info "Server: $SERVER_VERSION_FULL ($SERVER_VERSION_NUM)"
-
-# ---------------------------------------------------------------------------
-# Phase 2: Collect three CIS controls
-# ---------------------------------------------------------------------------
-
-collect_section() {
-    # Collects a SQL query and writes its stdout to sections/<name>.json.
-    # Usage: collect_section <section_name> <sql_file> <gap_key> [remediation]
-    local section_name="$1"
-    local sql_file="$2"
-    local gap_key="${3:-}"
-    local remediation="${4:-}"
-    local output_file="$BUNDLE_DIR/sections/${section_name}.json"
-
-    log_info "Collecting: $section_name"
-
-    if [ ! -f "$sql_file" ]; then
-        record_gap "$gap_key" "file_not_readable" \
-            "Query file not found: $sql_file" ""
-        printf '[]' > "$output_file"
-        return 0
-    fi
-
-    # Read SQL text
-    local sql_text
-    sql_text="$(cat "$sql_file")"
-
-    # Run SQL — output flows via stdout (see common.sh contract)
-    local result
-    if result="$(run_sql "$PGDATABASE" "$sql_text" "$gap_key" "$remediation" 2>/dev/null)"; then
-        if [ -n "$result" ]; then
-            printf '%s' "$result" > "$output_file"
-        else
-            # Zero rows is not an error — write empty array
-            printf '[]' > "$output_file"
-        fi
-    else
-        # run_sql already recorded the gap with reason: error
-        printf '[]' > "$output_file"
-    fi
-    return 0
-}
-
-# ── CIS 5.1: log_connections ────────────────────────────────────────────
-log_info "--- CIS PostgreSQL 1.8: log_connections ---"
-collect_section "log_connections" \
-    "$SCRIPT_DIR/queries/log_connections.sql" \
-    "cis.5.1" \
-    "GRANT pg_read_all_settings TO dbguard_collector"
-
-# ── CIS 5.2: CREATE on public not granted to PUBLIC ────────────────────
-log_info "--- CIS PostgreSQL 1.9: public schema ACL ---"
-
-# Get list of connectable databases
-DBLIST="$(psql -X -A -t -q -d "$PGDATABASE" \
-    -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname;" 2>/dev/null || echo "")"
-
-if [ -n "$DBLIST" ]; then
-    # Collect ACL for each database, then combine into a JSON array
-    : > "$BUNDLE_DIR/raw/acl_entries.tmp"
-    for dbname in $DBLIST; do
-        if ! psql -X -t -A -q -d "$dbname" -c "SELECT 1;" >/dev/null 2>&1; then
-            record_gap "cis.5.2" "insufficient_privilege" \
-                "Cannot connect to database $dbname" ""
-            continue
-        fi
-
-        local_result="$(run_sql "$dbname" \
-            "$(cat "$SCRIPT_DIR/queries/public_schema_acl.sql")" \
-            "cis.5.2.$dbname" "" 2>/dev/null)" || true
-
-        if [ -n "$local_result" ]; then
-            # Prepend database name (query doesn't include it — current_database() does)
-            printf '%s\n' "$local_result" >> "$BUNDLE_DIR/raw/acl_entries.tmp"
-        else
-            record_gap "cis.5.2.$dbname" "error" \
-                "Failed to query public schema ACL" ""
-        fi
-    done
-
-    # Combine entries into a JSON array
-    if [ -s "$BUNDLE_DIR/raw/acl_entries.tmp" ]; then
-        # Each line is a JSON object; wrap in array
-        printf '[' > "$BUNDLE_DIR/sections/public_schema_acl.json"
-        first=true
-        while IFS= read -r line; do
-            if [ "$first" = true ]; then
-                first=false
-            else
-                printf ',' >> "$BUNDLE_DIR/sections/public_schema_acl.json"
-            fi
-            printf '%s' "$line" >> "$BUNDLE_DIR/sections/public_schema_acl.json"
-        done < "$BUNDLE_DIR/raw/acl_entries.tmp"
-        printf ']' >> "$BUNDLE_DIR/sections/public_schema_acl.json"
-    else
-        printf '[]' > "$BUNDLE_DIR/sections/public_schema_acl.json"
-    fi
-    rm -f "$BUNDLE_DIR/raw/acl_entries.tmp"
-else
-    printf '[]' > "$BUNDLE_DIR/sections/public_schema_acl.json"
+# Fail before doing anything if we cannot connect.
+if ! psql -X -q -A -t -d "$DB" -c 'SELECT 1' >/dev/null 2>&1; then
+    echo "ERROR: cannot connect to database '$DB'. Check PGHOST/PGPORT/PGUSER/PGPASSFILE." >&2
+    exit 30
 fi
 
-# ── CIS 5.3: No role uses md5 password storage ─────────────────────────
-log_info "--- CIS PostgreSQL 1.10: Password storage ---"
-collect_section "password_storage" \
-    "$SCRIPT_DIR/queries/roles_password_type.sql" \
-    "cis.5.3" \
-    "GRANT EXECUTE ON FUNCTION dbguard_password_types() TO dbguard_collector"
+TMP="$(mktemp "${TMPDIR:-/tmp}/dbguard.XXXXXXXX")"
+ERR="$(mktemp "${TMPDIR:-/tmp}/dbguard-err.XXXXXXXX")"
+cleanup() { rm -f "$TMP" "$ERR"; }
+trap cleanup EXIT
 
-# Record redaction for password_storage: the function returns type,
-# never the hash — explicitly record this S0 redaction.
-if [ -f "$BUNDLE_DIR/sections/password_storage.json" ]; then
-    # Check if any passwords were actually withheld (always true with this function)
-    record_redaction "password_storage" \
-        "pg_authid.rolpassword" \
-        "S0_NEVER_COLLECTED" \
-        "All role password hashes read via SECURITY DEFINER function; " \
-        "the raw hash is never emitted"
+set +e
+psql -X -q -A -t \
+     -v ON_ERROR_STOP=1 \
+     -v target_id="$TARGET_ID" \
+     -d "$DB" \
+     -f "$SQL_FILE" > "$TMP" 2> "$ERR"
+RC=$?
+set -e
+
+if [ $RC -ne 0 ]; then
+    if grep -q 'MANAGED_PLATFORM_DETECTED' "$ERR"; then
+        echo "REFUSED: managed platform detected. No bundle written." >&2
+        grep 'MANAGED_PLATFORM_DETECTED' "$ERR" >&2
+        exit 20
+    fi
+    echo "ERROR: collection failed (psql exit $RC). No bundle written." >&2
+    sed 's/^/  /' "$ERR" >&2
+    exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# Phase 3: Bundle
-# ---------------------------------------------------------------------------
-log_info "=== Building bundle ==="
-
-# Determine final status
-if [ -s "$GAPS_FILE" ]; then
-    _create_bundle "partial"
-    EXIT_CODE=10
-else
-    _create_bundle "complete"
-    EXIT_CODE=0
+if [ ! -s "$TMP" ]; then
+    echo "ERROR: collection produced no output. No bundle written." >&2
+    exit 1
 fi
 
-# Print summary
-log_info "=== Summary ==="
-if [ -s "$GAPS_FILE" ]; then
-    _gap_count="$(wc -l < "$GAPS_FILE" | tr -d ' ')"
-    log_info "Collection completed with $_gap_count gap(s)."
-else
-    log_info "Collection completed with no gaps."
-fi
+mv "$TMP" "$OUTFILE"
+trap - EXIT
+rm -f "$ERR"
 
-log_info "Done. Exit code: $EXIT_CODE"
-exit $EXIT_CODE
+echo "Bundle written: $OUTFILE ($(wc -c < "$OUTFILE" | tr -d ' ') bytes)"
+
+# Report gaps on stderr so the operator sees them without parsing the file.
+if command -v python3 >/dev/null 2>&1; then
+    python3 - "$OUTFILE" <<'PY' >&2 || true
+import json, sys
+b = json.load(open(sys.argv[1]))
+g = b.get("gaps") or []
+if g:
+    print(f"  {len(g)} gap(s) recorded:")
+    for x in g:
+        print(f"    - {x.get('section')}: {x.get('reason')}")
+else:
+    print("  No gaps.")
+PY
+fi

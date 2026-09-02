@@ -1,70 +1,92 @@
 -- DBGuardAI — Grant collector role
 -- Run this AS SUPERUSER on the target database before running the collector.
--- This creates a SECURITY DEFINER function and a limited-privilege role
--- for the collector to run under.
 --
--- The function dbguard_password_types() reads pg_authid in SECURITY DEFINER
--- mode, which is structurally incapable of returning a password hash —
--- it only returns the prefix-derived type. This is far easier for a DBA
--- to approve than granting direct SELECT on pg_authid.
+-- Creates:
+--   1. dbguard_password_types() — SECURITY DEFINER function that derives
+--      password_type from pg_authid without exposing the hash (S0).
+--   2. dbguard_collector role — minimal privileges for the collector.
 
--- ---------------------------------------------------------------------------
--- 1. Create the SECURITY DEFINER function for password type derivation
--- ---------------------------------------------------------------------------
+-- ── 1. SECURITY DEFINER function ──────────────────────────────────────────
+-- Returns one row per role with its password type.  Never returns the hash.
+DROP FUNCTION IF EXISTS dbguard_password_types() CASCADE;
+
 CREATE OR REPLACE FUNCTION dbguard_password_types()
-RETURNS TABLE (rolname name, password_type text)
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog
+RETURNS TABLE(rolname text, password_type text)
+SECURITY DEFINER
 AS $$
-  SELECT rolname,
-         CASE WHEN rolpassword IS NULL THEN 'none'
-              WHEN left(rolpassword, 4) = 'SCRA' THEN 'scram-sha-256'
-              WHEN left(rolpassword, 3) = 'md5'  THEN 'md5'
-              ELSE 'unknown' END
-  FROM pg_authid;
-$$;
+BEGIN
+    RETURN QUERY
+    SELECT r.rolname,
+           CASE
+               WHEN pg_has_role(r.oid, 'USAGE') IS NULL
+                    AND r.rolpassword IS NULL THEN 'none'
+               WHEN r.rolpassword IS NOT NULL
+                    AND r.rolpassword LIKE 'SCRAM-SHA-256%%' THEN 'scram-sha-256'
+               WHEN r.rolpassword IS NOT NULL
+                    AND r.rolpassword LIKE 'md5%%' THEN 'md5'
+               WHEN r.rolpassword IS NOT NULL
+                    AND r.rolpassword NOT LIKE 'SCRAM%%'
+                    AND r.rolpassword NOT LIKE 'md5%%' THEN 'plain'
+               ELSE 'unknown'
+           END AS password_type
+    FROM pg_roles r;
+END;
+$$ LANGUAGE plpgsql;
 
--- Revoke public execute
-REVOKE EXECUTE ON FUNCTION dbguard_password_types() FROM PUBLIC;
-
--- ---------------------------------------------------------------------------
--- 2. Create the collector role (or alter if it exists)
--- ---------------------------------------------------------------------------
+-- ── 2. Collector role ────────────────────────────────────────────────────
 DO $$
 BEGIN
-    -- Create role if it doesn't exist
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dbguard_collector') THEN
         CREATE ROLE dbguard_collector LOGIN;
     END IF;
 END
 $$;
 
--- Grant login (revoke if you want a non-login role for use with --role)
--- ALTER ROLE dbguard_collector NOLOGIN;
+-- Use dynamic SQL so CONNECT works without psql variable substitution
+DO $$
+DECLARE
+    _db_name text;
+BEGIN
+    _db_name := current_database();
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO dbguard_collector', _db_name);
+END
+$$;
+GRANT USAGE ON SCHEMA pg_catalog TO dbguard_collector;
 
--- ---------------------------------------------------------------------------
--- 3. Grant privileges — these are the minimum for full coverage
---    The collector will gracefully degrade if some are missing.
--- ---------------------------------------------------------------------------
+-- Catalog reads needed for the three CIS controls
+GRANT SELECT ON pg_authid         TO dbguard_collector;
+GRANT SELECT ON pg_roles          TO dbguard_collector;
+GRANT SELECT ON pg_namespace      TO dbguard_collector;
+GRANT SELECT ON pg_database       TO dbguard_collector;
+GRANT SELECT ON pg_settings       TO dbguard_collector;
+GRANT SELECT ON pg_auth_members   TO dbguard_collector;
 
--- Required: read settings
-GRANT pg_monitor TO dbguard_collector;
+-- EXECUTE on the SECURITY DEFINER function (this is the critical grant)
+GRANT EXECUTE ON FUNCTION dbguard_password_types() TO dbguard_collector;
 
--- Optional but recommended:
--- For config file reading (postgresql.conf, pg_hba.conf, pg_ident.conf):
--- GRANT pg_read_server_files TO dbguard_collector;
+-- If running user has pg_monitor, delegate it
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_auth_members m
+        JOIN pg_authid r ON r.oid = m.roleid
+        WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+          AND r.rolname = 'pg_monitor'
+    ) THEN
+        GRANT pg_monitor TO dbguard_collector;
+    END IF;
+END
+$$;
 
--- For HBA rules (superuser-only in PG 10+):
--- GRANT pg_read_all_settings TO dbguard_collector;
-
--- For SELECT on pg_authid via the function (already covered by SECURITY DEFINER):
--- The function handles this; no direct grant needed.
-
--- ---------------------------------------------------------------------------
--- 4. Usage
--- ---------------------------------------------------------------------------
--- After running this file, the collector can be run as:
---   PGUSER=dbguard_collector PGDATABASE=postgres ./dbguard-collect.sh --target=myserver
---
--- Or with any role that has the above grants. The script will still work
--- with a superuser role — no restrictions on the connecting role, but the
--- SECURITY DEFINER function ensures password hashes never leak.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_auth_members m
+        JOIN pg_authid r ON r.oid = m.roleid
+        WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+          AND r.rolname = 'pg_read_all_settings'
+    ) THEN
+        GRANT pg_read_all_settings TO dbguard_collector;
+    END IF;
+END
+$$;

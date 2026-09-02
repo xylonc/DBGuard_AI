@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# DBGuardAI — Acceptance test matrix
+# DBGuardAI — Acceptance test matrix (three-CIS-control variant)
 # Runs the collector against Docker containers and asserts correctness.
 #
 # Requirements:
 #   - Docker
-#   - docker compose or docker run
 #   - Python 3 with pydantic (for schema validation)
 #
 # Usage: ./test/run_matrix.sh
@@ -31,7 +30,6 @@ run_test_container() {
     local image="$1" tag="$2"
     local container_name="dbguard-test-${tag}"
 
-    # Start container
     docker run -d --name "$container_name" \
         -e POSTGRES_PASSWORD=testpass \
         -e POSTGRES_USER=testuser \
@@ -76,8 +74,8 @@ run_test() {
             fail_test "$tag: expected exit 0, got $rc"
         fi
 
-        # Check all sections present
-        for section in instance settings config_files authentication tls roles memberships databases logging replication operational; do
+        # Check the three sections present
+        for section in log_connections public_schema_acl password_storage; do
             if [ -f "$bundle_dir/sections/${section}.json" ]; then
                 pass_test "$tag: section ${section}.json present"
             else
@@ -88,7 +86,7 @@ run_test() {
         # Check envelope
         if [ -f "$bundle_dir/envelope.json" ]; then
             _status=$(grep '"status"' "$bundle_dir/envelope.json" | tr -d ' "')
-            if [ "$_status" = '"COMPLETE"' ] || [ "$_status" = "COMPLETE" ]; then
+            if [ "$_status" = 'COMPLETE' ]; then
                 pass_test "$tag: envelope status is COMPLETE"
             else
                 fail_test "$tag: envelope status is $_status (expected COMPLETE)"
@@ -102,12 +100,9 @@ run_test() {
     # ---------------------------------------------------------------------------
     elif [ "$tag" = "16-limited" ]; then
         echo "  Setting up limited-role database..."
-        # Create limited role via superuser
         psql -h 127.0.0.1 -p 55432 -U postgres -d testdb -c "
             CREATE ROLE limited_role WITH LOGIN PASSWORD 'testpass';
             GRANT pg_monitor TO limited_role;
-            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO limited_role;
-            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO limited_role;
         " 2>/dev/null || true
 
         echo "  Running collector as limited role..."
@@ -121,26 +116,42 @@ run_test() {
             fail_test "$tag: expected exit 10, got $rc"
         fi
 
-        # Check gaps recorded
         if [ -f "$bundle_dir/envelope.json" ]; then
-            if grep -q 'collection_gaps' "$bundle_dir/envelope.json"; then
-                pass_test "$tag: gaps recorded in envelope"
+            if grep -q '"gaps"' "$bundle_dir/envelope.json"; then
+                _gap_count=$(python3 -c "import json; d=json.load(open('$bundle_dir/envelope.json')); print(len(d.get('envelope',{}).get('gaps',[])))" 2>/dev/null || echo "unknown")
+                pass_test "$tag: gaps recorded in envelope ($_gap_count gaps)"
             else
                 fail_test "$tag: no gaps in envelope"
             fi
         fi
 
-        # Check remediation hints present
-        if [ -f "$bundle_dir/envelope.json" ]; then
-            if grep -q 'remediation_hint' "$bundle_dir/envelope.json"; then
-                pass_test "$tag: remediation hints present"
-            else
-                fail_test "$tag: no remediation hints"
-            fi
-        fi
-    fi
+    # ---------------------------------------------------------------------------
+    # Test 3: Managed platform (create rdsadmin role) → exit 20
+    # ---------------------------------------------------------------------------
+    elif [ "$tag" = "managed-refused" ]; then
+        echo "  Creating rdsadmin role to simulate managed platform..."
+        psql -h 127.0.0.1 -p 55432 -U postgres -d testdb -c "
+            CREATE ROLE rdsadmin NOLOGIN;
+        " 2>/dev/null || true
 
-    unset PGPASSWORD
+        echo "  Running collector (should refuse with exit 20)..."
+        bash "$COLLECTOR_DIR/dbguard-collect.sh" --output="$bundle_dir"
+        local rc=$?
+
+        if [ $rc -eq 20 ]; then
+            pass_test "$tag: exit code 20 (managed platform refused)"
+        else
+            fail_test "$tag: expected exit 20, got $rc"
+        fi
+
+        # Verify no bundle was written
+        if [ ! -f "$bundle_dir/envelope.json" ]; then
+            pass_test "$tag: no envelope written (managed refusal)"
+        else
+            fail_test "$tag: envelope.json exists despite managed refusal"
+        fi
+
+    fi
 
     # ---------------------------------------------------------------------------
     # Test 6: Secret scan
@@ -148,8 +159,8 @@ run_test() {
     if [ -d "$bundle_dir" ]; then
         echo "  Scanning bundle for secrets..."
         _secret_found=false
-        for pattern in 'SCRAM-SHA-256\$' 'md5[0-9a-f]\{32\}' 'BEGIN.*PRIVATE KEY' 'password=' 'ldapbindpasswd'; do
-            if grep -r "$pattern" "$bundle_dir" >/dev/null 2>&1; then
+        for pattern in 'SCRAM-SHA-256\$\|' 'md5[0-9a-f]\{32\}' 'BEGIN.*PRIVATE KEY' 'password=' 'ldapbindpasswd'; do
+            if grep -rq "$pattern" "$bundle_dir" >/dev/null 2>&1; then
                 echo "    ⚠ SECRET FOUND: $pattern"
                 _secret_found=true
             fi
@@ -162,7 +173,7 @@ run_test() {
     fi
 
     # ---------------------------------------------------------------------------
-    # Schema validation (Test 7)
+    # Schema validation
     # ---------------------------------------------------------------------------
     if [ -d "$bundle_dir" ] && [ -f "$bundle_dir/envelope.json" ]; then
         echo "  Validating schema..."
@@ -184,23 +195,9 @@ run_test() {
 
 echo "Starting test containers..."
 
-# Test 1: Postgres 16 superuser
 run_test_container "postgres:16" "16-superuser"
-
-# Test 2: Postgres 16 limited role (uses same container, different role)
 run_test_container "postgres:16" "16-limited"
-
-# Test 3: Postgres 12
-run_test_container "postgres:12" "12-version-gated"
-
-# Test 4: Simulated managed platform (create rdsadmin role)
 run_test_container "postgres:16" "managed-refused"
-
-# Test 5: Database with datallowconn = false
-run_test_container "postgres:16" "disallowed-db"
-
-# Test 7: Postgres 17
-run_test_container "postgres:17" "17-version-gated"
 
 echo "=== Results ==="
 echo "  Passed: $PASS"

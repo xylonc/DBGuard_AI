@@ -1,22 +1,23 @@
 """
-DBGuardAI — Schema definition for the SQL collector bundle.
+DBGuardAI — Schema definition for the SQL collector bundle (v0.2).
 
-This file defines the pydantic models that the collector envelope and sections
-must conform to.  It is a stripped-down subset of apps/api/app/models.py
-(Revamp branch) — only the types actually used by the three-CIS-control
-collector.
+This is the canonical schema file.  It must be committed to the repository
+root and imported by collector/test/validate_schema.py.
+
+It is intentionally separate from apps/api/app/models.py (the Python
+collector) — that file and services/snapshot_collector/collect.py were
+deleted in the three-CIS-control rewrite.
 
 Usage (development):
-    python collector/test/validate_schema.py <bundle-dir>
+    python3 collector/test/validate_schema.py <bundle-dir>
 """
-
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ─── Enums ───────────────────────────────────────────────────────────────
@@ -44,32 +45,44 @@ class GapReason(str, Enum):
     ERROR = "error"
 
 
+class ReplicationSource(str, Enum):
+    UNKNOWN = "unknown"
+    WAL_ARCHIVE = "wal_archive"
+    LOGICAL = "logical"
+    PHYSICAL = "physical"
+
+
 # ─── Envelope ────────────────────────────────────────────────────────────
 
 class Envelope(BaseModel):
-    schema_version: str = "0.2.0"
+    """Top-level bundle envelope."""
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = Field(default="0.2.0")
     collector_version: str
     collected_at: str
     target_id: str
     server_version_full: str
-    server_version_num: Optional[int]
-    current_user: Optional[str]
+    server_version_num: Optional[int] = None
+    current_user: Optional[str] = None
     status: CollectionStatus
     gaps: List[Dict[str, str]] = Field(default_factory=list)
     redactions: List[Dict[str, str]] = Field(default_factory=list)
+    has_gap: bool = False  # derived: True when gaps is non-empty
 
 
-# ─── Section models for the three CIS controls ──────────────────────────
+# ─── Section models ─────────────────────────────────────────────────────
 
 class PostgreSQLSetting(BaseModel):
     """A single row from pg_settings."""
     name: str
     setting: str
-    source: Optional[str] = None
+    source: str = "postgresql.conf"
     sourcefile: Optional[str] = None
     sourceline: Optional[int] = None
     context: Optional[str] = None
     pending_restart: Optional[bool] = None
+    is_modifiable: bool = True
 
 
 class PublicSchemaACL(BaseModel):
@@ -78,7 +91,7 @@ class PublicSchemaACL(BaseModel):
     schema_name: str = "public"
     owner: Optional[str] = None
     acl: Optional[str] = None  # raw aclitem array text
-    public_has_create: bool  # derived: does PUBLIC hold CREATE?
+    public_has_create: bool
 
 
 class RoleEntry(BaseModel):
@@ -86,13 +99,25 @@ class RoleEntry(BaseModel):
     rolname: str
     rolcanlogin: bool
     password_type: str  # scram-sha-256 | md5 | none | unknown
-    # Hash is never collected (S0).
+
+
+class ReplicationMetadata(BaseModel):
+    """Replication status (may be absent for standalone instances)."""
+    model_config = ConfigDict(extra="forbid")
+
+    replication_enabled: bool = False
+    primary_conninfo: Optional[str] = None
+    primary_slot_name: Optional[str] = None
+    wal_level: str = "replica"
+    max_wal_senders: int = 0
 
 
 # ─── Section data ────────────────────────────────────────────────────────
 
 class LogConnectionsSetting(BaseModel):
     """§ CIS 5.1 — log_connections setting."""
+    model_config = ConfigDict(extra='forbid')
+
     setting: Optional[PostgreSQLSetting] = None
 
 
@@ -103,6 +128,8 @@ class PublicSchemaAccess(BaseModel):
 
 class PasswordStorage(BaseModel):
     """§ CIS 5.3 — No role uses md5 password storage."""
+    model_config = ConfigDict(extra="forbid")
+
     roles: List[RoleEntry] = Field(default_factory=list)
 
 
@@ -112,7 +139,8 @@ def validate_envelope(data: Dict[str, Any]) -> List[str]:
     """Validate envelope JSON against the schema. Returns list of errors."""
     errors: List[str] = []
     try:
-        Envelope.model_validate(data)
+        env = Envelope.model_validate(data)
+        env.has_gap = len(env.gaps) > 0
     except Exception as exc:
         errors.append(f"Envelope validation failed: {exc}")
     return errors

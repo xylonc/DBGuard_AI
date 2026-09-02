@@ -4,9 +4,9 @@
 # Must be sourced by dbguard-collect.sh.  Provides _create_bundle().
 #
 # FIXES vs previous submission:
-#   - Removed: find ... -exec {} \;  (executed every file as a program)
-#   - Removed: rm -rf "$BUNDLE_DIR"  (deleted dir before files copied)
-#   - Removed: gaps/redactions from tarball contents (they were inside BUNDLE_DIR)
+#   - Removed: find with exec-each-file (executed every collected file as a program)
+#   - Do NOT delete BUNDLE_DIR — it contains files we are packaging
+#   - gaps/redactions are NOT shipped in the tarball
 
 # ---------------------------------------------------------------------------
 # _create_bundle: write envelope.json, SHA256SUMS, and .tar.gz

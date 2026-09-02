@@ -10,8 +10,8 @@
 #
 # Portability note (2026-09-01):
 #   This library uses POSIX sh constructs plus common GNU utils.
-#   Replaces stat -c with stat --format (GNU coreutils, same package).
-#   Replaces sha256sum with sha256sum (util-linux, same).
+#   The collector body itself only invokes psql.  Bundling helpers
+#   (bundle.sh) invoke sha256sum for integrity checks.
 #   Uses egrep (POSIX) instead of grep -E (GNU-specific on some systems).
 #   The claim "psql and POSIX sh/bash only" is maintained for the collector
 #   body; lib helpers that invoke sha256sum/stat are for bundling only.

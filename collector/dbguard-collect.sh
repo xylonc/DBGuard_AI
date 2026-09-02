@@ -55,15 +55,42 @@ for arg in "$@"; do
 done
 
 # ---------------------------------------------------------------------------
-# Setup output directory
+# Setup output directory path (not yet created)
 # ---------------------------------------------------------------------------
 TIMESTAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
 if [ -n "$OUTPUT_DIR" ]; then
     BUNDLE_DIR="${OUTPUT_DIR}/dbguard-${TARGET_ID}-${TIMESTAMP}"
+    TMP_CLEANUP_DIR=""
 else
-    BUNDLE_DIR="$(mktemp -d "/tmp/dbguard-${TARGET_ID}-${TIMESTAMP}.XXXXXXXXXX")"
+    TMP_CLEANUP_DIR="$(mktemp -d "/tmp/dbguard-${TARGET_ID}-${TIMESTAMP}.XXXXXXXXXX")"
+    BUNDLE_DIR="$TMP_CLEANUP_DIR"
 fi
 
+COLLECTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+# ---------------------------------------------------------------------------
+# Phase 1: Preflight (before any directory creation)
+# ---------------------------------------------------------------------------
+log_info "=== DBGuardAI Collector $COLLECTOR_VERSION ==="
+log_info "Target: $TARGET_ID | DB: $PGDATABASE"
+
+# Invoke probe function (NOT sourced-at-time)
+probe_target || {
+    _local_exit=$?
+    log_error "Preflight failed with exit code $_local_exit."
+    # Clean up any temp directory created by mktemp
+    if [ -n "$TMP_CLEANUP_DIR" ] && [ -d "$TMP_CLEANUP_DIR" ]; then
+        rm -rf "$TMP_CLEANUP_DIR"
+    fi
+    exit $_local_exit
+}
+
+log_info "Output directory: $BUNDLE_DIR"
+log_info "Server: $SERVER_VERSION_FULL ($SERVER_VERSION_NUM)"
+
+# ---------------------------------------------------------------------------
+# Create output directory (only after probe passes)
+# ---------------------------------------------------------------------------
 mkdir -p "$BUNDLE_DIR/sections" "$BUNDLE_DIR/raw"
 
 # Initialize tracking files
@@ -74,24 +101,6 @@ mkdir -p "$BUNDLE_DIR/sections" "$BUNDLE_DIR/raw"
 COLLECTOR_LOG="$BUNDLE_DIR/collector.log"
 GAPS_FILE="$BUNDLE_DIR/gaps.tmp"
 REDACTIONS_FILE="$BUNDLE_DIR/redactions.tmp"
-
-COLLECTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-
-# ---------------------------------------------------------------------------
-# Phase 1: Preflight
-# ---------------------------------------------------------------------------
-log_info "=== DBGuardAI Collector $COLLECTOR_VERSION ==="
-log_info "Target: $TARGET_ID | DB: $PGDATABASE"
-
-# Invoke probe function (NOT sourced-at-time)
-probe_target || {
-    local_exit=$?
-    log_error "Preflight failed with exit code $local_exit."
-    exit $local_exit
-}
-
-log_info "Output directory: $BUNDLE_DIR"
-log_info "Server: $SERVER_VERSION_FULL ($SERVER_VERSION_NUM)"
 
 # ---------------------------------------------------------------------------
 # Phase 2: Collect three CIS controls

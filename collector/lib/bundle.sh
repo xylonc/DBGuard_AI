@@ -18,39 +18,19 @@ _create_bundle() {
     local status="$1"
     local bundle_file="${BUNDLE_DIR}.tar.gz"
 
-    # ---- envelope.json -----------------------------------------------------
-    cat > "$BUNDLE_DIR/envelope.json" <<_EOF
-{
-  "envelope": {
-    "schema_version": "0.2.0",
-    "collector_version": "${COLLECTOR_VERSION}",
-    "collected_at": "${COLLECTED_AT}",
-    "target_id": "${TARGET_ID}",
-    "server_version_full": "${SERVER_VERSION_FULL}",
-    "server_version_num": ${SERVER_VERSION_NUM:-null},
-    "current_user": "${CURRENT_USER:-null}",
-    "status": "${status}"
-  },
-  "gaps": $(cat "$GAPS_FILE" 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo '[]'),
-  "redactions": $(cat "$REDACTIONS_FILE" 2>/dev/null | tr '\n' ',' | sed 's/,$//' || echo '[]')
-}
-_EOF
-
-    # Fix: gaps/redactions might not be valid JSON arrays when empty
-    # Wrap them properly
+    # ---- Build gaps/redactions as JSON arrays ------------------------------
     _gaps_json="[]"
     if [ -s "$GAPS_FILE" ]; then
-        _gaps_json=$(cat "$GAPS_FILE" | tr '\n' ',' | sed 's/,$//')
-        _gaps_json="[${_gaps_json}]"
+        _gaps_json="[$(cat "$GAPS_FILE" | tr '\n' ',' | sed 's/,$//')]"
     fi
 
     _redactions_json="[]"
     if [ -s "$REDACTIONS_FILE" ]; then
-        _redactions_json=$(cat "$REDACTIONS_FILE" | tr '\n' ',' | sed 's/,$//')
-        _redactions_json="[${_redactions_json}]"
+        _redactions_json="[$(cat "$REDACTIONS_FILE" | tr '\n' ',' | sed 's/,$//')]"
     fi
 
-    cat > "$BUNDLE_DIR/envelope.json" <<_EOF2
+    # ---- envelope.json -----------------------------------------------------
+    cat > "$BUNDLE_DIR/envelope.json" <<_EOF
 {
   "envelope": {
     "schema_version": "0.2.0",
@@ -65,7 +45,7 @@ _EOF
   "gaps": ${_gaps_json},
   "redactions": ${_redactions_json}
 }
-_EOF2
+_EOF
 
     log_info "envelope.json written."
 

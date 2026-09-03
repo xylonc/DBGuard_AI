@@ -113,8 +113,13 @@ DECLARE r jsonb;
 BEGIN
     EXECUTE p_sql INTO r;
     RETURN r;
-EXCEPTION WHEN OTHERS THEN
-    RETURN NULL;
+-- Only these degrade to a gap. Everything else is a bug in this file and
+-- must abort the run: a collector that reports its own defects as absent
+-- data is worse than one that refuses to finish.
+EXCEPTION
+    WHEN insufficient_privilege THEN RETURN NULL;
+    WHEN undefined_table OR undefined_function OR undefined_column
+                               OR undefined_object THEN RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -141,7 +146,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE FUNCTION pg_temp.sql_password_types() RETURNS text AS $$
     SELECT $q$
-        SELECT jsonb_agg(jsonb_build_object(
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
             'rolname', rolname,
             'password_type', CASE
                 WHEN rolpassword IS NULL                      THEN 'none'
@@ -149,14 +154,14 @@ CREATE FUNCTION pg_temp.sql_password_types() RETURNS text AS $$
                 WHEN rolpassword LIKE 'md5%'                  THEN 'md5'
                 ELSE 'other' END,
             'rolvaliduntil', rolvaliduntil
-        ) ORDER BY rolname)
+        ) ORDER BY rolname), '[]'::jsonb)
         FROM pg_authid WHERE rolcanlogin
     $q$;
 $$ LANGUAGE sql IMMUTABLE;
 
 CREATE FUNCTION pg_temp.sql_hba() RETURNS text AS $$
     SELECT $q$
-        SELECT jsonb_agg(jsonb_build_object(
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
             'line_number', line_number,
             'type',        type,
             'database',    database,
@@ -170,28 +175,28 @@ CREATE FUNCTION pg_temp.sql_hba() RETURNS text AS $$
                                      ELSE o END)
                             FROM unnest(coalesce(options,'{}'::text[])) o),
             'error',       error
-        ) ORDER BY line_number)
+        ) ORDER BY line_number), '[]'::jsonb)
         FROM pg_hba_file_rules
     $q$;
 $$ LANGUAGE sql IMMUTABLE;
 
 CREATE FUNCTION pg_temp.sql_ident() RETURNS text AS $$
     SELECT $q$
-        SELECT jsonb_agg(to_jsonb(t) ORDER BY t.line_number)
+        SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.line_number), '[]'::jsonb)
         FROM pg_ident_file_mappings t
     $q$;
 $$ LANGUAGE sql IMMUTABLE;
 
 CREATE FUNCTION pg_temp.sql_file_settings() RETURNS text AS $$
     SELECT $q$
-        SELECT jsonb_agg(jsonb_build_object(
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
             'sourcefile', sourcefile,
             'sourceline', sourceline,
             'name',       name,
             'setting',    pg_temp.sanitise_setting(name, setting),
             'applied',    applied,
             'error',      error
-        ) ORDER BY sourcefile, sourceline)
+        ) ORDER BY sourcefile, sourceline), '[]'::jsonb)
         FROM pg_file_settings
     $q$;
 $$ LANGUAGE sql IMMUTABLE;
@@ -232,7 +237,7 @@ SELECT jsonb_pretty(jsonb_build_object(
 
 -- ---- settings: everything not left at its default, plus the security set --
 'settings', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'name',            s.name,
         'setting',         pg_temp.sanitise_setting(s.name, s.setting),
         'unit',            s.unit,
@@ -249,7 +254,7 @@ SELECT jsonb_pretty(jsonb_build_object(
                                       'archive_cleanup_command','recovery_end_command',
                                       'primary_conninfo','ssl_passphrase_command',
                                       'krb_server_keyfile')
-    ) ORDER BY s.name)
+    ) ORDER BY s.name), '[]'::jsonb)
     FROM pg_settings s
     WHERE s.source <> 'default'
        OR s.name IN (
@@ -285,7 +290,7 @@ SELECT jsonb_pretty(jsonb_build_object(
 -- type and must never be interpreted as one. Real password types come from
 -- the pg_authid section below, which is privilege-gated.
 'roles', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'rolname',        r.rolname,
         'oid',            r.oid,
         'rolsuper',       r.rolsuper,
@@ -298,17 +303,17 @@ SELECT jsonb_pretty(jsonb_build_object(
         'rolconnlimit',   r.rolconnlimit,
         'rolvaliduntil',  r.rolvaliduntil,
         'is_predefined',  r.rolname LIKE 'pg\_%'
-    ) ORDER BY r.rolname)
+    ) ORDER BY r.rolname), '[]'::jsonb)
     FROM pg_roles r
 ),
 
 'role_memberships', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'role',         g.rolname,
         'member',       m.rolname,
         'grantor',      a.rolname,
         'admin_option', am.admin_option
-    ) ORDER BY g.rolname, m.rolname)
+    ) ORDER BY g.rolname, m.rolname), '[]'::jsonb)
     FROM pg_auth_members am
     JOIN pg_roles g ON g.oid = am.roleid
     JOIN pg_roles m ON m.oid = am.member
@@ -318,20 +323,19 @@ SELECT jsonb_pretty(jsonb_build_object(
 -- Password TYPE only. The hash itself is never selected, never returned.
 'password_types', pg_temp.try_jsonb(pg_temp.sql_password_types()),
 
-'role_settings', (
-    SELECT jsonb_agg(jsonb_build_object(
+'role_settings', pg_temp.try_jsonb($q$
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'role',     coalesce(r.rolname,'ALL'),
         'database', coalesce(d.datname,'ALL'),
         'settings', s.setconfig
-    ))
+    )), '[]'::jsonb)
     FROM pg_db_role_setting s
     LEFT JOIN pg_roles r    ON r.oid = s.setrole
-    LEFT JOIN pg_database d ON d.oid = s.setdatabase
-),
+    LEFT JOIN pg_database d ON d.oid = s.setdatabase $q$),
 
 -- ---- structure: names, owners, ACLs. Never rows. --------------------------
 'databases', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'datname',      d.datname,
         'owner',        pg_get_userbyid(d.datdba),
         'encoding',     pg_encoding_to_char(d.encoding),
@@ -341,18 +345,18 @@ SELECT jsonb_pretty(jsonb_build_object(
         'datconnlimit', d.datconnlimit,
         'datistemplate',d.datistemplate,
         'datacl',       d.datacl::text[]
-    ) ORDER BY d.datname)
+    ) ORDER BY d.datname), '[]'::jsonb)
     FROM pg_database d
 ),
 
 'schemas', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'nspname', n.nspname,
         'owner',   pg_get_userbyid(n.nspowner),
         'nspacl',  n.nspacl::text[],
         'public_has_create', has_schema_privilege('public', n.oid, 'CREATE'),
         'public_has_usage',  has_schema_privilege('public', n.oid, 'USAGE')
-    ) ORDER BY n.nspname)
+    ) ORDER BY n.nspname), '[]'::jsonb)
     FROM pg_namespace n
     WHERE n.nspname NOT LIKE 'pg\_temp%'
       AND n.nspname NOT LIKE 'pg\_toast%'
@@ -361,7 +365,7 @@ SELECT jsonb_pretty(jsonb_build_object(
 -- Only objects that actually carry an ACL. A sandbox reproduces these as
 -- stubs -- correct name, type, schema, owner. No columns, no data.
 'object_acls', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'schema',   n.nspname,
         'name',     c.relname,
         'kind',     c.relkind,
@@ -369,7 +373,7 @@ SELECT jsonb_pretty(jsonb_build_object(
         'acl',      c.relacl::text[],
         'rls',      c.relrowsecurity,
         'rls_forced', c.relforcerowsecurity
-    ) ORDER BY n.nspname, c.relname)
+    ) ORDER BY n.nspname, c.relname), '[]'::jsonb)
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname NOT IN ('pg_catalog','information_schema')
@@ -378,61 +382,61 @@ SELECT jsonb_pretty(jsonb_build_object(
 ),
 
 'default_acls', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'owner',     pg_get_userbyid(d.defaclrole),
         'schema',    n.nspname,
         'objtype',   d.defaclobjtype,
         'acl',       d.defaclacl::text[]
-    ))
+    )), '[]'::jsonb)
     FROM pg_default_acl d
     LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
 ),
 
 'rls_policies', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'schema', schemaname, 'table', tablename, 'policy', policyname,
         'permissive', permissive, 'roles', roles, 'cmd', cmd,
         'qual', qual, 'with_check', with_check
-    ) ORDER BY schemaname, tablename, policyname)
+    ) ORDER BY schemaname, tablename, policyname), '[]'::jsonb)
     FROM pg_policies
 ),
 
 'extensions', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'extname', e.extname,
         'version', e.extversion,
         'schema',  n.nspname,
         'owner',   pg_get_userbyid(e.extowner)
-    ) ORDER BY e.extname)
+    ) ORDER BY e.extname), '[]'::jsonb)
     FROM pg_extension e
     LEFT JOIN pg_namespace n ON n.oid = e.extnamespace
 ),
 
 'tablespaces', pg_temp.try_jsonb($q$
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'spcname',  t.spcname,
         'owner',    pg_get_userbyid(t.spcowner),
         'acl',      t.spcacl::text[],
         'location', pg_tablespace_location(t.oid)
-    ) ORDER BY t.spcname)
+    ) ORDER BY t.spcname), '[]'::jsonb)
     FROM pg_tablespace t $q$),
 
 'foreign_servers', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'srvname', s.srvname,
         'owner',   pg_get_userbyid(s.srvowner),
         'fdw',     w.fdwname,
         'acl',     s.srvacl::text[]
-    ) ORDER BY s.srvname)
+    ) ORDER BY s.srvname), '[]'::jsonb)
     FROM pg_foreign_server s
     JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
 ),
 
 'event_triggers', (
-    SELECT jsonb_agg(jsonb_build_object(
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
         'evtname', evtname, 'event', evtevent,
         'owner', pg_get_userbyid(evtowner), 'enabled', evtenabled
-    ) ORDER BY evtname)
+    ) ORDER BY evtname), '[]'::jsonb)
     FROM pg_event_trigger
 ),
 
@@ -445,46 +449,47 @@ SELECT jsonb_pretty(jsonb_build_object(
 -- ---- replication ----------------------------------------------------------
 'replication', jsonb_build_object(
     'slots', pg_temp.try_jsonb($q$
-              SELECT jsonb_agg(jsonb_build_object(
+              SELECT coalesce(jsonb_agg(jsonb_build_object(
                   'slot_name', slot_name, 'plugin', plugin, 'slot_type', slot_type,
                   'database', database, 'temporary', temporary, 'active', active)
-              ORDER BY slot_name) FROM pg_replication_slots $q$),
-    'publications', (SELECT jsonb_agg(jsonb_build_object(
+              ORDER BY slot_name), '[]'::jsonb) FROM pg_replication_slots $q$),
+    'publications', (SELECT coalesce(jsonb_agg(jsonb_build_object(
                   'pubname', pubname, 'owner', pg_get_userbyid(pubowner),
                   'puballtables', puballtables, 'pubinsert', pubinsert,
                   'pubupdate', pubupdate, 'pubdelete', pubdelete)
-              ORDER BY pubname) FROM pg_publication),
+              ORDER BY pubname), '[]'::jsonb) FROM pg_publication),
     -- subscription conninfo is parsed, password dropped
     'subscriptions', pg_temp.try_jsonb($q$
-            SELECT jsonb_agg(jsonb_build_object(
+            SELECT coalesce(jsonb_agg(jsonb_build_object(
                 'subname', subname,
                 'owner', pg_get_userbyid(subowner),
                 'enabled', subenabled,
                 'conninfo_parsed', pg_temp.parse_conninfo(subconninfo))
-            ORDER BY subname) FROM pg_subscription $q$),
-    'primary_conninfo_parsed',
-        pg_temp.parse_conninfo(nullif(current_setting('primary_conninfo', true), '')),
+            ORDER BY subname), '[]'::jsonb) FROM pg_subscription $q$),
+    'primary_conninfo_parsed', pg_temp.try_jsonb($q$
+        SELECT pg_temp.parse_conninfo(nullif(current_setting('primary_conninfo', true), '')) $q$),
     'in_recovery', pg_is_in_recovery()
 ),
 
 -- ---- operational baseline: aggregated, no query text ever ----------------
 'connections', pg_temp.try_jsonb($q$
-    SELECT jsonb_agg(jsonb_build_object(
-        'application_name', coalesce(nullif(application_name,''),'(none)'),
-        'usename',          usename,
-        'datname',          datname,
-        'client_addr_class', CASE
-             WHEN client_addr IS NULL                  THEN 'unix_socket'
-             WHEN client_addr << inet '127.0.0.0/8'    THEN 'loopback'
-             WHEN client_addr << inet '10.0.0.0/8'
-               OR client_addr << inet '172.16.0.0/12'
-               OR client_addr << inet '192.168.0.0/16' THEN 'private'
-             ELSE 'public' END,
-        'count', count(*)
-    ))
-    FROM (SELECT application_name, usename, datname, client_addr
-          FROM pg_stat_activity WHERE backend_type = 'client backend') a
-    GROUP BY application_name, usename, datname, client_addr $q$),
+    SELECT coalesce(jsonb_agg(to_jsonb(g)), '[]'::jsonb)
+    FROM (
+        SELECT coalesce(nullif(application_name,''),'(none)') AS application_name,
+               usename,
+               datname,
+               CASE
+                 WHEN client_addr IS NULL                  THEN 'unix_socket'
+                 WHEN client_addr << inet '127.0.0.0/8'    THEN 'loopback'
+                 WHEN client_addr << inet '10.0.0.0/8'
+                   OR client_addr << inet '172.16.0.0/12'
+                   OR client_addr << inet '192.168.0.0/16' THEN 'private'
+                 ELSE 'public' END                          AS client_addr_class,
+               count(*)                                     AS connection_count
+        FROM pg_stat_activity
+        WHERE backend_type = 'client backend'
+        GROUP BY 1,2,3,4
+    ) g $q$),
 
 'uptime', jsonb_build_object(
     'postmaster_start_time', pg_postmaster_start_time(),
@@ -521,6 +526,14 @@ SELECT jsonb_pretty(jsonb_build_object(
                    'remediation','pg_file_settings requires superuser or pg_read_all_settings.'
                )
         WHERE pg_temp.try_reason(pg_temp.sql_file_settings()) IS NOT NULL
+        UNION ALL
+        SELECT jsonb_build_object(
+                   'section','replication.primary_conninfo_parsed',
+                   'reason','insufficient_privilege',
+                   'remediation','primary_conninfo requires pg_read_all_settings. Null here does NOT mean the server is a primary.'
+               )
+        WHERE NOT pg_has_role(current_user,'pg_read_all_settings','MEMBER')
+          AND NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
         UNION ALL
         SELECT jsonb_build_object(
                    'section','settings.sourcefile',

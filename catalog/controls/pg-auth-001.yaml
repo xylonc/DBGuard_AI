@@ -1,0 +1,116 @@
+control_id: PG-AUTH-001
+title: Migrate authentication rule to SCRAM
+engine: postgresql
+version: "1.0.0"
+
+cis_cat_mapping: "8.1.2"
+description: >
+  Ensure that all client authentication methods use SCRAM-SHA-256.
+  MD5 authentication is deprecated and vulnerable to offline cracking attacks.
+
+supported_profiles:
+  minimum_major: 14
+  maximum_major: 17
+  distributions:
+    - community
+    - edb
+
+assessment:
+  action: inspect_hba_authentication
+  query: >
+    SELECT count(*) FROM pg_hba_file_rules
+    WHERE auth_method != 'scram-sha-256'
+    AND type = 'host'
+    AND user_name != 'rdsadmin'
+  expected_result: 0
+
+remediation:
+  action: update_hba_authentication
+  allowed_parameters:
+    target_method:
+      - scram-sha-256
+    affected_roles:
+      description: "List of roles to re-encrypt passwords for"
+      type: array
+    dry_run:
+      description: "If true, only report changes without applying"
+      type: boolean
+      default: false
+  preconditions:
+    - PostgreSQL version >= 14
+    - All client drivers support SCRAM-SHA-256
+    - Application compatibility contract confirms driver support
+
+rollback:
+  action: restore_previous_hba_rules
+  rollback_query: >
+    -- Step 1: Backup current pg_hba.conf
+    SELECT pg_reload_conf();
+    -- Step 2: Revert to previous auth method
+    -- (Restore from pre-change backup)
+  restore_procedure: >
+    1. Restore pg_hba.conf from backup
+    2. Reload PostgreSQL: SELECT pg_reload_conf();
+    3. Verify authentication still works
+
+validation:
+  validations:
+    - validate_hba_syntax
+    - reload_postgresql
+    - test_application_authentication
+    - verify_authentication_method
+  queries:
+    - "SHOW password_encryption;"
+    - "SELECT * FROM pg_hba_file_rules WHERE auth_method = 'scram-sha-256';"
+
+execution_policy:
+  maximum_attempts: 3
+  require_approval: true
+  approval_required_roles:
+    - dba
+    - security-admin
+
+impact:
+  risk_level: HIGH
+  flags:
+    - AUTHENTICATION_CHANGE
+    - APPLICATION_LOCKOUT_RISK
+    - DRIVER_COMPATIBILITY
+    - HUMAN_REVIEW_REQUIRED
+  requires_restart: false
+  requires_reload: true
+  estimated_downtime_seconds: 30
+
+  application_impact: >
+    Changing authentication method will invalidate existing MD5-hashed passwords.
+    All application connections using MD5 authentication must be updated to support SCRAM-SHA-256.
+    Driver compatibility must be verified before implementation.
+
+references:
+  - document_id: CIS-PG-8.1.2
+    section: Authentication
+    title: "Ensure authentication methods use SCRAM-SHA-256"
+  - document_id: PG-DOC-PASSWORD-ENCRYPTION
+    section: Configuration
+    title: "Password Encryption Configuration"
+  - document_id: EDB-HARDENING-AUTH
+    section: Authentication
+    title: "EDB PostgreSQL Hardening Guide — Authentication"
+
+evidence_requirements:
+  - type: configuration
+    description: "pg_hba.conf entries after change"
+  - type: query_output
+    description: "SHOW password_encryption output"
+  - type: compatibility_test
+    description: "Application connection test result"
+  - type: screenshot
+    description: "Application successfully connecting with new auth method"
+
+implementation_notes: >
+  This control requires coordination with application teams.
+  Before implementation:
+  1. Verify all client drivers support SCRAM-SHA-256 (psycopg2 >= 2.8, pgjdbc >= 42.2.0)
+  2. Test in the configuration twin first
+  3. Ensure rollback plan is ready
+  4. Coordinate maintenance window with application teams

@@ -11,20 +11,87 @@ from openai import OpenAI
 from app.config import settings
 
 
+def _is_real_key(key: str) -> bool:
+    """Check if an API key looks real (not a placeholder)."""
+    if not key:
+        return False
+    fake_keys = {"***", "*", "your-api-key-here", "your-openai-api-key-here", "redacted", "sk-your-****here", "sk-..."}
+    if key in fake_keys:
+        return False
+    # OpenAI keys: sk- followed by at least 24 alphanumeric chars
+    if key.startswith("sk-"):
+        return len(key) > 20 and "*" not in key and "placeholder" not in key.lower()
+    return True
+
+
 def get_client():
-    """Get an OpenAI client for embeddings."""
-    return OpenAI(api_key=settings.openai_api_key)
+    """Get an OpenAI-compatible client for embeddings.
+    Priority: Ollama (if configured) > OpenAI (if configured)."""
+    
+    # Always prefer Ollama if we have a real key for it
+    if _is_real_key(settings.ollama_api_key):
+        base = settings.ollama_api_base or settings.ollama_api_url or "https://api.ollama.com/v1"
+        base = base.rstrip("/")
+        # Auto-correct: ollama.com/api should be api.ollama.com
+        if "ollama.com/api" in base and "api.ollama.com" not in base:
+            base = "https://api.ollama.com"
+        return OpenAI(
+            api_key=settings.ollama_api_key,
+            base_url=base
+        )
+    
+    # Fall back to OpenAI if we have a real key
+    if _is_real_key(settings.openai_api_key):
+        return OpenAI(api_key=settings.openai_api_key)
+    
+    raise ValueError(
+        "No embedding provider configured. Set OPENAI_API_KEY or "
+        "OLLAMA_API_KEY in your .env file."
+    )
 
 
 def get_embedding(text: str) -> list[float]:
-    """Generate embedding vector using OpenAI API."""
-    client = get_client()
-    response = client.embeddings.create(
-        model=settings.embedding_model,
-        input=text,
-        dimensions=settings.embedding_dim
-    )
-    return response.data[0].embedding
+    """Generate embedding vector using OpenAI or Ollama API directly."""
+    import requests
+    
+    # Prefer Ollama if we have a real key, otherwise OpenAI
+    use_ollama = _is_real_key(settings.ollama_api_key)
+    use_openai = _is_real_key(settings.openai_api_key)
+    
+    if use_openai and not use_ollama:
+        client = OpenAI(api_key=settings.openai_api_key)
+        model = settings.embedding_model
+        response = client.embeddings.create(model=model, input=text)
+        embedding_vec = response.data[0].embedding
+    else:
+        # Use Ollama (local or cloud)
+        ollama_base = settings.ollama_api_url or settings.ollama_api_base or "http://localhost:11434"
+        ollama_base = ollama_base.rstrip("/")
+        # Auto-correct: ollama.com/api should be api.ollama.com
+        if "ollama.com/api" in ollama_base and "api.ollama.com" not in ollama_base:
+            ollama_base = "https://api.ollama.com"
+        elif ollama_base == "https://api.ollama.com/v1":
+            ollama_base = "https://api.ollama.com"
+        
+        model = settings.embedding_model
+        headers = {"Content-Type": "application/json"}
+        if settings.ollama_api_key:
+            headers["Authorization"] = f"Bearer {settings.ollama_api_key}"
+        
+        response = requests.post(f"{ollama_base}/api/embed", json={
+            "model": model,
+            "input": text
+        }, headers=headers, timeout=30)
+        if response.status_code != 200:
+            print(f"Ollama embed error: {response.status_code} {response.text}")
+            raise RuntimeError(f"Embedding failed: {response.text}")
+        data = response.json()
+        embedding_vec = data["embeddings"][0]
+    
+    # Pad or truncate to expected dimension if needed
+    if len(embedding_vec) < settings.embedding_dim:
+        embedding_vec += [0.0] * (settings.embedding_dim - len(embedding_vec))
+    return embedding_vec[:settings.embedding_dim]
 
 
 def init_db():

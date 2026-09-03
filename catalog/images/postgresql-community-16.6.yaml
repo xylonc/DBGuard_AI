@@ -1,0 +1,51 @@
+# PostgreSQL 16.6 — Community — Debian Bookworm — amd64
+# Approved for twin creation in DBGuardAI assessments.
+
+profile_id: postgresql-community-16.6-bookworm-amd64
+database:
+  engine: postgresql
+  distribution: community
+  version:
+    major: 16
+    minor: 6
+    server_version_num: 160006
+platform:
+  operating_system: debian
+  operating_system_release: bookworm
+  architecture: amd64
+image:
+  internal_registry: registry.company.example
+  repository: dbguard/postgresql-community
+  digest: sha256:9b56e0e8824f9c2a3d7b8f1e5c4a2b9d7e6f8a1c3d5e7f9b2a4c6d8e0f2a4b6c
+  upstream_registry: docker.io
+  upstream_repository: library/postgres
+  upstream_digest: sha256:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2
+capabilities:
+  extensions:
+    - name: pg_stat_statements
+      version: "1.10"
+    - name: pgcrypto
+      version: "1.3"
+  supports_hba_testing: true
+  supports_tls_testing: true
+  supports_ssl_testing: true
+  supports_host_controls: false
+security:
+  signature_verified: true
+  sbom_available: true
+  sbom_hash: sha256:abc123def456789012345678901234567890abcdef1234567890abcdef123456
+  vulnerability_scan_status: passed
+  vulnerability_scan_date: "2024-06-15T10:30:00Z"
+  license_compliance: true
+lifecycle:
+  status: APPROVED
+  approved_at: "2024-06-20T09:00:00Z"
+  expires_at: "2025-06-20T09:00:00Z"
+approval:
+  approved_by:
+    - database-security-team
+    - platform-security-team
+  evidence_id: approval-pg16-2024-q2
+notes: >
+  Recommended for production assessments. Includes standard community extensions.
+  SBOM and vulnerability scan completed by platform security team.

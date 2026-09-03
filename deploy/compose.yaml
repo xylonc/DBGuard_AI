@@ -1,0 +1,204 @@
+version: "3.8"
+
+# DBGuardAI POC — Docker Compose Stack
+# All services communicate over internal networks.
+# No service publishes ports to the host except the gateway and rag-postgres.
+
+name: dbguard-ai
+
+services:
+  # ─── Gateway (entry point for HERMES agent MCP calls) ───
+  gateway:
+    build:
+      context: .
+      dockerfile: hermes/Dockerfile
+      args:
+        HERMES_BASE_IMAGE: "hermes-agent:1.0.0"
+        HERMES_BASE_DIGEST: "sha256:placeholder"
+    image: dbguardai/hermes-agent:1.0.0
+    container_name: dbguard-gateway
+    ports:
+      - "8080:8080"  # Gateway API (only exposed service)
+    env_file: .env
+    environment:
+      - HERMES_APP_NAME=DBGuardAI
+      - HERMES_MCP_RESTRICTED=true
+      - HERMES_APPROVAL_POLICY=high-risk
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://localhost:11434}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - RAG_EMBEDDING_DIM=${RAG_EMBEDDING_DIM:-1536}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+    volumes:
+      - dbguard-secrets:/hermes/secrets
+      - dbguard-knowledge:/hermes/knowledge
+      - dbguard-logs:/hermes/logs
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+      rag-service:
+        condition: service_healthy
+    networks:
+      - dbguard-gateway-net
+      - dbguard-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # ─── Control Service (deterministic enforcement engine) ───
+  # NOTE: Dockerfile.control-service is not yet implemented — placeholder
+  # Remove the build section and use the image directly once it's ready.
+  control-service:
+    image: dbguardai/control-service:1.0.0
+    container_name: dbguard-control
+    ports:
+      - "8082:8082"
+    env_file: .env
+    environment:
+      - CONTROL_SERVICE_DB_URL=postgresql://admin:securepassword123@rag-postgres:5432/dbguard_state
+      - DBGUARD_VERSION=1.0.0
+      - RAG_SERVICE_URL=http://rag-service:8083
+    volumes:
+      - dbguard-secrets:/hermes/secrets
+      - dbguard-logs:/hermes/logs
+      - ./catalog/controls:/catalog/controls:ro  # Read-only catalog mount
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+      rag-service:
+        condition: service_healthy
+    networks:
+      - dbguard-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    # TODO: Re-enable build when control-service is implemented
+    # build:
+    #   context: .
+    #   dockerfile: deploy/Dockerfile.control-service
+
+  # ─── RAG Service (knowledge ingestion + semantic search) ───
+  rag-service:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rag-service
+    image: dbguardai/rag-service:1.0.0
+    container_name: dbguard-rag-service
+    ports:
+      - "8083:8083"  # RAG REST API
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://admin:securepassword123@rag-postgres:5432/dbguard_rag
+      - RAG_EMBEDDING_DIM=${RAG_EMBEDDING_DIM:-1536}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://localhost:11434}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+    networks:
+      - dbguard-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ─── RAG PostgreSQL (pgvector for knowledge base) ───
+  rag-postgres:
+    image: postgres:16
+    container_name: dbguard-rag
+    ports:
+      - "5433:5432"  # Published for admin access only
+    environment:
+      POSTGRES_DB: dbguard_rag
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: securepassword123
+    volumes:
+      - dbguard-rag-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - dbguard-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d dbguard_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Twin Runner (only service with Docker access) ───
+  twin-runner:
+    image: dbguardai/twin-runner:1.0.0
+    container_name: dbguard-twin-runner
+    ports:
+      - "8081:8081"  # Twin API for Control Service
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Docker socket (Twin Runner only)
+      - dbguard-secrets:/hermes/secrets
+    environment:
+      - RUNNER_VERSION=1.0.0
+      - TWIN_NETWORK=dbguard_twin_net
+      - TWIN_CPU_LIMIT=0.5
+      - TWIN_MEMORY_LIMIT=512m
+      - TWIN_TTL_MINUTES=60
+      - CONTROL_SERVICE_URL=http://control-service:8082
+    depends_on:
+      control-service:
+        condition: service_healthy
+    networks:
+      - dbguard-internal
+      - dbguard-twin-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+# ─── Volumes ───
+volumes:
+  dbguard-secrets:
+    driver: local
+    driver_opts:
+      type: none
+      device: /hermes/secrets
+      o: bind
+  dbguard-knowledge:
+    driver: local
+    driver_opts:
+      type: none
+      device: /hermes/knowledge
+      o: bind
+  dbguard-logs:
+    driver: local
+  dbguard-rag-data:
+    driver: local
+
+# ─── Networks ───
+networks:
+  # Gateway external access (only gateway publishes here)
+  dbguard-gateway-net:
+    driver: bridge
+
+  # Internal services (no external access)
+  dbguard-internal:
+    driver: bridge
+    internal: true  # No internet access
+
+  # Twin network (isolated, ephemeral)
+  dbguard-twin-net:
+    driver: bridge
+    internal: true  # No internet access

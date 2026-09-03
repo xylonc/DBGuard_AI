@@ -1,12 +1,5 @@
 """Pydantic v2 models for DBGuardAI evidence contracts.
 
-Contract A – Postgres16EvidenceBundle
-    Represents the JSON document emitted by collector/collect.sql.
-    Every top-level section is modelled so downstream code has typed
-    access to individual security facts (no dict[str, Any] collapse).
-
-Contract B – CreateRunRequest / CreateRunResponse
-    API wrapper.  The POST /api/v1/runs body carries {"target_evidence": <bundle>}.
 """
 
 from __future__ import annotations
@@ -17,7 +10,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-# ── envelope ────────────────────────────────────────────────────────────────
+
 
 
 class CollectorEnvelope(BaseModel):
@@ -43,7 +36,7 @@ class CollectorEnvelope(BaseModel):
         return v
 
 
-# ── identity ────────────────────────────────────────────────────────────────
+
 
 
 class PostgresIdentity(BaseModel):
@@ -70,8 +63,6 @@ class PostgresIdentity(BaseModel):
         return v
 
 
-# ── settings ────────────────────────────────────────────────────────────────
-
 
 class PostgresSetting(BaseModel):
     name: str
@@ -89,7 +80,6 @@ class PostgresSetting(BaseModel):
     sanitised: bool
 
 
-# ── roles ───────────────────────────────────────────────────────────────────
 
 
 class PostgresRole(BaseModel):
@@ -132,7 +122,7 @@ class RoleSettingItem(BaseModel):
     settings: Optional[list[str]]
 
 
-# ── databases ───────────────────────────────────────────────────────────────
+
 
 
 class DatabaseEvidence(BaseModel):
@@ -147,7 +137,6 @@ class DatabaseEvidence(BaseModel):
     datacl: Optional[list[str]]
 
 
-# ── schemas ─────────────────────────────────────────────────────────────────
 
 
 class SchemaEvidence(BaseModel):
@@ -158,7 +147,6 @@ class SchemaEvidence(BaseModel):
     public_has_usage: bool
 
 
-# ── object ACLs ────────────────────────────────────────────────────────────
 
 
 class ObjectACLEvidence(BaseModel):
@@ -171,7 +159,6 @@ class ObjectACLEvidence(BaseModel):
     rls_forced: bool
 
 
-# ── default ACLs ───────────────────────────────────────────────────────────
 
 
 class DefaultACLEvidence(BaseModel):
@@ -181,7 +168,7 @@ class DefaultACLEvidence(BaseModel):
     acl: Optional[list[str]]
 
 
-# ── RLS policies ───────────────────────────────────────────────────────────
+
 
 
 class RLSPolicyEvidence(BaseModel):
@@ -195,7 +182,7 @@ class RLSPolicyEvidence(BaseModel):
     with_check: Optional[str]
 
 
-# ── extensions ─────────────────────────────────────────────────────────────
+
 
 
 class ExtensionEvidence(BaseModel):
@@ -205,7 +192,7 @@ class ExtensionEvidence(BaseModel):
     owner: str
 
 
-# ── tablespaces (privileged; may be null with gap) ─────────────────────────
+
 
 
 class TablespaceEvidence(BaseModel):
@@ -215,7 +202,7 @@ class TablespaceEvidence(BaseModel):
     location: Optional[str]
 
 
-# ── foreign servers ────────────────────────────────────────────────────────
+
 
 
 class ForeignServerEvidence(BaseModel):
@@ -225,7 +212,7 @@ class ForeignServerEvidence(BaseModel):
     acl: Optional[list[str]]
 
 
-# ── event triggers ─────────────────────────────────────────────────────────
+
 
 
 class EventTriggerEvidence(BaseModel):
@@ -235,7 +222,6 @@ class EventTriggerEvidence(BaseModel):
     enabled: str
 
 
-# ── HBA rules (privileged; may be null with gap) ───────────────────────────
 
 
 class HBARule(BaseModel):
@@ -250,7 +236,6 @@ class HBARule(BaseModel):
     error: Optional[str]
 
 
-# ── ident mappings (privileged; may be null with gap) ──────────────────────
 
 
 class IdentMapping(BaseModel):
@@ -260,7 +245,6 @@ class IdentMapping(BaseModel):
     system_user: str
 
 
-# ── file settings (privileged; may be null with gap) ───────────────────────
 
 
 class FileSetting(BaseModel):
@@ -272,7 +256,6 @@ class FileSetting(BaseModel):
     error: Optional[str]
 
 
-# ── replication ────────────────────────────────────────────────────────────
 
 
 class ReplicationSlot(BaseModel):
@@ -308,8 +291,6 @@ class ReplicationEvidence(BaseModel):
     in_recovery: bool
 
 
-# ── connections ────────────────────────────────────────────────────────────
-
 
 class ConnectionSummary(BaseModel):
     application_name: str
@@ -319,7 +300,6 @@ class ConnectionSummary(BaseModel):
     count: int
 
 
-# ── uptime ─────────────────────────────────────────────────────────────────
 
 
 class UptimeEvidence(BaseModel):
@@ -327,7 +307,7 @@ class UptimeEvidence(BaseModel):
     uptime_seconds: int
 
 
-# ── gaps ───────────────────────────────────────────────────────────────────
+
 
 
 class EvidenceGap(BaseModel):
@@ -336,7 +316,7 @@ class EvidenceGap(BaseModel):
     remediation: str
 
 
-# ── redactions ─────────────────────────────────────────────────────────────
+
 
 
 class RedactionRecord(BaseModel):
@@ -345,7 +325,6 @@ class RedactionRecord(BaseModel):
     note: str
 
 
-# ── Contract A ─────────────────────────────────────────────────────────────
 
 
 class Postgres16EvidenceBundle(BaseModel):
@@ -378,7 +357,6 @@ class Postgres16EvidenceBundle(BaseModel):
     host_not_collected: list[str]
 
 
-# ── Contract B ─────────────────────────────────────────────────────────────
 
 
 class CreateRunRequest(BaseModel):

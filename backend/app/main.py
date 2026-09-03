@@ -26,19 +26,6 @@ from app.config import settings
 app = FastAPI(title="DBGuardAI")
 
 
-# ── legacy ──────────────────────────────────────────────────────────────────
-
-
-class HardenRequest(BaseModel):
-    user_prompt: str = Field(..., min_length=1)
-    metadata_snapshot: dict = Field(default_factory=dict)
-
-
-class HardenResponse(BaseModel):
-    status: str
-    target_db: str
-    ai_plan: str
-    retrieved_templates: list[str] = Field(default_factory=list)
 
 
 @app.get("/api/v1/health")
@@ -63,8 +50,6 @@ def create_run(request: CreateRunRequest):
         collector_schema_version=request.target_evidence.envelope.schema_version,
     )
 
-
-# ── template endpoints (unchanged) ──────────────────────────────────────────
 
 
 @app.post("/api/v1/templates/ingest-all")

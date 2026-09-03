@@ -228,3 +228,58 @@ def test_04_evidence_with_gaps():
     assert body["status"] == "validated"
     import uuid
     uuid.UUID(body["run_id"])
+
+
+# ── route registration tests ────────────────────────────────────────────────
+
+
+def test_routes_are_registered():
+    """Verify route registration on each router module.
+
+    This test inspects the router objects directly — it does NOT
+    import main.py (which would trigger heavy deps: vector_service
+    → openai network call → timeout).
+
+    The routes on the router objects are exactly what FastAPI will
+    expose once include_router() is called, so this is authoritative.
+    """
+    from app.runs_endpoint import router as runs_router
+    from app.templates_endpoint import router as templates_router
+
+    # ── Runs endpoint ─────────────────────────────────────────────────
+    runs_routes = [
+        (r.path, frozenset(r.methods))
+        for r in runs_router.routes
+        if hasattr(r, "path") and hasattr(r, "methods")
+    ]
+    assert ("/api/v1/runs", frozenset({"POST"})) in runs_routes, \
+        f"Missing POST /api/v1/runs — routes: {runs_routes}"
+
+    # ── Template endpoints ────────────────────────────────────────────
+    template_routes = [
+        (r.path, frozenset(r.methods))
+        for r in templates_router.routes
+        if hasattr(r, "path") and hasattr(r, "methods")
+    ]
+    expected = [
+        ("/api/v1/templates/ingest-all", frozenset({"POST"})),
+        ("/api/v1/templates/ingest", frozenset({"POST"})),
+        ("/api/v1/templates/search", frozenset({"GET"})),
+    ]
+    for path, methods in expected:
+        assert (path, methods) in template_routes, \
+            f"Missing {methods} {path} — routes: {template_routes}"
+
+    # ── Health check (from main.py, verified by reading source file) ────
+    # We read the file directly because importing main.py triggers the full
+    # import chain (templates_endpoint → vector_service → openai),
+    # which hangs in this environment.
+    from pathlib import Path
+    main_source = Path(__file__).resolve().parent.parent / "app" / "main.py"
+    source = main_source.read_text()
+    assert '@app.get("/api/v1/health")' in source, \
+        "GET /api/v1/health endpoint not found in main.py"
+    assert "app.include_router(runs_router)" in source, \
+        "runs_router not included in main.py"
+    assert "app.include_router(templates_router)" in source, \
+        "templates_router not included in main.py"

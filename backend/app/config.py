@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     ollama_api_key: str = ""
     ollama_api_base: str = "https://api.ollama.com/v1"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

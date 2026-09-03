@@ -7,26 +7,10 @@ services.  This keeps the runs endpoint testable without the heavy deps
 
 import uuid
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
 
-from app.contracts import (
-    CreateRunRequest,
-    CreateRunResponse,
-)
+from app.contracts import CreateRunRequest, CreateRunResponse
 
 router = APIRouter()
-
-
-class HardenRequest(BaseModel):
-    user_prompt: str = Field(..., min_length=1)
-    metadata_snapshot: dict = Field(default_factory=dict)
-
-
-class HardenResponse(BaseModel):
-    status: str
-    target_db: str
-    ai_plan: str
-    retrieved_templates: list[str] = Field(default_factory=list)
 
 
 @router.post("/api/v1/runs", response_model=CreateRunResponse)
@@ -45,11 +29,3 @@ def create_run(request: CreateRunRequest):
         target_major_version=16,
         collector_schema_version=request.target_evidence.envelope.schema_version,
     )
-
-
-# Legacy endpoint — kept but does NOT do anything real in tests.
-# The actual implementation lives in the original main.py; this is just
-# a stub so the import chain doesn't break.
-def legacy_harden(request: HardenRequest):
-    """Deprecated: harden endpoint replaced by /api/v1/runs."""
-    raise NotImplementedError("/api/v1/harden has been replaced by /api/v1/runs")

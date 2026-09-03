@@ -1,21 +1,37 @@
 """FastAPI endpoints for DBGuardAI."""
 
+import uuid
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-from typing import Any, Optional
 
-from app.models import TemplateIngestRequest, TemplateIngestResponse, TemplateSearchResponse
-from app.services.ai_service import generate_hardening_plan
+from app.models import (
+    TemplateIngestRequest,
+    TemplateIngestResponse,
+    TemplateSearchResponse,
+)
+from app.contracts import (
+    CreateRunRequest,
+    CreateRunResponse,
+    Postgres16EvidenceBundle,
+)
 from app.services.template_service import compile_sql_plan
-from app.services.vector_service import search_templates, ingest_all_templates, init_db, ingest_template
+from app.services.vector_service import (
+    search_templates,
+    ingest_all_templates,
+    init_db,
+    ingest_template,
+)
 from app.config import settings
 
 app = FastAPI(title="DBGuardAI")
 
 
+# ── legacy ──────────────────────────────────────────────────────────────────
+
+
 class HardenRequest(BaseModel):
     user_prompt: str = Field(..., min_length=1)
-    metadata_snapshot: dict[str, Any] = Field(default_factory=dict)
+    metadata_snapshot: dict = Field(default_factory=dict)
 
 
 class HardenResponse(BaseModel):
@@ -30,31 +46,25 @@ def health_check():
     return {"status": "healthy", "service": "DBGuardAI"}
 
 
-@app.post("/api/v1/harden", response_model=HardenResponse)
-def create_hardening_plan(request: HardenRequest):
-    # Step 1: RAG retrieval
-    retrieved = search_templates(request.user_prompt, top_k=3)
-    template_ids = [r["template_name"] for r in retrieved]
+@app.post("/api/v1/runs", response_model=CreateRunResponse)
+def create_run(request: CreateRunRequest):
+    """Accept a collector evidence bundle.
 
-    # Step 2: LLM decision with retrieved context
-    ai_decision = generate_hardening_plan(
-        user_prompt=request.user_prompt,
-        metadata=request.metadata_snapshot,
-        retrieved_templates=retrieved
+    Performs only:
+      1. Pydantic structural validation
+      2. PostgreSQL 16 / collector schema version validation
+      3. Returns a validated response (no RAG / LLM / SQL / sandbox).
+    """
+    return CreateRunResponse(
+        run_id=uuid.uuid4(),
+        status="validated",
+        target_engine="postgresql",
+        target_major_version=16,
+        collector_schema_version=request.target_evidence.envelope.schema_version,
     )
 
-    # Step 3: Compile SQL
-    full_sql_plan = compile_sql_plan(
-        template_ids=ai_decision.get("template_ids", []),
-        variables=ai_decision.get("parameters", {})
-    )
 
-    return HardenResponse(
-        status="Plan generated successfully",
-        target_db=request.metadata_snapshot.get("engine", "postgresql"),
-        ai_plan=full_sql_plan,
-        retrieved_templates=template_ids
-    )
+# ── template endpoints (unchanged) ──────────────────────────────────────────
 
 
 @app.post("/api/v1/templates/ingest-all")

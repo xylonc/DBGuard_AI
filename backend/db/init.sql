@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS templates (
     tags            TEXT[] DEFAULT '{}',
     risk_level      TEXT,
     pg_version      TEXT,
-    embedding       vector(1536),          -- OpenAI text-embedding-3-small dim
+    embedding       vector(768),           -- nomic-embed-text default dim
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );

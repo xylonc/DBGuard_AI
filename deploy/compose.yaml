@@ -2,7 +2,7 @@ version: "3.8"
 
 # DBGuardAI POC — Docker Compose Stack
 # All services communicate over internal networks.
-# No service publishes ports to the host except the gateway.
+# No service publishes ports to the host except the gateway and rag-postgres.
 
 name: dbguard-ai
 
@@ -24,6 +24,13 @@ services:
       - HERMES_APP_NAME=DBGuardAI
       - HERMES_MCP_RESTRICTED=true
       - HERMES_APPROVAL_POLICY=high-risk
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://localhost:11434}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - RAG_EMBEDDING_DIM=${RAG_EMBEDDING_DIM:-1536}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
     volumes:
       - dbguard-secrets:/hermes/secrets
       - dbguard-knowledge:/hermes/knowledge
@@ -31,7 +38,7 @@ services:
     depends_on:
       rag-postgres:
         condition: service_healthy
-      control-service:
+      rag-service:
         condition: service_healthy
     networks:
       - dbguard-gateway-net
@@ -45,10 +52,9 @@ services:
     restart: unless-stopped
 
   # ─── Control Service (deterministic enforcement engine) ───
+  # NOTE: Dockerfile.control-service is not yet implemented — placeholder
+  # Remove the build section and use the image directly once it's ready.
   control-service:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.control-service
     image: dbguardai/control-service:1.0.0
     container_name: dbguard-control
     ports:
@@ -57,12 +63,15 @@ services:
     environment:
       - CONTROL_SERVICE_DB_URL=postgresql://admin:securepassword123@rag-postgres:5432/dbguard_state
       - DBGUARD_VERSION=1.0.0
+      - RAG_SERVICE_URL=http://rag-service:8083
     volumes:
       - dbguard-secrets:/hermes/secrets
       - dbguard-logs:/hermes/logs
       - ./catalog/controls:/catalog/controls:ro  # Read-only catalog mount
     depends_on:
       rag-postgres:
+        condition: service_healthy
+      rag-service:
         condition: service_healthy
     networks:
       - dbguard-internal
@@ -72,8 +81,43 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    # TODO: Re-enable build when control-service is implemented
+    # build:
+    #   context: .
+    #   dockerfile: deploy/Dockerfile.control-service
 
-  # ─── RAG Service (PostgreSQL + pgvector for knowledge base) ───
+  # ─── RAG Service (knowledge ingestion + semantic search) ───
+  rag-service:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.rag-service
+    image: dbguardai/rag-service:1.0.0
+    container_name: dbguard-rag-service
+    ports:
+      - "8083:8083"  # RAG REST API
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://admin:securepassword123@rag-postgres:5432/dbguard_rag
+      - RAG_EMBEDDING_DIM=${RAG_EMBEDDING_DIM:-1536}
+      - RAG_EMBEDDING_MODEL=${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://localhost:11434}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+    networks:
+      - dbguard-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # ─── RAG PostgreSQL (pgvector for knowledge base) ───
   rag-postgres:
     image: postgres:16
     container_name: dbguard-rag
@@ -110,6 +154,7 @@ services:
       - TWIN_CPU_LIMIT=0.5
       - TWIN_MEMORY_LIMIT=512m
       - TWIN_TTL_MINUTES=60
+      - CONTROL_SERVICE_URL=http://control-service:8082
     depends_on:
       control-service:
         condition: service_healthy

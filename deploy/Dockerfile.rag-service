@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install deps
+RUN pip install --no-cache-dir \
+    psycopg2-binary \
+    pyyaml \
+    fastapi \
+    uvicorn \
+    openai \
+    requests \
+    openpyxl
+
+# Copy RAG service code
+COPY services/rag/ services/rag/
+
+# Expose RAG API port
+EXPOSE 8083
+
+# Run the service
+CMD ["uvicorn", "services.rag.rag_service:app", "--host", "0.0.0.0", "--port", "8083"]

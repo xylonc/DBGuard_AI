@@ -309,17 +309,17 @@ class RAGService:
         # Check for supersession
         if document.superseded_by:
             existing = self.get_document_metadata(document.superseded_by)
-            if existing and existing.versions_stored:
-                return True  # Superseding a valid document is fine
+            if existing and existing.status in ('active', 'superseded'):
+                return True  # Superseding an existing document is fine
         
         return True
     
     def _chunk_document(self, document: KnowledgeDocument) -> List[KnowledgeChunk]:
         """
-        Split document into chunks by section headers.
+        Split document into chunks by section headers, then further split
+        any section larger than CHUNK_SIZE using sliding window overlap.
         
         Preserves section headers as context for each chunk.
-        Uses sliding window approach for better semantic continuity.
         """
         chunks = []
         lines = document.content.split('\n')
@@ -358,43 +358,49 @@ class RAGService:
             if chunk:
                 chunks.append(chunk)
         
-        # Apply sliding window overlap if needed
-        if len(chunks) > 1:
-            chunks = self._apply_overlap(chunks)
+        # Split oversized chunks using sliding window (P1 fix)
+        result = []
+        for c in chunks:
+            if len(c.content) <= self.chunk_size:
+                result.append(c)
+            else:
+                result.extend(self._split_oversized_chunk(c))
         
-        return chunks
-    
-    def _create_chunk(
-        self, 
-        document: KnowledgeDocument,
-        section: str,
-        content: str,
-        chunk_index: int,
-    ) -> Optional[KnowledgeChunk]:
-        """Create a KnowledgeChunk from document content."""
-        if not content.strip():
-            return None
+        # Enforce MAX_CHUNKS
+        if len(result) > MAX_CHUNKS:
+            logger.warning(f"Document {document.document_id} exceeds MAX_CHUNKS ({MAX_CHUNKS}); truncating to first {MAX_CHUNKS} chunks")
+            result = result[:MAX_CHUNKS]
         
-        # Calculate chunk hash
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        return result
+
+    def _split_oversized_chunk(self, chunk: KnowledgeChunk) -> List[KnowledgeChunk]:
+        """Split a chunk larger than chunk_size using sliding window overlap."""
+        text = chunk.content
+        size = self.chunk_size
+        overlap = self.chunk_overlap
+        sub_chunks = []
+        start = 0
+        idx = chunk.chunk_index
         
-        return KnowledgeChunk(
-            document_id=document.document_id,
-            section=section,
-            content=content,
-            chunk_hash=content_hash,
-            chunk_index=chunk_index,
-            postgresql_versions=document.postgresql_versions,
-            environment_applicability=document.environment_applicability,
-            source_document_title=document.title,
-            source_document_version=document.version,
-        )
-    
-    def _apply_overlap(self, chunks: List[KnowledgeChunk]) -> List[KnowledgeChunk]:
-        """Apply sliding window overlap between chunks."""
-        # For now, keep chunks as-is; overlap is mainly for embedding quality
-        # In production, you might merge small adjacent chunks
-        return chunks
+        while start < len(text):
+            end = min(start + size, len(text))
+            sub_text = text[start:end]
+            sub_hash = hashlib.sha256(sub_text.encode()).hexdigest()
+            sub_chunks.append(KnowledgeChunk(
+                document_id=chunk.document_id,
+                section=f"{chunk.section} (cont.)" if start > 0 else chunk.section,
+                content=sub_text,
+                chunk_hash=sub_hash,
+                chunk_index=idx,
+                postgresql_versions=chunk.postgresql_versions,
+                environment_applicability=chunk.environment_applicability,
+                source_document_title=chunk.source_document_title,
+                source_document_version=chunk.source_document_version,
+            ))
+            idx += 1
+            start = end - overlap if end < len(text) else end
+        
+        return sub_chunks
     
     def _store_chunks(
         self, 
@@ -408,6 +414,44 @@ class RAGService:
         try:
             cur = conn.cursor()
             
+            # Insert document metadata row (P0 fix: now stored on ingest)
+            cur.execute("""
+                INSERT INTO knowledge_documents (
+                    document_id, title, version, status,
+                    effective_date, expiry_date,
+                    postgresql_versions, environment_applicability,
+                    policy_owner, classification, source_url, superseded_by,
+                    document_hash
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (document_id) DO UPDATE
+                SET version = EXCLUDED.version,
+                    status = EXCLUDED.status,
+                    effective_date = EXCLUDED.effective_date,
+                    expiry_date = EXCLUDED.expiry_date,
+                    postgresql_versions = EXCLUDED.postgresql_versions,
+                    environment_applicability = EXCLUDED.environment_applicability,
+                    policy_owner = EXCLUDED.policy_owner,
+                    classification = EXCLUDED.classification,
+                    source_url = EXCLUDED.source_url,
+                    superseded_by = EXCLUDED.superseded_by,
+                    document_hash = EXCLUDED.document_hash,
+                    updated_at = NOW()
+            """, (
+                document.document_id,
+                document.title,
+                document.version,
+                'active',
+                document.effective_date,
+                document.expiry_date,
+                document.postgresql_versions,
+                document.environment_applicability,
+                document.policy_owner,
+                document.classification,
+                document.source_url,
+                document.superseded_by,
+                document.document_hash,
+            ))
+
             for chunk, embedding in embeddings:
                 # Store chunk metadata
                 cur.execute("""
@@ -483,19 +527,20 @@ class RAGService:
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             
-            # Build WHERE clause for filters
-            where_clauses = []
-            params = [query]
+            # Build WHERE clause for filters (P0 fix: enforce document lifecycle)
+            where_clauses = [
+                "kd.status = 'active'",  # Only active docs
+                "(kd.expiry_date IS NULL OR kd.expiry_date > NOW())",  # Not expired
+            ]
+            params = []
             
             if pg_version:
-                where_clauses.append(
-                    "kc.postgresql_versions && %s"
-                )
+                where_clauses.append("kc.postgresql_versions && %s")
                 params.append(f"{{{pg_version}}}")
             
-            where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
+            where_clause = " AND ".join(where_clauses)
             
-            # Execute semantic search with pgvector
+            # Execute semantic search with pgvector (P0 fix: joined with documents table for lifecycle filtering)
             query_embedding = self._generate_embedding(query)
             embedding_array = f"[{','.join(str(x) for x in query_embedding)}]"
             
@@ -511,16 +556,23 @@ class RAGService:
                     kc.environment_applicability,
                     kc.source_document_title,
                     kc.source_document_version,
+                    kd.postgresql_versions AS doc_pg_versions,
+                    kd.environment_applicability AS doc_env_applicability,
+                    kd.effective_date,
+                    kd.expiry_date,
+                    kd.status AS doc_status,
                     ke.embedding,
                     (ke.embedding <=> '{embedding_array}'::vector) AS similarity
                 FROM knowledge_chunks kc
                 JOIN knowledge_embeddings ke ON kc.id = ke.chunk_id
+                JOIN knowledge_documents kd ON kc.document_id = kd.document_id
                 WHERE {where_clause}
                 ORDER BY similarity ASC  -- pgvector: lower = more similar
                 LIMIT %s
             """
             
             params.append(top_k)
+            params.append(query)
             
             cur.execute(sql, params)
             rows = cur.fetchall()
@@ -601,7 +653,7 @@ class RAGService:
             cur.execute("""
                 SELECT document_id, title, version, status,
                        effective_date, expiry_date, postgresql_versions,
-                       policy_owner, classification, source_url,
+                       environment_applicability, policy_owner, classification, source_url,
                        created_at, updated_at
                 FROM knowledge_documents
                 WHERE document_id = %s
@@ -616,12 +668,13 @@ class RAGService:
                     status=row[3],
                     effective_date=row[4],
                     expiry_date=row[5],
-                    postgresql_versions=row[6],
-                    policy_owner=row[7],
-                    classification=row[8],
-                    source_url=row[9],
-                    created_at=row[10],
-                    updated_at=row[11],
+                    postgresql_versions=row[6] or [],
+                    environment_applicability=row[7] or ['all'],
+                    policy_owner=row[8] or '',
+                    classification=row[9],
+                    source_url=row[10],
+                    created_at=row[11],
+                    updated_at=row[12],
                 )
             return None
             

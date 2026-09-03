@@ -64,15 +64,21 @@ Return ONLY a single valid JSON object:
 Database metadata: {json.dumps(metadata)}"""
 
     try:
-        response = completion(
+        completion_kwargs = dict(
             model=settings.llm_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            api_key=settings.openai_api_key,
             temperature=0.3
         )
+        if settings.openai_api_key:
+            completion_kwargs["api_key"] = settings.openai_api_key
+        elif settings.ollama_api_base:
+            completion_kwargs["api_base"] = settings.ollama_api_base
+            completion_kwargs["api_key"] = settings.ollama_api_key or "ollama"
+
+        response = completion(**completion_kwargs)
 
         content = response.choices[0].message.content.strip()
 

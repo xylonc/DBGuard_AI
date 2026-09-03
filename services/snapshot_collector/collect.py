@@ -5,28 +5,161 @@ Collects security-relevant metadata from PostgreSQL without copying business dat
 import argparse
 import hashlib
 import json
-import sys
 from datetime import datetime
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Optional, List
 
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
-# Import our data models for validation
-from models import (
-    SnapshotBundle,
-    DatabaseIdentity,
-    PostgreSQLSetting,
-    RoleInfo,
-    GrantInfo,
-    ExtensionInfo,
-    AuthenticationRule,
-    TLSMetadata,
-    LoggingConfig,
-    ReplicationMetadata,
-)
+
+# ─── Inlined Data Models (to avoid cross-package import issues) ───
+
+class SnapshotBundle:
+    def __init__(self, collector_version: str, collection_timestamp: datetime,
+                 identity: 'DatabaseIdentity', settings: List['PostgreSQLSetting'],
+                 roles: List['RoleInfo'], grants: List['GrantInfo'],
+                 extensions: List['ExtensionInfo'],
+                 authentication_rules: List['AuthenticationRule'],
+                 tls_metadata: Optional['TLSMetadata'],
+                 logging_config: Optional['LoggingConfig'],
+                 replication_metadata: Optional['ReplicationMetadata'],
+                 collection_errors: List[str] = None, snapshot_hash: str = ''):
+        self.collector_version = collector_version
+        self.collection_timestamp = collection_timestamp
+        self.identity = identity
+        self.settings = settings
+        self.roles = roles
+        self.grants = grants
+        self.extensions = extensions
+        self.authentication_rules = authentication_rules
+        self.tls_metadata = tls_metadata
+        self.logging_config = logging_config
+        self.replication_metadata = replication_metadata
+        self.collection_errors = collection_errors or []
+        self.snapshot_hash = snapshot_hash
+
+    def model_dump_json(self, indent: int = None, default=None) -> str:
+        import json
+        return json.dumps({
+            'collector_version': self.collector_version,
+            'collection_timestamp': self.collection_timestamp.isoformat(),
+            'snapshot_hash': self.snapshot_hash,
+            'identity': {
+                'engine': self.identity.engine,
+                'version': self.identity.version,
+                'server_version_num': self.identity.server_version_num,
+                'distribution': self.identity.distribution,
+                'architecture': self.identity.architecture,
+                'deployment_type': self.identity.deployment_type,
+            },
+            'settings': [{'name': s.name, 'setting': s.setting, 'source': s.source} for s in self.settings],
+            'roles': [{'name': r.name, 'is_superuser': r.is_superuser, 'can_create_db': r.can_create_db,
+                       'can_create_role': r.can_create_role, 'member_of': r.member_of} for r in self.roles],
+            'grants': [{'table_name': g.table_name, 'schema_name': g.schema_name,
+                        'role_name': g.role_name, 'privilege_type': g.privilege_type,
+                        'with_grant_option': g.with_grant_option} for g in self.grants],
+            'extensions': [{'name': e.name, 'version': e.version, 'schema_name': e.schema_name} for e in self.extensions],
+            'authentication_rules': [{'database': a.database, 'user': a.user, 'address': a.address,
+                                      'method': a.method, 'auth_delay_enabled': a.auth_delay_enabled} for a in self.authentication_rules],
+            'tls_metadata': {'ssl_enabled': self.tls_metadata.ssl_enabled,
+                             'ssl_cert_file': self.tls_metadata.ssl_cert_file,
+                             'ssl_key_file': self.tls_metadata.ssl_key_file,
+                             'ssl_min_protocol_version': self.tls_metadata.ssl_min_protocol_version} if self.tls_metadata else None,
+            'logging_config': {'log_statement': self.logging_config.log_statement,
+                               'log_connections': self.logging_config.log_connections,
+                               'log_disconnections': self.logging_config.log_disconnections,
+                               'log_line_prefix': self.logging_config.log_line_prefix,
+                               'logging_collector': self.logging_config.logging_collector} if self.logging_config else None,
+            'replication_metadata': {'replication_enabled': self.replication_metadata.replication_enabled,
+                                     'max_wal_senders': self.replication_metadata.max_wal_senders,
+                                     'wal_level': self.replication_metadata.wal_level} if self.replication_metadata else None,
+            'collection_errors': self.collection_errors,
+        }, indent=indent or 2, default=str)
+
+
+class DatabaseIdentity:
+    def __init__(self, engine: str, version: str, server_version_num: Optional[int],
+                 distribution: str, architecture: str, deployment_type: str):
+        self.engine = engine
+        self.version = version
+        self.server_version_num = server_version_num
+        self.distribution = distribution
+        self.architecture = architecture
+        self.deployment_type = deployment_type
+
+
+class PostgreSQLSetting:
+    def __init__(self, name: str, setting: str, source: str = 'postgresql.conf'):
+        self.name = name
+        self.setting = setting
+        self.source = source
+
+
+class RoleInfo:
+    def __init__(self, name: str, is_superuser: bool, can_create_db: bool,
+                 can_create_role: bool, member_of: List[str] = None, password_encrypted: bool = True):
+        self.name = name
+        self.is_superuser = is_superuser
+        self.can_create_db = can_create_db
+        self.can_create_role = can_create_role
+        self.member_of = member_of or []
+        self.password_encrypted = password_encrypted
+
+
+class GrantInfo:
+    def __init__(self, table_name: str, schema_name: str, role_name: str,
+                 privilege_type: str, with_grant_option: bool = False):
+        self.table_name = table_name
+        self.schema_name = schema_name
+        self.role_name = role_name
+        self.privilege_type = privilege_type
+        self.with_grant_option = with_grant_option
+
+
+class ExtensionInfo:
+    def __init__(self, name: str, version: Optional[str], schema_name: str = 'public'):
+        self.name = name
+        self.version = version
+        self.schema_name = schema_name
+
+
+class AuthenticationRule:
+    def __init__(self, database: str, user: str, address: Optional[str] = None,
+                 method: str = 'scram-sha-256', auth_delay_enabled: bool = False):
+        self.database = database
+        self.user = user
+        self.address = address
+        self.method = method
+        self.auth_delay_enabled = auth_delay_enabled
+
+
+class TLSMetadata:
+    def __init__(self, ssl_enabled: bool, ssl_cert_file: Optional[str] = None,
+                 ssl_key_file: Optional[str] = None, ssl_min_protocol_version: Optional[str] = None):
+        self.ssl_enabled = ssl_enabled
+        self.ssl_cert_file = ssl_cert_file
+        self.ssl_key_file = ssl_key_file
+        self.ssl_min_protocol_version = ssl_min_protocol_version
+
+
+class LoggingConfig:
+    def __init__(self, log_statement: str = 'none', log_connections: bool = False,
+                 log_disconnections: bool = False, log_line_prefix: str = '',
+                 logging_collector: bool = False):
+        self.log_statement = log_statement
+        self.log_connections = log_connections
+        self.log_disconnections = log_disconnections
+        self.log_line_prefix = log_line_prefix
+        self.logging_collector = logging_collector
+
+
+class ReplicationMetadata:
+    def __init__(self, replication_enabled: bool = False, max_wal_senders: int = 0,
+                 wal_level: str = 'replica'):
+        self.replication_enabled = replication_enabled
+        self.max_wal_senders = max_wal_senders
+        self.wal_level = wal_level
 
 
 class SnapshotCollector:

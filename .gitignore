@@ -16,3 +16,5 @@ pgvector_data/
 test-out/
 bundle.json
 *.bundle.json
+
+local docs

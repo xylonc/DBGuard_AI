@@ -1,8 +1,7 @@
 name: dbguard-ai
 
-# Current runnable POC: one API plus one pgvector database. HERMES packaging
-# remains an integration artifact until a real base image is supplied. The
-# assessment, reporting, and twin-runner services are intentionally not started.
+# Proposal-phase stack: DBGuard API, restricted MCP adapter, the official pinned
+# HERMES runtime, its built-in dashboard, and one pgvector database.
 services:
   api:
     build:
@@ -33,6 +32,55 @@ services:
       retries: 5
     restart: unless-stopped
 
+  mcp:
+    image: dbguardai/api:0.2.0
+    command: ["python", "-m", "services.dbguard_mcp.server"]
+    environment:
+      DBGUARD_API_URL: http://api:8000
+      DBGUARD_MCP_PORT: 8001
+      DBGUARD_MCP_TIMEOUT_SECONDS: 60
+    expose:
+      - "8001"
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  hermes:
+    build:
+      context: ..
+      dockerfile: hermes/Dockerfile
+    image: dbguardai/hermes:v2026.8.31
+    command: ["gateway", "run"]
+    ports:
+      - "127.0.0.1:8642:8642"
+      - "127.0.0.1:9119:9119"
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: 8642
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-dbguard-local-dev-key}
+      HERMES_DASHBOARD: "1"
+      HERMES_TUI_SKILLS: dbguard-hardening
+      HERMES_DASHBOARD_USERNAME: ${HERMES_DASHBOARD_USERNAME:-dbguard}
+      HERMES_DASHBOARD_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:-dbguard-local-only}
+    volumes:
+      - hermes-data:/opt/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mcp:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     ports:
@@ -52,5 +100,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  hermes-data:
   postgres-data:
   snapshots:

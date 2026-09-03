@@ -3,7 +3,11 @@ from datetime import datetime
 
 from pydantic import ValidationError
 
-from app.models import KnowledgeIngestRequest, TemplateIngestRequest
+from app.models import (
+    KnowledgeIngestRequest,
+    ProposalCompileRequest,
+    TemplateIngestRequest,
+)
 
 
 class ApprovalContractTests(unittest.TestCase):
@@ -34,6 +38,22 @@ class ApprovalContractTests(unittest.TestCase):
             sql_template="SELECT 1;",
         )
         self.assertEqual(request.status, "draft")
+
+    def test_proposal_requires_at_least_one_template(self):
+        with self.assertRaises(ValidationError):
+            ProposalCompileRequest(
+                snapshot_id="snap-abc123",
+                requirement="Remove unnecessary public access",
+                template_ids=[],
+            )
+
+    def test_proposal_limits_template_selection(self):
+        with self.assertRaises(ValidationError):
+            ProposalCompileRequest(
+                snapshot_id="snap-abc123",
+                requirement="Apply reviewed hardening",
+                template_ids=[f"template-{index}" for index in range(6)],
+            )
 
 
 if __name__ == "__main__":

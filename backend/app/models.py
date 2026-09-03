@@ -31,6 +31,16 @@ class HardenResponse(BaseModel):
     requires_dba_approval: bool = True
 
 
+class ProposalCompileRequest(BaseModel):
+    """Deterministic proposal compilation requested by the HERMES agent."""
+
+    snapshot_id: str = Field(min_length=1, max_length=64)
+    requirement: str = Field(min_length=1, max_length=4000)
+    template_ids: list[str] = Field(min_length=1, max_length=5)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    environment: str = Field(default="all", min_length=1, max_length=64)
+
+
 class TemplateIngestRequest(BaseModel):
     """Request to ingest a single template into pgvector."""
     template_name: str

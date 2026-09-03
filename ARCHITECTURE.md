@@ -30,12 +30,13 @@ flowchart TD
     J[SQL template] -->|4. Ingest as draft| K[Template repository]
     K -->|Engineer review| L[Approved template]
 
-    M[Analyst describes requirement in natural language] --> N[POST /api/v1/harden]
-    F --> N
-    I -->|Applicable evidence| N
-    L -->|Allowed command structure| N
-    N --> O[AI selects and fills approved template]
-    O --> P[Proposal: SQL, reasoning, citations and review flag]
+    M[Analyst describes requirement in HERMES chat] --> N[HERMES reasoning agent]
+    N -->|Four allowlisted MCP operations| O[DBGuard MCP bridge]
+    O --> F
+    F --> O
+    I -->|Applicable evidence| O
+    L -->|Allowed command structure| O
+    O --> P[Trusted API revalidates and compiles proposal]
     P --> Q[DBA or engineer verifies proposal]
 ```
 
@@ -43,7 +44,11 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    U[User interface or Swagger UI] --> API[FastAPI application]
+    U[Analyst browser] -->|localhost 9119 + login| HER[Official HERMES dashboard]
+    HER -->|DBGuard skill| AG[HERMES reasoning agent]
+    AG -->|Four operations| MCP[HTTP MCP adapter]
+    MCP --> API[Trusted FastAPI application]
+    SW[Swagger UI] --> API
     COL[Collector bundle] --> API
     API --> SNAP[Immutable snapshot volume]
     API --> DB[(PostgreSQL 16 with pgvector)]
@@ -51,18 +56,22 @@ flowchart LR
     DOC --> CHUNK[Knowledge chunks]
     CHUNK --> EMB[Vector embeddings]
     DB --> TPL[SQL templates]
-    API -. proposal tools .-> HER[HERMES package]
+    API -->|Validated proposal| MCP
+    MCP --> AG
 ```
 
-The default Docker Compose deployment starts only:
+The default Docker Compose deployment starts:
 
 - `api`: snapshot intake, knowledge management, template management, semantic
   retrieval, and proposal generation;
-- `postgres`: PostgreSQL with pgvector for knowledge and template storage.
+- `postgres`: PostgreSQL with pgvector for knowledge and template storage;
+- `mcp`: a stateless HTTP adapter that exposes only the four operations HERMES
+  needs and does not expose ingestion, approval, database or execution access;
+- `hermes`: the official v0.21.0 runtime pinned by image digest, DBGuard context
+  and skill, authenticated dashboard, gateway API, and persistent sessions.
 
-The repository contains HERMES configuration and typed proposal contracts, but
-the external HERMES runtime is not included. Twin runner, assessment, and
-reporting are deferred and are not started by the current Compose file.
+Twin runner, assessment, and reporting are deferred and are not started by the
+current Compose file.
 
 ## API endpoints in simple terms
 
@@ -174,7 +183,7 @@ score so the engineer can verify the recommendation.
 
 #### `POST /api/v1/harden`
 
-This is the main application endpoint. It accepts:
+This is the legacy direct-AI application endpoint. It accepts:
 
 - `user_prompt`: the analyst’s natural-language hardening requirement;
 - `snapshot_id`: the stored collector snapshot to use as database context;
@@ -192,6 +201,63 @@ DBGuardAI then:
 
 If no approved evidence or template is available, the endpoint returns
 `MANUAL_REVIEW_REQUIRED` instead of inventing a command.
+
+#### `POST /api/v1/proposals/compile`
+
+This is the trusted compilation endpoint used by HERMES. It accepts the
+snapshot ID, natural-language requirement, environment, template IDs selected
+by HERMES, and the template parameters.
+
+It deliberately performs no second LLM call. Instead, the API:
+
+1. reloads the immutable snapshot;
+2. reruns active template retrieval inside the trusted boundary;
+3. rejects any selected ID outside that result set;
+4. searches for approved, effective and applicable RAG evidence;
+5. safely quotes identifiers and renders only stored reviewed templates;
+6. returns the SQL, citations, selection explanation and mandatory DBA review
+   flag.
+
+This separation lets HERMES understand conversational intent while preventing
+the agent from inventing or directly emitting executable SQL.
+
+## HERMES and MCP boundary
+
+```mermaid
+sequenceDiagram
+    actor Analyst
+    participant H as HERMES dashboard/agent
+    participant M as Restricted MCP bridge
+    participant A as Trusted DBGuard API
+    participant D as Snapshot + pgvector stores
+
+    Analyst->>H: Snapshot ID + requirement in natural language
+    H->>M: get_snapshot_context
+    M->>A: GET snapshot context
+    A->>D: Read immutable snapshot
+    D-->>A: Version, settings, roles, collection gaps
+    A-->>H: Normalized context
+    H->>M: search_approved_knowledge/templates
+    M->>A: Retrieval requests
+    A->>D: Filter lifecycle + applicability, then vector search
+    D-->>H: Evidence and eligible template IDs
+    H->>M: compile_hardening_proposal
+    M->>A: Requirement + selected IDs + parameters
+    A->>A: Revalidate selection and render reviewed templates
+    A-->>H: Review-only SQL + citations
+    H-->>Analyst: Explanation, gaps, risks and DBA approval warning
+```
+
+The MCP server exposes exactly these four tools:
+
+- `get_snapshot_context`;
+- `search_approved_knowledge`;
+- `search_approved_templates`;
+- `compile_hardening_proposal`.
+
+It exposes zero MCP prompts and zero MCP resources. HERMES may represent these
+behind its deferred `tool_search`, `tool_describe` and `tool_call` facade, but
+the underlying registry remains limited to the same four operations.
 
 ## Approval lifecycle
 
@@ -262,6 +328,13 @@ superseded documents from appearing in results.
 - The AI cannot introduce a template outside the approved retrieval set.
 - HERMES cannot access PostgreSQL, execute SQL, use Docker, approve content, or
   approve its own proposal.
+- HERMES browser, web, shell, file, process, code-execution, memory, delegation,
+  and scheduled-job toolsets are disabled for the API/dashboard agent.
+- The dashboard is password protected, its password is hashed at startup, and
+  host-facing HERMES ports bind only to loopback.
+- The HERMES persistent volume stores conversations and runtime state; managed
+  DBGuard instructions and the `dbguard-hardening` skill are refreshed from the
+  image at every start.
 
 ## Deferred architecture
 
@@ -269,7 +342,6 @@ The source for twin-runner and reporting is retained for future work. Before
 those components are enabled, the project still needs:
 
 - a baseline assessment and scoring contract;
-- an authenticated HERMES-to-API tool gateway;
 - a narrow twin-runner HTTP boundary;
 - real signed and approved PostgreSQL image records;
 - isolation and compatibility integration tests;

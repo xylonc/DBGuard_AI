@@ -16,6 +16,7 @@ from app.models import (
     KnowledgeApprovalRequest,
     KnowledgeIngestRequest,
     KnowledgeSearchResponse,
+    ProposalCompileRequest,
     TemplateIngestRequest,
     TemplateIngestResponse,
     TemplateApprovalRequest,
@@ -149,6 +150,76 @@ def create_hardening_plan(request: HardenRequest):
         retrieved_templates=template_ids,
         evidence=citations,
         reasoning=ai_decision.get("reasoning", ""),
+    )
+
+
+@app.post("/api/v1/proposals/compile", response_model=HardenResponse)
+def compile_hardening_proposal(request: ProposalCompileRequest):
+    """Validate a HERMES selection and render only reviewed SQL templates."""
+    try:
+        metadata = snapshot_store.context(request.snapshot_id).model_dump(mode="json")
+    except SnapshotNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from exc
+
+    # Re-run retrieval inside the trusted API boundary. HERMES cannot make an
+    # arbitrary or archived template eligible simply by naming it.
+    retrieved = search_templates(request.requirement, top_k=5)
+    eligible_template_ids = {item["template_name"] for item in retrieved}
+    selected_template_ids = set(request.template_ids)
+    invalid_template_ids = sorted(selected_template_ids - eligible_template_ids)
+    if invalid_template_ids:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Templates are not in the active retrieval set: "
+                f"{invalid_template_ids}"
+            ),
+        )
+
+    evidence_results = RAGService(settings.database_url).search(
+        query=request.requirement,
+        pg_version=metadata.get("postgresql_version"),
+        environment=request.environment,
+        top_k=5,
+        min_score=0.35,
+    )
+    if not evidence_results:
+        raise HTTPException(
+            status_code=409,
+            detail="MANUAL_REVIEW_REQUIRED: no approved, applicable evidence was found",
+        )
+
+    parameters = dict(request.parameters)
+    parameters.setdefault("database_name", metadata.get("database", "postgres"))
+    try:
+        sql_plan = compile_sql_plan(request.template_ids, parameters)
+    except (TemplateError, ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Template parameters require DBA review: {exc}",
+        ) from exc
+
+    citations = [
+        {
+            "document_id": result.document_id,
+            "title": result.source_document_title,
+            "version": result.source_document_version,
+            "section": result.section,
+            "source_url": result.source_url,
+            "similarity_score": result.similarity_score,
+        }
+        for result in evidence_results
+    ]
+    return HardenResponse(
+        status="Proposal compiled for DBA review",
+        target_db=metadata.get("database", metadata.get("engine", "postgresql")),
+        ai_plan=sql_plan,
+        retrieved_templates=[item["template_name"] for item in retrieved],
+        evidence=citations,
+        reasoning=(
+            "HERMES selected from the active retrieval set; DBGuardAI "
+            "revalidated and rendered the reviewed template."
+        ),
     )
 
 

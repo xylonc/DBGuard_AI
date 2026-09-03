@@ -20,13 +20,15 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
 import yaml
+
+from app.config import settings
+from app.services.embedding_service import generate_embedding
 
 logger = logging.getLogger("dbguard.rag")
 
@@ -38,12 +40,6 @@ CHUNK_OVERLAP = 50  # overlap between chunks for context continuity
 MAX_CHUNKS = 1000  # max chunks per document to avoid excessive storage
 
 
-class EmbeddingProvider(str, Enum):
-    OPENAI = "openai"
-    OLLAMA = "ollama"
-    OLLAMA_CLOUD = "ollama-cloud"
-
-
 # ─── RAG Data Models (inlined to avoid cross-package import issues) ──
 
 class DocumentMetadata:
@@ -52,7 +48,9 @@ class DocumentMetadata:
                  effective_date: datetime, expiry_date: Optional[datetime],
                  postgresql_versions: List[str], environment_applicability: List[str],
                  policy_owner: str, classification: str, source_url: Optional[str],
-                 created_at: datetime, updated_at: datetime):
+                 created_at: datetime, updated_at: datetime,
+                 approved_by: Optional[str] = None,
+                 approved_at: Optional[datetime] = None):
         self.document_id = document_id
         self.title = title
         self.version = version
@@ -66,6 +64,8 @@ class DocumentMetadata:
         self.source_url = source_url
         self.created_at = created_at
         self.updated_at = updated_at
+        self.approved_by = approved_by
+        self.approved_at = approved_at
 
 
 class KnowledgeChunk:
@@ -88,10 +88,11 @@ class KnowledgeChunk:
 
 class RetrievalResult:
     """A result from a RAG knowledge search."""
-    def __init__(self, chunk_id: str, document_id: str, section: str, content: str,
+    def __init__(self, chunk_id: int, document_id: str, section: str, content: str,
                  chunk_hash: str, postgresql_versions: List[str],
                  environment_applicability: List[str],
                  source_document_title: str, source_document_version: str,
+                 source_url: Optional[str],
                  similarity_score: float, retrieval_timestamp: datetime):
         self.chunk_id = chunk_id
         self.document_id = document_id
@@ -102,6 +103,7 @@ class RetrievalResult:
         self.environment_applicability = environment_applicability
         self.source_document_title = source_document_title
         self.source_document_version = source_document_version
+        self.source_url = source_url
         self.similarity_score = similarity_score
         self.retrieval_timestamp = retrieval_timestamp
 
@@ -116,6 +118,8 @@ class KnowledgeDocument:
     version: str
     content: str  # Full text content
     effective_date: datetime
+    status: str = "draft"
+    approved_by: Optional[str] = None
     expiry_date: Optional[datetime] = None
     postgresql_versions: List[str] = field(default_factory=lambda: ["15", "16", "17"])
     environment_applicability: List[str] = field(default_factory=lambda: ["all"])
@@ -158,76 +162,25 @@ class RAGService:
     """
     
     def __init__(self, db_url: Optional[str] = None):
-        self.db_url = db_url or os.getenv("DATABASE_URL", "postgresql://admin:securepassword123@localhost:5433/dbguard_rag")
-        self.embedding_dim = int(os.getenv("RAG_EMBEDDING_DIM", "1536"))
-        self.embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-small")
-        llm_provider = os.getenv("LLM_PROVIDER", "openai")
-        self.provider = EmbeddingProvider(llm_provider)
+        self.db_url = db_url or os.getenv("DATABASE_URL", "postgresql://dbguard:dbguard@localhost:5433/dbguard")
+        self.embedding_dim = settings.embedding_dim
+        self.embedding_model = settings.embedding_model
         self.chunk_size = CHUNK_SIZE
         self.chunk_overlap = CHUNK_OVERLAP
         
-        logger.info(f"RAG Service initialized: provider={self.provider}, model={self.embedding_model}")
+        logger.info("RAG Service initialized: model=%s", self.embedding_model)
     
     def _get_db_connection(self) -> psycopg2.extensions.connection:
         """Get a database connection for RAG operations."""
         return psycopg2.connect(self.db_url)
     
     def _generate_embedding(self, text: str) -> List[float]:
-        """Generate embedding vector using OpenAI or Ollama API directly.
-        Self-contained — mirrors vector_service.py logic but reads from os.getenv.
-        """
-        import requests
-        
-        openai_key = os.getenv("OPENAI_API_KEY", "")
-        ollama_key = os.getenv("OLLAMA_API_KEY", "")
-        
-        def _is_real_key(key: str) -> bool:
-            if not key:
-                return False
-            fake_keys = {"***", "*", "your-api-key-here", "redacted", "sk-..."}
-            if key in fake_keys:
-                return False
-            if key.startswith("sk-"):
-                return len(key) > 20 and "*" not in key and "placeholder" not in key.lower()
-            return True
-        
-        use_ollama = _is_real_key(ollama_key)
-        use_openai = _is_real_key(openai_key)
-        
-        if use_openai and not use_ollama:
-            from openai import OpenAI
-            client = OpenAI(api_key=openai_key)
-            model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-            response = client.embeddings.create(model=model, input=text)
-            embedding_vec = list(response.data[0].embedding)
-        else:
-            # Use Ollama (local or cloud)
-            ollama_base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-            ollama_base = ollama_base.rstrip("/")
-            if "ollama.com/api" in ollama_base and "api.ollama.com" not in ollama_base:
-                ollama_base = "https://api.ollama.com"
-            elif ollama_base == "https://api.ollama.com/v1":
-                ollama_base = "https://api.ollama.com"
-            
-            model = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-            headers = {"Content-Type": "application/json"}
-            if ollama_key:
-                headers["Authorization"] = f"Bearer {ollama_key}"
-            
-            response = requests.post(f"{ollama_base}/api/embed", json={
-                "model": model,
-                "input": text
-            }, headers=headers, timeout=30)
-            if response.status_code != 200:
-                raise RuntimeError(f"Embedding failed: {response.status_code} {response.text}")
-            data = response.json()
-            embedding_vec = list(data["embeddings"][0])
-        
-        # Pad or truncate to expected dimension
-        dim = self.embedding_dim
-        if len(embedding_vec) < dim:
-            embedding_vec += [0.0] * (dim - len(embedding_vec))
-        return embedding_vec[:dim]
+        """Generate a vector through the application's shared provider adapter."""
+        return generate_embedding(
+            text,
+            model=self.embedding_model,
+            dimension=self.embedding_dim,
+        )
     
     def ingest_document(self, document: KnowledgeDocument) -> IngestionResult:
         """
@@ -305,6 +258,12 @@ class RAGService:
         
         if not document.effective_date:
             return False
+
+        if document.status not in {"draft", "active"}:
+            return False
+
+        if document.status == "active" and not document.approved_by:
+            return False
         
         # Check for supersession
         if document.superseded_by:
@@ -370,8 +329,36 @@ class RAGService:
         if len(result) > MAX_CHUNKS:
             logger.warning(f"Document {document.document_id} exceeds MAX_CHUNKS ({MAX_CHUNKS}); truncating to first {MAX_CHUNKS} chunks")
             result = result[:MAX_CHUNKS]
-        
+
+        # Oversized sections can consume multiple indexes. Re-number the final
+        # sequence so later sections cannot collide with those sub-chunks.
+        for chunk_index, chunk in enumerate(result):
+            chunk.chunk_index = chunk_index
+
         return result
+
+    def _create_chunk(
+        self,
+        document: KnowledgeDocument,
+        section: str,
+        content: str,
+        chunk_index: int,
+    ) -> Optional[KnowledgeChunk]:
+        """Create a traceable chunk while preserving document applicability."""
+        normalized_content = content.strip()
+        if not normalized_content:
+            return None
+        return KnowledgeChunk(
+            document_id=document.document_id,
+            section=section,
+            content=normalized_content,
+            chunk_hash=hashlib.sha256(normalized_content.encode("utf-8")).hexdigest(),
+            chunk_index=chunk_index,
+            postgresql_versions=document.postgresql_versions,
+            environment_applicability=document.environment_applicability,
+            source_document_title=document.title,
+            source_document_version=document.version,
+        )
 
     def _split_oversized_chunk(self, chunk: KnowledgeChunk) -> List[KnowledgeChunk]:
         """Split a chunk larger than chunk_size using sliding window overlap."""
@@ -421,10 +408,11 @@ class RAGService:
                     effective_date, expiry_date,
                     postgresql_versions, environment_applicability,
                     policy_owner, classification, source_url, superseded_by,
-                    document_hash
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    document_hash, approved_by, approved_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (document_id) DO UPDATE
-                SET version = EXCLUDED.version,
+                SET title = EXCLUDED.title,
+                    version = EXCLUDED.version,
                     status = EXCLUDED.status,
                     effective_date = EXCLUDED.effective_date,
                     expiry_date = EXCLUDED.expiry_date,
@@ -435,12 +423,14 @@ class RAGService:
                     source_url = EXCLUDED.source_url,
                     superseded_by = EXCLUDED.superseded_by,
                     document_hash = EXCLUDED.document_hash,
+                    approved_by = EXCLUDED.approved_by,
+                    approved_at = EXCLUDED.approved_at,
                     updated_at = NOW()
             """, (
                 document.document_id,
                 document.title,
                 document.version,
-                'active',
+                document.status,
                 document.effective_date,
                 document.expiry_date,
                 document.postgresql_versions,
@@ -450,7 +440,16 @@ class RAGService:
                 document.source_url,
                 document.superseded_by,
                 document.document_hash,
+                document.approved_by,
+                datetime.utcnow() if document.status == "active" else None,
             ))
+
+            # Re-ingestion replaces a document's previous chunks atomically.
+            # Cascading foreign keys remove the corresponding embeddings.
+            cur.execute(
+                "DELETE FROM knowledge_chunks WHERE document_id = %s",
+                (document.document_id,),
+            )
 
             for chunk, embedding in embeddings:
                 # Store chunk metadata
@@ -500,9 +499,10 @@ class RAGService:
         return stored_count
     
     def search(
-        self, 
-        query: str, 
+        self,
+        query: str,
         pg_version: Optional[str] = None,
+        environment: str = "all",
         top_k: int = 5,
         min_score: float = 0.5,
     ) -> List[RetrievalResult]:
@@ -515,6 +515,7 @@ class RAGService:
         Args:
             query: Search query text
             pg_version: Filter by PostgreSQL version (e.g., "16")
+            environment: Deployment environment (for example prod, dev, all)
             top_k: Maximum number of results to return
             min_score: Minimum similarity score threshold
             
@@ -530,13 +531,15 @@ class RAGService:
             # Build WHERE clause for filters (P0 fix: enforce document lifecycle)
             where_clauses = [
                 "kd.status = 'active'",  # Only active docs
+                "kd.effective_date <= NOW()",  # Already in force
                 "(kd.expiry_date IS NULL OR kd.expiry_date > NOW())",  # Not expired
+                "(kc.environment_applicability @> %s OR kc.environment_applicability @> ARRAY['all']::varchar[])",
             ]
-            params = []
+            filter_params = [[environment]]
             
             if pg_version:
                 where_clauses.append("kc.postgresql_versions && %s")
-                params.append(f"{{{pg_version}}}")
+                filter_params.append([pg_version])
             
             where_clause = " AND ".join(where_clauses)
             
@@ -561,8 +564,9 @@ class RAGService:
                     kd.effective_date,
                     kd.expiry_date,
                     kd.status AS doc_status,
+                    kd.source_url,
                     ke.embedding,
-                    (ke.embedding <=> '{embedding_array}'::vector) AS similarity
+                    (ke.embedding <=> %s::vector) AS similarity
                 FROM knowledge_chunks kc
                 JOIN knowledge_embeddings ke ON kc.id = ke.chunk_id
                 JOIN knowledge_documents kd ON kc.document_id = kd.document_id
@@ -571,10 +575,7 @@ class RAGService:
                 LIMIT %s
             """
             
-            params.append(top_k)
-            params.append(query)
-            
-            cur.execute(sql, params)
+            cur.execute(sql, [embedding_array, *filter_params, top_k])
             rows = cur.fetchall()
             
             for row in rows:
@@ -593,6 +594,7 @@ class RAGService:
                     environment_applicability=row['environment_applicability'],
                     source_document_title=row['source_document_title'],
                     source_document_version=row['source_document_version'],
+                    source_url=row['source_url'],
                     similarity_score=score,
                     retrieval_timestamp=datetime.utcnow(),
                 )
@@ -613,6 +615,7 @@ class RAGService:
         self,
         query: str,
         pg_version: Optional[str] = None,
+        environment: str = "all",
         top_k: int = 5,
         min_score: float = 0.5,
     ) -> str:
@@ -622,7 +625,7 @@ class RAGService:
         Returns a string with all relevant chunks and citations,
         ready to be included in HERMES's prompt context.
         """
-        results = self.search(query, pg_version, top_k, min_score)
+        results = self.search(query, pg_version, environment, top_k, min_score)
         
         if not results:
             return "MANUAL_REVIEW_REQUIRED: No approved evidence found for this query."
@@ -635,6 +638,7 @@ class RAGService:
                 f"**Document:** {result.source_document_title} v{result.source_document_version}\n"
                 f"**Section:** {result.section}\n"
                 f"**PostgreSQL Versions:** {', '.join(result.postgresql_versions)}\n"
+                f"**Source:** {result.source_url or result.document_id}\n"
                 f"\n{result.content}\n"
                 f"\n---\n"
             )
@@ -654,7 +658,7 @@ class RAGService:
                 SELECT document_id, title, version, status,
                        effective_date, expiry_date, postgresql_versions,
                        environment_applicability, policy_owner, classification, source_url,
-                       created_at, updated_at
+                       created_at, updated_at, approved_by, approved_at
                 FROM knowledge_documents
                 WHERE document_id = %s
             """, (document_id,))
@@ -675,6 +679,8 @@ class RAGService:
                     source_url=row[10],
                     created_at=row[11],
                     updated_at=row[12],
+                    approved_by=row[13],
+                    approved_at=row[14],
                 )
             return None
             
@@ -720,6 +726,26 @@ class RAGService:
             return False
         finally:
             conn.close()
+
+    def approve_document(self, document_id: str, approved_by: str) -> bool:
+        """Activate a human-reviewed draft so it can appear in retrieval."""
+        conn = self._get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE knowledge_documents
+                SET status = 'active', approved_by = %s,
+                    approved_at = NOW(), updated_at = NOW()
+                WHERE document_id = %s AND status = 'draft'
+            """, (approved_by, document_id))
+            success = cur.rowcount == 1
+            conn.commit()
+            return success
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     
     def get_applicable_documents(
         self,
@@ -734,14 +760,15 @@ class RAGService:
             cur.execute("""
                 SELECT document_id, title, version, status,
                        effective_date, expiry_date, postgresql_versions,
-                       policy_owner, classification, source_url,
-                       created_at, updated_at
+                       environment_applicability, policy_owner, classification, source_url,
+                       created_at, updated_at, approved_by, approved_at
                 FROM knowledge_documents
                 WHERE status = 'active'
                   AND postgresql_versions && %s
                   AND (environment_applicability @> %s OR environment_applicability @> '{all}')
+                  AND effective_date <= NOW()
                   AND (expiry_date IS NULL OR expiry_date > NOW())
-            """, (f"{{{pg_version}}}", f"{{{environment}}}"))
+            """, ([pg_version], [environment]))
             
             rows = cur.fetchall()
             docs = []
@@ -755,11 +782,14 @@ class RAGService:
                     effective_date=row[4],
                     expiry_date=row[5],
                     postgresql_versions=row[6],
-                    policy_owner=row[7],
-                    classification=row[8],
-                    source_url=row[9],
-                    created_at=row[10],
-                    updated_at=row[11],
+                    environment_applicability=row[7] or ['all'],
+                    policy_owner=row[8] or '',
+                    classification=row[9],
+                    source_url=row[10],
+                    created_at=row[11],
+                    updated_at=row[12],
+                    approved_by=row[13],
+                    approved_at=row[14],
                 ))
             
             return docs

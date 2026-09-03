@@ -1,3 +1,4 @@
+# Example contract for the deferred assessment/control phase. Not active.
 control_id: PG-AUTH-001
 title: Migrate authentication rule to SCRAM
 engine: postgresql

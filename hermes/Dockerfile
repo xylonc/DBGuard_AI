@@ -3,17 +3,16 @@
 # Sensitive data (API keys, secrets) are mounted at runtime, not baked in.
 
 # ---- Base Image ----
-# Uses a pinned HERMES image with immutable digest for reproducibility.
-# The actual version and digest are set via build args.
-ARG HERMES_BASE_IMAGE=hermes-agent:1.0.0
-ARG HERMES_BASE_DIGEST=sha256:placeholder
+# Pass a complete immutable image reference, for example
+# registry.example/hermes@sha256:<real digest>.
+ARG HERMES_BASE_IMAGE
 
 FROM ${HERMES_BASE_IMAGE}
 
 # ---- Build-time Labels ----
 LABEL org.dbguardai.version="1.0.0"
 LABEL org.dbguardai.build-date="%BUILD_DATE%"
-LABEL org.dbguardai.her妹es-version="1.0.0"
+LABEL org.dbguardai.hermes-version="external"
 LABEL org.dbguardai.description="DBGuardAI — Controlled Database Security Hardening Assistant"
 
 # ---- Environment Variables ----

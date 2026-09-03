@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     # Database
-    database_url: str = Field(default="postgresql://admin:securepassword123@localhost:5432/dbguard_rag")
+    database_url: str = Field(default="postgresql://dbguard:dbguard-local-only@localhost:5433/dbguard")
+    snapshot_storage_dir: str = "./data/snapshots"
 
     # Embedding
     embedding_model: str = "nomic-embed-text"
@@ -23,7 +24,7 @@ class Settings(BaseSettings):
     ollama_api_base: str = "https://api.ollama.com/v1"
     ollama_api_url: str = "https://api.ollama.com/v1"
 
-    model_config = {"env_file_encoding": "utf-8"}
+    model_config = {"env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 # Load .env from project root (one level up from this file)

@@ -12,6 +12,7 @@ __pycache__/
 
 # Database volumes
 pgvector_data/
+data/
 
 test-out/
 bundle.json

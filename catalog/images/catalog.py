@@ -150,7 +150,7 @@ def load_catalog_entries() -> List[CatalogEntry]:
     import os
     import yaml
     
-    catalog_dir = os.path.join(os.path.dirname(__file__), "..", "..", "catalog", "images")
+    catalog_dir = os.path.dirname(__file__)
     
     if not os.path.exists(catalog_dir):
         return []

@@ -1,230 +1,56 @@
-# DBGuardAI MCP Restrictions Configuration
-# This file defines which MCP tools HERMES can and cannot use.
-# Prohibited tools are enforced by the MCP gateway, not just by instructions.
-
-version: "1.0"
+version: "0.2.0"
 app: DBGuardAI
-hermes_version: "1.0.0"
+scope: proposal
 
-# === Allowed Tools ===
-# Only these tools are exposed to HERMES.
+# HERMES can read evidence and prepare a proposal. It cannot assess, execute,
+# approve, or connect to a database in this phase.
 allowed_tools:
-  # Read-only tools
-  - name: get_assessment_status
-    description: "Get current assessment run status and phase"
+  - name: get_snapshot_context
+    description: "Read normalized metadata from an uploaded collector snapshot"
     schema:
-      run_id: string
+      snapshot_id: string
 
-  - name: list_findings
-    description: "List all assessment findings with status"
+  - name: search_approved_knowledge
+    description: "Retrieve approved, currently applicable PostgreSQL guidance"
     schema:
-      run_id: string
-      filter: string  # all, critical, high, failed, exception
+      query: string
+      pg_version: string
+      environment: string
+      top_k: integer
 
-  - name: get_finding
-    description: "Get detailed information about a specific finding"
+  - name: search_approved_templates
+    description: "Find DBA-reviewed SQL templates relevant to a requirement"
     schema:
-      control_id: string
-      run_id: string
+      query: string
+      top_k: integer
 
-  - name: retrieve_policy_evidence
-    description: "Retrieve approved policy references for a control"
+  - name: create_hardening_proposal
+    description: "Create a review-only hardening proposal from snapshot evidence and approved sources"
     schema:
-      control_id: string
-      document_id: string
+      snapshot_id: string
+      requirement: string
 
-  - name: get_target_profile
-    description: "Get the normalized target database profile"
-    schema:
-      run_id: string
-
-  - name: get_twin_fidelity
-    description: "Get twin fidelity report"
-    schema:
-      run_id: string
-
-  - name: get_compatibility_requirements
-    description: "Get application compatibility contract"
-    schema:
-      run_id: string
-
-  - name: explain_control
-    description: "Get plain-language explanation of a control"
-    schema:
-      control_id: string
-
-  - name: get_evidence_requirements
-    description: "Get evidence requirements for a control"
-    schema:
-      control_id: string
-
-  # Controlled action tools
-  - name: start_assessment
-    description: "Start a new assessment run"
-    schema:
-      snapshot_hash: string
-      target_profile: object
-
-  - name: propose_hardening_action
-    description: "Propose a structured hardening action"
-    schema:
-      control_id: string
-      parameters: object
-      justification: string
-      evidence_ids: array
-
-  - name: request_control_execution
-    description: "Request execution of an approved control in the twin"
-    schema:
-      control_id: string
-      attempt_number: int  # 1, 2, or 3
-
-  - name: request_compatibility_test
-    description: "Request compatibility validation in the twin"
-    schema:
-      test_type: string  # auth, connection, privilege, monitoring
-      control_id: string
-
-  - name: request_security_validation
-    description: "Request security validation after remediation"
-    schema:
-      control_id: string
-      validations: array
-
-  - name: request_control_rollback
-    description: "Request rollback of a control in the twin"
-    schema:
-      control_id: string
-      reason: string
-
-  - name: record_exception_proposal
-    description: "Propose an exception for a control"
-    schema:
-      control_id: string
-      reason: string
-      justification: string
-      residual_risk: string
-      compensating_controls: array
-
-  - name: generate_review_package
-    description: "Generate a human review package"
-    schema:
-      run_id: string
-      package_type: string  # hardening, rollback, evidence
-
-# === Prohibited Tools ===
-# These tools are NEVER exposed to HERMES.
-# The MCP gateway rejects calls to these tools regardless of prompts.
 prohibited_tools:
   - run_shell
   - run_docker
   - run_arbitrary_sql
-  - mount_directory
-  - select_image_url
+  - connect_to_database
   - connect_to_production
-  - modify_image_catalog
-  - modify_control_catalog
+  - execute_hardening
+  - start_assessment
   - approve_own_action
-  - export_production_data
-  - modify_twin_security
+  - modify_knowledge_lifecycle
   - bypass_approval_policy
 
-# === Tool Output Schemas ===
-# All HERMES tool output must conform to these schemas.
-# Malformed output is rejected by the Control Service.
-output_schemas:
-  assessment_summary:
-    type: object
-    required:
-      - run_id
-      - target_db
-      - baseline_score
-      - twin_score
-      - controls_assessed
-    properties:
-      run_id: string
-      target_db: string
-      postgresql_version: string
-      baseline_score: number
-      twin_score: number
-      controls_assessed: integer
-      controls_passed: integer
-      controls_failed: integer
-      exceptions_proposed: integer
-      coverage: number
-      fidelity: string
-
-  hardening_action:
-    type: object
-    required:
-      - control_id
-      - parameters
-      - justification
-    properties:
-      control_id: string
-      parameters: object
-      justification: string
-      evidence_references: array
-      compatibility_impacts: array
-
-  exception_request:
-    type: object
-    required:
-      - control_id
-      - reason
-      - attempts_made
-      - residual_risk
-      - business_justification
-    properties:
-      control_id: string
-      reason: string
-      attempts_made: integer
-      residual_risk: string
-      compensating_controls: array
-      business_justification: string
-      proposed_expiry: string
-
-# === Approval Policy ===
-# Controls that require explicit human approval before execution.
-approval_policy:
-  high_risk_actions:
-    - flags:
-        - AUTHENTICATION_CHANGE
-        - ROLE_PRIVILEGE_DROP
-        - PASSWORD_POLICY_CHANGE
-        - SSL_ENFORCEMENT
-      requires: explicit_dba_approval
-  medium_risk_actions:
-    - flags:
-        - LOGGING_CHANGE
-        - CONNECTION_TIMEOUT
-        - EXTENSION_REMOVAL
-      requires: automated_review
-  low_risk_actions:
-    - flags:
-        - DESCRIPTION_UPDATE
-        - NAMING_CONVENTION
-      requires: none
-
-# === Prompt Injection Protections ===
 prompt_protections:
-  # Separate system instructions from user/evidence input
   separate_instructions: true
-  # Validate all tool output against schemas
   validate_output: true
-  # Reject tools not in the allowed list
   whitelist_tools: true
-  # Never treat RAG evidence as execution instructions
   evidence_never_executes: true
-  # Maximum attempts before escalation
-  max_retries: 3
 
-# === Gateway Configuration ===
 gateway:
   host: "0.0.0.0"
   port: 8080
   health_check_path: "/health"
-  # Timeout for tool calls (seconds)
-  tool_timeout: 300
-  # Max output size (bytes)
+  tool_timeout: 120
   max_output_size: 100000

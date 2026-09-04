@@ -36,12 +36,21 @@ credentials in `.env`.
 
 ## Model requirement
 
-The default config uses Ollama's OpenAI-compatible API at
-`http://host.docker.internal:11434/v1` and model `llama3.1`. The dashboard and
-gateway can start without Ollama, but chat replies cannot complete until that
-model endpoint is available. To use another provider, update the `model`
-section of `config/config.yaml` and provide its secret through runtime
-environment configuration.
+The default config uses Ollama Cloud's OpenAI-compatible API at
+`https://ollama.com/v1` and the tool-capable `gpt-oss:20b` model. Put the
+Ollama Cloud key in `OLLAMA_API_KEY`; Compose passes it to HERMES as
+`HERMES_MODEL_API_KEY`, and `configure.py` writes it only to the private
+persistent runtime configuration. No local chat-model download is required.
+
+Override `HERMES_MODEL` or `HERMES_MODEL_BASE_URL` to use another compatible
+model. The model must support tool calls because the DBGuard workflow depends
+on the restricted MCP operations.
+
+RAG embeddings are a separate dependency. The API still defaults to
+`nomic-embed-text` with 768 dimensions. Ollama Cloud does not currently expose
+that model, so new ingestion and semantic searches require a local embedding
+service or a separately configured cloud embedding provider. Already indexed
+rows can still be retrieved once query embeddings are available.
 
 ## Controlled tool surface
 

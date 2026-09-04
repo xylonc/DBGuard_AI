@@ -72,6 +72,9 @@ services:
       HERMES_TUI_SKILLS: dbguard-hardening
       HERMES_DASHBOARD_USERNAME: ${HERMES_DASHBOARD_USERNAME:-dbguard}
       HERMES_DASHBOARD_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:-dbguard-local-only}
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-oss:20b}
+      HERMES_MODEL_BASE_URL: ${HERMES_MODEL_BASE_URL:-https://ollama.com/v1}
+      HERMES_MODEL_API_KEY: ${OLLAMA_API_KEY:-}
     volumes:
       - hermes-data:/opt/data
     extra_hosts:

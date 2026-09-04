@@ -2,9 +2,9 @@ _config_version: 39
 
 model:
   provider: custom
-  default: llama3.1
-  base_url: http://host.docker.internal:11434/v1
-  api_key: ollama-local
+  default: __HERMES_MODEL__
+  base_url: __HERMES_MODEL_BASE_URL__
+  api_key: __HERMES_MODEL_API_KEY__
 
 terminal:
   # No Docker socket is mounted and terminal/code toolsets are disabled. This
@@ -39,7 +39,7 @@ agent:
     - web
 
 # Values are injected from environment variables by configure.py at startup.
-# Keeping the password out of this file avoids baking credentials into images.
+# Keeping credentials out of this file avoids baking them into images.
 dashboard:
   basic_auth:
     username: __DBGUARD_DASHBOARD_USERNAME__

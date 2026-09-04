@@ -44,10 +44,10 @@ in the repository for later phases but are not enabled in Compose.
 
 1. Copy `.env.example` to `.env` and change all development passwords and API
    keys.
-2. Configure a model. The checked-in HERMES configuration expects an
-   OpenAI-compatible Ollama server at `http://host.docker.internal:11434/v1`
-   with model `llama3.1`. Start Ollama and pull that model, or change
-   `hermes/config/config.yaml` to another HERMES-supported provider.
+2. Add an Ollama Cloud API key to `OLLAMA_API_KEY`. HERMES defaults to the
+   tool-capable `gpt-oss:20b` cloud model through
+   `https://ollama.com/v1`; no local chat-model download is required. The
+   Ollama free plan includes a starter amount of monthly usage.
 3. Start the complete stack:
 
    ```sh
@@ -67,6 +67,13 @@ in the repository for later phases but are not enabled in Compose.
 HERMES and both host-facing ports bind to localhost. The dashboard password is
 hashed into the runtime configuration at container startup; plaintext is not
 baked into the image.
+
+The chat model and RAG embedding model are separate. Ollama Cloud currently
+accepts `gpt-oss:20b` chat requests but does not provide the configured
+`nomic-embed-text` embedding model. Existing document vectors remain stored,
+but ingesting or semantically querying content requires either a local
+`nomic-embed-text` service or a separately configured cloud embedding
+provider. Never send unredacted database secrets to either provider.
 
 ## What the chat can do
 

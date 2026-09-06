@@ -87,25 +87,39 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_emb_chunk
 -- Add an approximate-nearest-neighbour index only after the POC has enough
 -- rows to tune it. Exact search is safer and faster for a small knowledge set.
 
--- ─── 4. templates (legacy — from original repo) ──────────────────
+-- ─── 4. templates ───────────────────────────────────────────────────
+-- Template records with versioning and content hashing.
+-- Approval applies to exact version + hash; changes require new version.
 CREATE TABLE IF NOT EXISTS templates (
     id              SERIAL PRIMARY KEY,
-    template_name   VARCHAR(255) NOT NULL UNIQUE,
+    template_name   VARCHAR(255) NOT NULL,
+    version         INTEGER      NOT NULL DEFAULT 1,
     description     TEXT,
-    sql_template    TEXT,
+    sql_template    TEXT         NOT NULL,
+    template_hash   VARCHAR(64)  NOT NULL,  -- SHA-256 hex digest of sql_template
     tags            TEXT[],
     risk_level      VARCHAR(32),
     pg_version      VARCHAR(32),
     embedding       vector(768),  -- nomic-embed-text dimension
-    status           VARCHAR(32)  NOT NULL DEFAULT 'draft'
+    status          VARCHAR(32)  NOT NULL DEFAULT 'draft'
                      CHECK (status IN ('draft', 'active', 'archived')),
-    approved_by      VARCHAR(255),
-    approved_at      TIMESTAMP,
+    approved_by     VARCHAR(255),
+    approved_at     TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
+    UNIQUE (template_name, version),
     CHECK (status <> 'active' OR approved_by IS NOT NULL)
 );
 
-CREATE INDEX IF NOT EXISTS idx_templates_name ON templates (template_name);
-CREATE INDEX IF NOT EXISTS idx_templates_active
-    ON templates (status) WHERE status = 'active';
+-- Index for retrieving the single active version of a template
+CREATE INDEX IF NOT EXISTS idx_templates_active_unique
+    ON templates (template_name) WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_templates_name_version
+    ON templates (template_name, version);
+
+CREATE INDEX IF NOT EXISTS idx_templates_hash
+    ON templates (template_hash);
+
+CREATE INDEX IF NOT EXISTS idx_templates_status
+    ON templates (status);

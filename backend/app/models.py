@@ -31,6 +31,7 @@ class ProposalCompileRequest(BaseModel):
 class TemplateIngestRequest(BaseModel):
     """Request to ingest a single template into pgvector."""
     template_name: str
+    version: int = Field(default=1, ge=1)
     description: str
     sql_template: str
     tags: list[str] = Field(default_factory=list)

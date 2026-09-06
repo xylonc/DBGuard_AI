@@ -103,10 +103,9 @@ execute SQL, use the host shell, or operate Docker.
 | `GET` | `/api/v1/knowledge/search` | Search only approved, applicable guidance |
 | `POST` | `/api/v1/templates/ingest` | Ingest one draft or reviewed SQL template |
 | `POST` | `/api/v1/templates/ingest-all` | Ingest bundled SQL templates |
-| `POST` | `/api/v1/templates/{name}/approve` | Record engineer approval of a template |
-| `GET` | `/api/v1/templates/search` | Search approved templates |
-|| `POST` | `/api/v1/harden` | Legacy direct AI proposal endpoint (removed) |
-|| `POST` | `/api/v1/proposals/compile` | Validate HERMES's choices and deterministically render approved templates |
+| `GET` | `/api/v1/templates/search` | Search approved templates by semantic similarity |
+| `POST` | `/api/v1/templates/{name}/approve` | Record human approval of an exact template version |
+| `POST` | `/api/v1/proposals/compile` | Validate HERMES's choices and deterministically render approved templates from PostgreSQL |
 
 The HERMES workflow uses `/api/v1/proposals/compile` so there is only one
 reasoning agent. The trusted backend still reruns retrieval, rejects template

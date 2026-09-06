@@ -22,9 +22,10 @@ from app.models import (
     TemplateSearchResponse,
 )
 from app.services.snapshot_service import SnapshotNotFoundError, SnapshotStore
-from app.services.template_service import compile_sql_plan
+from app.services.template_service import compile_sql_plan_from_templates
 from app.services.vector_service import (
     approve_template,
+    get_active_template_version,
     ingest_all_templates,
     ingest_template,
     init_db,
@@ -90,6 +91,17 @@ def compile_hardening_proposal(request: ProposalCompileRequest):
             ),
         )
 
+    # Load exact template content from PostgreSQL for selected templates
+    template_records = []
+    for template_id in selected_template_ids:
+        record = get_active_template_version(template_id)
+        if record is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Template {template_id} is not active or does not exist",
+            )
+        template_records.append(record)
+
     evidence_results = RAGService(settings.database_url).search(
         query=request.requirement,
         pg_version=metadata.get("postgresql_version"),
@@ -106,7 +118,7 @@ def compile_hardening_proposal(request: ProposalCompileRequest):
     parameters = dict(request.parameters)
     parameters.setdefault("database_name", metadata.get("database", "postgres"))
     try:
-        sql_plan = compile_sql_plan(request.template_ids, parameters)
+        sql_plan = compile_sql_plan_from_templates(template_records, parameters)
     except (TemplateError, ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=422,
@@ -147,22 +159,25 @@ def ingest_all():
 
 @app.post("/api/v1/templates/ingest", response_model=TemplateIngestResponse)
 def ingest_single_template(request: TemplateIngestRequest):
-    """Ingest a single SQL hardening template with embedding."""
+    """Ingest a single SQL hardening template with embedding.
+    
+    New templates are always created as 'draft' status regardless of request status.
+    Approval must happen separately through the template approval flow.
+    """
     result = ingest_template(
         template_name=request.template_name,
         description=request.description,
         sql_template=request.sql_template,
+        version=request.version,
         tags=request.tags,
         risk_level=request.risk_level,
         pg_version=request.pg_version,
-        status=request.status,
-        approved_by=request.approved_by,
     )
     return TemplateIngestResponse(
         status="Template ingested successfully",
         template_name=result["template_name"],
         id=result["id"],
-        lifecycle_status=request.status,
+        lifecycle_status=result["status"],
     )
 
 
@@ -177,11 +192,15 @@ def search(search_query: str, top_k: int = 5):
 
 
 @app.post("/api/v1/templates/{template_name}/approve")
-def approve_sql_template(template_name: str, request: TemplateApprovalRequest):
-    """Record human approval and make a draft template searchable."""
-    if not approve_template(template_name, request.approved_by):
-        raise HTTPException(status_code=404, detail="Draft SQL template not found")
-    return {"status": "active", "template_name": template_name, "approved_by": request.approved_by}
+def approve_sql_template(template_name: str, request: TemplateApprovalRequest, version: int = 1):
+    """Record human approval of an exact template version and make it searchable.
+    
+    Approval applies to the exact (template_name, version) combination.
+    The template must exist and be in 'draft' status.
+    """
+    if not approve_template(template_name, version, request.approved_by):
+        raise HTTPException(status_code=404, detail=f"Draft SQL template {template_name} v{version} not found")
+    return {"status": "active", "template_name": template_name, "version": version, "approved_by": request.approved_by}
 
 
 @app.post("/api/v1/knowledge/documents")

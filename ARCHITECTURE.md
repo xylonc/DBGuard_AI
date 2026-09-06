@@ -187,15 +187,21 @@ This is the trusted compilation endpoint used by HERMES. It accepts the
 snapshot ID, natural-language requirement, environment, template IDs selected
 by HERMES, and the template parameters.
 
-It deliberately performs no second LLM call. Instead, the API:
+PostgreSQL is the authoritative source of truth for template content. The
+endpoint:
 
 1. reloads the immutable snapshot;
 2. reruns active template retrieval inside the trusted boundary;
 3. rejects any selected ID outside that result set;
 4. searches for approved, effective and applicable RAG evidence;
-5. safely quotes identifiers and renders only stored reviewed templates;
-6. returns the SQL, citations, selection explanation and mandatory DBA review
+5. loads the exact approved SQL template from PostgreSQL using template_name + version;
+6. safely quotes identifiers and renders only the stored reviewed templates;
+7. returns the SQL, citations, selection explanation and mandatory DBA review
    flag.
+
+Template approval applies to an exact immutable version. If template content
+changes, a new version is created as `draft` and requires separate approval
+before it becomes active.
 
 This separation lets HERMES understand conversational intent while preventing
 the agent from inventing or directly emitting executable SQL.

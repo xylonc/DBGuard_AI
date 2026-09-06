@@ -181,27 +181,6 @@ score so the engineer can verify the recommendation.
 
 ### Proposal generation
 
-#### `POST /api/v1/harden`
-
-This is the legacy direct-AI application endpoint. It accepts:
-
-- `user_prompt`: the analyst’s natural-language hardening requirement;
-- `snapshot_id`: the stored collector snapshot to use as database context;
-- `environment`: where the database operates, such as `prod` or `dev`.
-
-DBGuardAI then:
-
-1. reads the normalized snapshot context;
-2. retrieves applicable approved guidance;
-3. retrieves relevant approved SQL templates;
-4. asks the AI to select only from those retrieved templates;
-5. validates that the AI did not invent a template ID;
-6. safely fills PostgreSQL identifiers in the chosen template;
-7. returns SQL, reasoning, citations, and a mandatory DBA-approval flag.
-
-If no approved evidence or template is available, the endpoint returns
-`MANUAL_REVIEW_REQUIRED` instead of inventing a command.
-
 #### `POST /api/v1/proposals/compile`
 
 This is the trusted compilation endpoint used by HERMES. It accepts the

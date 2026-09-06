@@ -5,19 +5,6 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Any, Literal, Optional
 
 
-class HardenRequest(BaseModel):
-    user_prompt: str = Field(..., min_length=1, description="Natural language hardening request")
-    snapshot_id: Optional[str] = Field(
-        default=None,
-        description="ID returned by POST /api/v1/snapshots",
-    )
-    metadata_snapshot: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Deprecated inline metadata; use snapshot_id for collector output",
-    )
-    environment: str = Field(default="all", min_length=1, max_length=64)
-
-
 class HardenResponse(BaseModel):
     status: str
     target_db: str

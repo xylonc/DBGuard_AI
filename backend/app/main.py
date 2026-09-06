@@ -11,7 +11,6 @@ from app.collector_models import (
     SnapshotUploadResponse,
 )
 from app.models import (
-    HardenRequest,
     HardenResponse,
     KnowledgeApprovalRequest,
     KnowledgeIngestRequest,
@@ -22,7 +21,6 @@ from app.models import (
     TemplateApprovalRequest,
     TemplateSearchResponse,
 )
-from app.services.ai_service import generate_hardening_plan
 from app.services.snapshot_service import SnapshotNotFoundError, SnapshotStore
 from app.services.template_service import compile_sql_plan
 from app.services.vector_service import (
@@ -67,90 +65,6 @@ def get_snapshot_context(snapshot_id: str):
         return snapshot_store.context(snapshot_id)
     except SnapshotNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Snapshot not found") from exc
-
-
-@app.post("/api/v1/harden", response_model=HardenResponse)
-def create_hardening_plan(request: HardenRequest):
-    metadata = request.metadata_snapshot
-    if request.snapshot_id:
-        try:
-            metadata = snapshot_store.context(request.snapshot_id).model_dump(mode="json")
-        except SnapshotNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Snapshot not found") from exc
-
-    pg_version = metadata.get("postgresql_version")
-
-    # Step 1: retrieve both reviewed command templates and approved guidance.
-    retrieved = search_templates(request.user_prompt, top_k=3)
-    template_ids = [r["template_name"] for r in retrieved]
-    evidence_results = RAGService(settings.database_url).search(
-        query=request.user_prompt,
-        pg_version=pg_version,
-        environment=request.environment,
-        top_k=5,
-        min_score=0.35,
-    )
-    if not evidence_results:
-        raise HTTPException(
-            status_code=409,
-            detail="MANUAL_REVIEW_REQUIRED: no approved, applicable evidence was found",
-        )
-    evidence_context = [vars(result) for result in evidence_results]
-
-    # Step 2: LLM decision with retrieved context
-    ai_decision = generate_hardening_plan(
-        user_prompt=request.user_prompt,
-        metadata=metadata,
-        retrieved_templates=retrieved,
-        retrieved_evidence=evidence_context,
-    )
-    if ai_decision.get("error"):
-        raise HTTPException(status_code=502, detail="The proposal model returned an invalid response")
-
-    selected_templates = ai_decision.get("template_ids", [])
-    if not selected_templates:
-        raise HTTPException(
-            status_code=409,
-            detail="MANUAL_REVIEW_REQUIRED: no approved SQL template was selected",
-        )
-    invented_templates = sorted(set(selected_templates) - set(template_ids))
-    if invented_templates:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Model selected templates outside the approved retrieval set: {invented_templates}",
-        )
-
-    # Step 3: Compile SQL
-    parameters = ai_decision.get("parameters", {})
-    parameters.setdefault("database_name", metadata.get("database", "postgres"))
-    try:
-        full_sql_plan = compile_sql_plan(
-            template_ids=selected_templates,
-            variables=parameters,
-        )
-    except (TemplateError, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=f"Template parameters require DBA review: {exc}") from exc
-
-    citations = [
-        {
-            "document_id": result.document_id,
-            "title": result.source_document_title,
-            "version": result.source_document_version,
-            "section": result.section,
-            "source_url": result.source_url,
-            "similarity_score": result.similarity_score,
-        }
-        for result in evidence_results
-    ]
-
-    return HardenResponse(
-        status="Proposal generated for DBA review",
-        target_db=metadata.get("database", metadata.get("engine", "postgresql")),
-        ai_plan=full_sql_plan,
-        retrieved_templates=template_ids,
-        evidence=citations,
-        reasoning=ai_decision.get("reasoning", ""),
-    )
 
 
 @app.post("/api/v1/proposals/compile", response_model=HardenResponse)

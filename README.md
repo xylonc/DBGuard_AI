@@ -105,16 +105,16 @@ execute SQL, use the host shell, or operate Docker.
 | `POST` | `/api/v1/templates/ingest-all` | Ingest bundled SQL templates |
 | `POST` | `/api/v1/templates/{name}/approve` | Record engineer approval of a template |
 | `GET` | `/api/v1/templates/search` | Search approved templates |
-| `POST` | `/api/v1/harden` | Legacy direct AI proposal endpoint |
-| `POST` | `/api/v1/proposals/compile` | Validate HERMES's choices and deterministically render approved templates |
+|| `POST` | `/api/v1/harden` | Legacy direct AI proposal endpoint (removed) |
+|| `POST` | `/api/v1/proposals/compile` | Validate HERMES's choices and deterministically render approved templates |
 
 The HERMES workflow uses `/api/v1/proposals/compile` so there is only one
 reasoning agent. The trusted backend still reruns retrieval, rejects template
 IDs outside the active result set, applies safe parameter handling, and
 requires approved RAG evidence before returning SQL.
 
-The older `metadata_snapshot` field on `/api/v1/harden` remains temporarily for
-client compatibility. New collector integrations should use `snapshot_id`.
+The older `metadata_snapshot` field remains on `/api/v1/proposals/compile` for client
+compatibility, but new integrations should always use `snapshot_id`.
 
 ## Evidence and approval rules
 

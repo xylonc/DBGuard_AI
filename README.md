@@ -8,8 +8,8 @@ AI permission to connect to the target database or execute a command.
 ## Current implemented scope
 
 The runnable POC covers the proposal workflow. The repository now also contains
-a strict, tested assessment-catalogue foundation for the reconciliation phase.
-It does not yet connect to a twin PostgreSQL instance or execute SQL.
+a strict, tested assessment engine for the reconciliation phase. The public
+API/Compose workflow does not yet create a twin or execute a proposal.
 
 ```mermaid
 flowchart LR
@@ -141,10 +141,26 @@ flowchart LR
     Y[hardening-controls.yaml] --> L[Strict catalogue loader]
     L -->|validated definitions| R[Closed assessment registry]
     R --> S[Assessment service]
-    S --> E[Restricted PostgreSQL executor - next]
-    E --> T[Fresh PostgreSQL twin - next]
+    C[One-iteration twin controller - next] --> T[Fresh PostgreSQL twin]
+    C -->|apply trusted compiled plan| T
+    S -->|approved verifier ID and parameters| E[Restricted PostgreSQL executor]
+    E -->|fixed checks only| T
     T --> O[Evidence and assessment report]
 ```
+
+### Real and simulated executors
+
+`PostgresAssessmentExecutor` is the real implementation intended for the
+application. It connects only to a disposable PostgreSQL twin and performs the
+16 allowlisted metadata and behavioural checks. It cannot execute SQL supplied
+by HERMES or an LLM.
+
+`FakeExecutor` exists only inside `tests/test_assessment_foundations.py`. It is
+a test double that returns pre-programmed observations so the catalogue,
+evidence validation, error handling and report aggregation can be tested
+quickly without Docker. It is never imported or selected by the runtime. Both
+are kept: fast unit tests use the test double, while PostgreSQL integration
+tests use the real executor.
 
 ### Assessment files
 
@@ -157,9 +173,13 @@ flowchart LR
 | `services/assessment/models.py` | Defines criteria, observations, evidence references, results, reports and readiness/status values |
 | `services/assessment/registry.py` | Loads the YAML once and exposes only exact registered template name/version pairs |
 | `services/assessment/service.py` | Runs registered criteria through a restricted executor boundary, verifies evidence and calculates suite/overall statuses |
+| `services/assessment/fixtures.py` | Creates synthetic tables before/after hardening and manages the role's twin-only test credential |
+| `services/assessment/postgres_executor.py` | Implements all 16 fixed PostgreSQL metadata and behavioural checks without an arbitrary-SQL interface |
+| `services/assessment/evidence.py` | Captures hashed, redacted query/command evidence behind a replaceable storage boundary |
 | `services/assessment/verifiers/read_only_role.py` | Defines the permitted parameters and 13 allowlisted check names for the read-only-role template |
 | `services/assessment/verifiers/revoke_public_access.py` | Defines the permitted parameters and three allowlisted check names for the PUBLIC-access revocation template |
-| `tests/test_assessment_foundations.py` | Tests valid loading, fail-closed rejection, evidence handling, remediation mapping and status aggregation |
+| `tests/test_assessment_foundations.py` | Uses a test-only simulated executor to test loading, fail-closed rejection, evidence handling, remediation mapping and status aggregation without a database |
+| `tests/test_postgres_assessment_executor.py` | Checks the closed executor boundary and, when a dedicated test DSN is supplied, runs both template assessments against real PostgreSQL |
 
 The two current template definitions provide 16 checks in total. These checks
 cover the requested read-only behaviour and limited related safety properties,
@@ -200,7 +220,6 @@ for HERMES packaging, installation and troubleshooting.
 ## Deferred work
 
 - reviewed CIS baseline profiles and structured control mappings;
-- restricted PostgreSQL executor for the 16 current verifier IDs;
 - CIS-CAT execution and result mapping against the twin;
 - maximum-three-iteration reconciliation controller;
 - twin-runner HTTP boundary and verified PostgreSQL image catalog;

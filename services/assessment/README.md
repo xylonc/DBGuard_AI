@@ -11,8 +11,9 @@ current SQL templates:
 available. Unknown fields, parameter models, verifier IDs, duplicate IDs,
 missing template versions, and unapproved control sources fail closed.
 
-It intentionally does not start Docker, connect to PostgreSQL, or expose a new
-API endpoint. Those operations belong to the future restricted twin adapter.
+It intentionally does not start Docker or expose a new API endpoint. The
+restricted PostgreSQL executor connects only to the isolated twin connection
+provided by a future twin controller.
 
 ## Trust boundary
 
@@ -24,9 +25,18 @@ Assessment definitions are bound to an exact template name and version so a
 new template version cannot silently reuse checks that were reviewed for older
 SQL.
 
-A future twin executor implements `AssessmentExecutor.run_check`. It maps each
-registered verifier ID to fixed SQL or a fixed behavioural test and returns an
-observation plus immutable evidence references.
+`PostgresAssessmentExecutor` implements `AssessmentExecutor.run_check`. It maps
+each registered verifier ID to fixed SQL or a fixed behavioural test and
+returns an observation plus immutable evidence references. It has no generic
+SQL-execution method.
+
+The `AssessmentExecutor` protocol in `service.py` is the common boundary, not a
+second executor implementation. Production code supplies
+`PostgresAssessmentExecutor`. The `FakeExecutor` declared inside
+`tests/test_assessment_foundations.py` is a test-only substitute: it returns
+pre-programmed results so report logic can be tested without Docker or a live
+database. It is never part of the application runtime and should remain for
+fast, deterministic unit tests.
 
 An observed result without evidence is reported as `UNKNOWN`, never `PASS`.
 Executor exceptions are reported as `ERROR`, not as compliance failures.
@@ -51,9 +61,36 @@ criterion points to the existing `revoke_public_access` template. Existing
 direct or inherited write grants have no approved revocation template and also
 require human review.
 
+## PostgreSQL executor and fixtures
+
+`PostgresAssessmentFixtureManager` creates synthetic tables before and after a
+trusted hardening plan is applied. For the read-only test it also assigns a
+random password to the test role inside the disposable twin only. The password
+is removed during cleanup and never appears in evidence.
+
+`PostgresAssessmentExecutor` implements all 16 current verifier IDs:
+
+- fixed catalogue queries for role flags, schema privileges and PUBLIC ACLs;
+- a real authenticated connection as the requested role;
+- positive SELECT tests against existing and future probe tables;
+- rolled-back INSERT, UPDATE, DELETE, TRUNCATE and CREATE attempts;
+- hashed query/command evidence stored through an `EvidenceSink` boundary.
+
+An unknown verifier ID or parameter/context mismatch is rejected before any
+database operation. Application code must never pass the RAG PostgreSQL DSN;
+the executor is only for a dedicated disposable twin.
+
+Integration tests are opt-in. Set `DBGUARD_TEST_POSTGRES_DSN` to a dedicated
+test database and run:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_postgres_assessment_executor -v
+```
+
 ## Next implementation
 
-Add a restricted PostgreSQL assessment executor for the verifier IDs in these
-two definitions. It should create synthetic probe objects, execute positive and
-negative operations as the target role, capture query/command output, hash the
-evidence, and clean up the twin regardless of the result.
+Add a one-iteration twin controller that creates an isolated PostgreSQL
+container, replays supported snapshot configuration, applies a trusted compiled
+plan, invokes `PostgresAssessmentExecutor`, persists its evidence, and always
+destroys the twin. The existing test-only executor must not be selectable in
+this production flow.

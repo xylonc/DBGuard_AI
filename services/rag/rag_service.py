@@ -530,17 +530,17 @@ class RAGService:
             
             # Build WHERE clause for filters (P0 fix: enforce document lifecycle)
             where_clauses = [
-                "kd.status = 'active'",  # Only active docs
-                "kd.effective_date <= NOW()",  # Already in force
-                "(kd.expiry_date IS NULL OR kd.expiry_date > NOW())",  # Not expired
-                "(kc.environment_applicability @> %s OR kc.environment_applicability @> ARRAY['all']::varchar[])",
+                "kd.status = 'active'",
+                "kd.effective_date <= NOW()",
+                "(kd.expiry_date IS NULL OR kd.expiry_date > NOW())",
+                "(kc.environment_applicability @> %s::varchar[] OR kc.environment_applicability @> ARRAY['all']::varchar[])",
             ]
             filter_params = [[environment]]
-            
+
             if pg_version:
-                where_clauses.append("kc.postgresql_versions && %s")
+                where_clauses.append("kc.postgresql_versions && %s::varchar[]")
                 filter_params.append([pg_version])
-            
+
             where_clause = " AND ".join(where_clauses)
             
             # Execute semantic search with pgvector (P0 fix: joined with documents table for lifecycle filtering)
@@ -764,8 +764,11 @@ class RAGService:
                        created_at, updated_at, approved_by, approved_at
                 FROM knowledge_documents
                 WHERE status = 'active'
-                  AND postgresql_versions && %s
-                  AND (environment_applicability @> %s OR environment_applicability @> '{all}')
+                  AND postgresql_versions && %s::varchar[]
+                  AND (
+                        environment_applicability @> %s::varchar[]
+                        OR environment_applicability @> ARRAY['all']::varchar[]
+                    )
                   AND effective_date <= NOW()
                   AND (expiry_date IS NULL OR expiry_date > NOW())
             """, ([pg_version], [environment]))

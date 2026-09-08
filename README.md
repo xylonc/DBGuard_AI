@@ -7,8 +7,9 @@ AI permission to connect to the target database or execute a command.
 
 ## Current implemented scope
 
-The runnable POC covers the proposal workflow. Baseline assessment and SQL
-execution are deliberately outside this phase.
+The runnable POC covers the proposal workflow. The repository now also contains
+a strict, tested assessment-catalogue foundation for the reconciliation phase.
+It does not yet connect to a twin PostgreSQL instance or execute SQL.
 
 ```mermaid
 flowchart LR
@@ -128,6 +129,53 @@ compatibility, but new integrations should always use `snapshot_id`.
 - Every generated command remains a proposal. A qualified engineer must verify
   it before it is applied.
 
+## Assessment and reconciliation foundation
+
+The first reconciliation implementation is present in `services/assessment/`.
+It converts reviewed catalogue data into deterministic checks without allowing
+HERMES or the LLM to provide assessment SQL, verifier names, expected results,
+or pass/fail decisions.
+
+```mermaid
+flowchart LR
+    Y[hardening-controls.yaml] --> L[Strict catalogue loader]
+    L -->|validated definitions| R[Closed assessment registry]
+    R --> S[Assessment service]
+    S --> E[Restricted PostgreSQL executor - next]
+    E --> T[Fresh PostgreSQL twin - next]
+    T --> O[Evidence and assessment report]
+```
+
+### Assessment files
+
+| File | What it does |
+|---|---|
+| `catalog/controls/hardening-controls.yaml` | Machine-readable source catalogue, provider policy, template assessments, evidence requirements and remediation mappings |
+| `catalog/controls/README.md` | Explains the current catalogue lifecycle and which assessment parts remain unavailable |
+| `services/assessment/catalog_loader.py` | Parses YAML safely and rejects unknown fields, duplicate keys or IDs, unapproved sources, version mismatches, unknown parameter models and unknown verifier IDs |
+| `services/assessment/definition.py` | Defines a validated template-assessment definition and the shared PostgreSQL identifier rules |
+| `services/assessment/models.py` | Defines criteria, observations, evidence references, results, reports and readiness/status values |
+| `services/assessment/registry.py` | Loads the YAML once and exposes only exact registered template name/version pairs |
+| `services/assessment/service.py` | Runs registered criteria through a restricted executor boundary, verifies evidence and calculates suite/overall statuses |
+| `services/assessment/verifiers/read_only_role.py` | Defines the permitted parameters and 13 allowlisted check names for the read-only-role template |
+| `services/assessment/verifiers/revoke_public_access.py` | Defines the permitted parameters and three allowlisted check names for the PUBLIC-access revocation template |
+| `tests/test_assessment_foundations.py` | Tests valid loading, fail-closed rejection, evidence handling, remediation mapping and status aggregation |
+
+The two current template definitions provide 16 checks in total. These checks
+cover the requested read-only behaviour and limited related safety properties,
+but they are not the complete CIS PostgreSQL benchmark.
+
+`baseline_profiles` and `baseline_controls` are intentionally empty until the
+converted CIS content has been reviewed and mapped to exact source versions,
+control IDs, applicability, assessment providers and evidence requirements.
+Consequently, the global baseline state is `NOT_READY`. Template-specific
+checks may pass, but DBGuard reports the overall result as `UNKNOWN` rather
+than incorrectly treating an empty baseline as compliance.
+
+Approving a knowledge document through the API makes it available to RAG for
+explanation and retrieval. It does not authorize that document to create or
+execute controls. Control-authoring approval is a separate catalogue review.
+
 ## Repository structure
 
 ```text
@@ -138,9 +186,10 @@ deploy/                        Four-service Docker Compose stack
 hermes/                        Official-image wrapper, config, context and skill
 services/dbguard_mcp/          Restricted HTTP MCP-to-API adapter
 services/rag/                  Lifecycle-aware knowledge ingestion and retrieval
+services/assessment/           Strict catalogue and deterministic check foundation
 services/twin_runner/          Deferred twin lifecycle library
 services/reporting/            Deferred reporting library
-catalog/controls/              Future reviewed baseline controls
+catalog/controls/              Assessment catalogue and future CIS baseline controls
 catalog/images/examples/       Non-runnable image-record examples
 ```
 
@@ -150,7 +199,10 @@ for HERMES packaging, installation and troubleshooting.
 
 ## Deferred work
 
-- baseline assessment and scoring;
+- reviewed CIS baseline profiles and structured control mappings;
+- restricted PostgreSQL executor for the 16 current verifier IDs;
+- CIS-CAT execution and result mapping against the twin;
+- maximum-three-iteration reconciliation controller;
 - twin-runner HTTP boundary and verified PostgreSQL image catalog;
 - proposal review-package reporting and approval workflow;
 - production identity, authorization, audit logging and secret management;

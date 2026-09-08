@@ -1,0 +1,349 @@
+# DBGuard assessment catalogue for reviewed SQL templates.
+#
+# This file contains data only. It must never contain SQL supplied by HERMES or
+# an LLM. The assessment runtime maps each verifier_id and parameter_model to
+# reviewed Python implementations. Unknown identifiers must fail closed.
+schema_version: 1
+catalog_id: dbguard-postgresql-hardening-controls
+catalog_version: 1
+status: draft
+engine: postgresql
+maximum_reconciliation_iterations: 3
+
+# Knowledge can explain or propose a control, but it cannot become executable
+# merely because it was retrieved by RAG. A human reviewer must promote it into
+# baseline_controls and bind it to a reviewed verifier or CIS-CAT rule.
+control_activation_policy:
+  allowed_source_review_statuses:
+    - approved
+  require_exact_source_version: true
+  require_environment_applicability: true
+  require_reviewed_assessment_provider: true
+  require_evidence_types: true
+  unmapped_cis_cat_result: pending_human_review
+  unsupported_control: pending_human_review
+
+knowledge_sources:
+  - source_id: cis-postgresql-17-v1.0.0
+    source_type: benchmark
+    publisher: Center for Internet Security
+    title: CIS PostgreSQL 17 Benchmark
+    version: 1.0.0
+    postgresql_versions:
+      - "17"
+    classification: licensed
+    review_status: conversion_in_progress
+    artifact_name: PostgreSQL17_1.0.0_Hardening_CIS_XCC_v2.0.0.xlsx
+    rag_document_id: null
+    source_url: https://www.cisecurity.org/benchmark/postgresql
+    approved_for_control_authoring: false
+    notes: >-
+      Keep this workbook-derived source separate from later benchmark versions.
+      Its control identifiers and profile must be verified after conversion.
+
+  - source_id: cis-postgresql-17-v1.1.0
+    source_type: benchmark
+    publisher: Center for Internet Security
+    title: CIS PostgreSQL 17 Benchmark
+    version: 1.1.0
+    postgresql_versions:
+      - "17"
+    classification: licensed
+    review_status: draft
+    artifact_name: CIS_PostgreSQL_17_Benchmark_v1.1.0.cleaned.md
+    rag_document_id: cis-postgresql-17-v1.1.0
+    source_url: https://www.cisecurity.org/benchmark/postgresql
+    approved_for_control_authoring: false
+    notes: >-
+      This is the version currently referenced by scripts/ingest_cis.py. It
+      must not be merged with version 1.0.0 control mappings.
+
+  - source_id: postgresql-17-official-documentation
+    source_type: vendor_documentation
+    publisher: PostgreSQL Global Development Group
+    title: PostgreSQL 17 Documentation
+    version: "17"
+    postgresql_versions:
+      - "17"
+    classification: public
+    review_status: planned
+    artifact_name: null
+    rag_document_id: null
+    source_url: https://www.postgresql.org/docs/17/
+    approved_for_control_authoring: false
+
+  - source_id: edb-postgresql-security-hardening-best-practices
+    source_type: industry_guidance
+    publisher: EnterpriseDB
+    title: PostgreSQL Security Hardening Best Practices
+    version: unversioned
+    postgresql_versions:
+      - all
+    classification: public_reference
+    review_status: planned
+    artifact_name: null
+    rag_document_id: null
+    source_url: https://www.enterprisedb.com/blog/how-to-secure-postgresql-security-hardening-best-practices-checklist-tips-encryption-authentication-vulnerabilities
+    approved_for_control_authoring: false
+
+assessment_providers:
+  dbguard:
+    enabled: true
+    purpose: Run reviewed DBGuard query and behavioural verifiers in the twin.
+    allow_arbitrary_sql: false
+
+  cis_cat:
+    enabled: false
+    product: CIS-CAT Pro Assessor v4
+    purpose: Run a selected CIS PostgreSQL benchmark against the twin.
+    target_boundary: twin_only
+    connection_type: postgresql_jdbc
+    accepted_report_formats:
+      - json
+      - xml
+    retain_original_report: true
+    required_run_metadata:
+      - benchmark_id
+      - benchmark_version
+      - profile_id
+      - target_id
+      - assessment_timestamp
+    required_result_fields:
+      - cis_rule_id
+      - status
+    unmapped_results_are_failures: false
+    unmapped_results_require_human_review: true
+
+# These collections remain empty until the converted benchmark is reviewed.
+# Do not guess CIS rule IDs, expected values, Level profiles or applicability.
+baseline_profiles: []
+baseline_controls: []
+
+template_assessments:
+  - template_name: create_read_only_rule
+    template_version: 1
+    template_path: backend/app/templates/create_read_only_rule.sql.j2
+    title: Create a read-only PostgreSQL role
+    parameter_model: read_only_role
+    parameters:
+      role_name:
+        type: postgresql_identifier
+        required: true
+        description: Role that must receive read-only access.
+      database_name:
+        type: postgresql_identifier
+        required: true
+        description: Database to which the role must be able to connect.
+      schema_name:
+        type: postgresql_identifier
+        required: false
+        default: public
+        description: Schema in which the role must be able to read tables.
+    criteria:
+      - criterion_id: REQ-READONLY-ROLE-EXISTS
+        title: Requested role exists
+        suite: requirement
+        verifier_id: role_exists
+        expected_value: true
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: create_read_only_rule
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: REQ-READONLY-CONNECT
+        title: Role can connect to the requested database
+        suite: requirement
+        verifier_id: role_can_connect_database
+        expected_value: true
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: create_read_only_rule
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: REQ-READONLY-SCHEMA-USAGE
+        title: Role can use the requested schema
+        suite: requirement
+        verifier_id: role_has_schema_usage
+        expected_value: true
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: create_read_only_rule
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: REQ-READONLY-SELECT-EXISTING
+        title: Role can read an existing probe table
+        suite: requirement
+        verifier_id: role_can_select_existing_probe_table
+        expected_value: true
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: create_read_only_rule
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: REQ-READONLY-SELECT-FUTURE
+        title: Role can read a probe table created after hardening
+        suite: requirement
+        verifier_id: role_can_select_future_probe_table
+        expected_value: true
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+        notes: >-
+          Version 1 of create_read_only_rule does not grant privileges on future
+          tables. Until a reviewed template version addresses default privileges,
+          this failure requires human review.
+
+      - criterion_id: REQ-READONLY-NO-INSERT
+        title: Role cannot insert rows
+        suite: requirement
+        verifier_id: role_can_insert_probe_table
+        expected_value: false
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+      - criterion_id: REQ-READONLY-NO-UPDATE
+        title: Role cannot update rows
+        suite: requirement
+        verifier_id: role_can_update_probe_table
+        expected_value: false
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+      - criterion_id: REQ-READONLY-NO-DELETE
+        title: Role cannot delete rows
+        suite: requirement
+        verifier_id: role_can_delete_probe_table
+        expected_value: false
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+      - criterion_id: REQ-READONLY-NO-TRUNCATE
+        title: Role cannot truncate tables
+        suite: requirement
+        verifier_id: role_can_truncate_probe_table
+        expected_value: false
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+      - criterion_id: REQ-READONLY-NO-SCHEMA-CREATE
+        title: Role cannot create objects through PUBLIC schema privileges
+        suite: requirement
+        verifier_id: role_can_create_in_schema
+        expected_value: false
+        evidence_types:
+          - command_output
+        remediation:
+          template_name: revoke_public_access
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: BASE-ROLE-NOT-SUPERUSER
+        title: Role is not a PostgreSQL superuser
+        suite: baseline
+        verifier_id: role_is_superuser
+        expected_value: false
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+      - criterion_id: BASE-ROLE-NO-CREATEDB
+        title: Role cannot create databases
+        suite: baseline
+        verifier_id: role_can_create_database
+        expected_value: false
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+      - criterion_id: BASE-ROLE-NO-CREATEROLE
+        title: Role cannot create other roles
+        suite: baseline
+        verifier_id: role_can_create_role
+        expected_value: false
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false
+
+  - template_name: revoke_public_access
+    template_version: 1
+    template_path: backend/app/templates/revoke_public_access.sql.j2
+    title: Revoke implicit PUBLIC access to a PostgreSQL schema
+    parameter_model: revoke_public_access
+    parameters:
+      schema_name:
+        type: postgresql_identifier
+        required: false
+        default: public
+        description: Schema from which PUBLIC privileges must be revoked.
+    criteria:
+      - criterion_id: BASE-PUBLIC-NO-SCHEMA-CREATE
+        title: PUBLIC cannot create objects in the schema
+        suite: baseline
+        verifier_id: public_has_schema_create
+        expected_value: false
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: revoke_public_access
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: BASE-PUBLIC-NO-SCHEMA-USAGE
+        title: PUBLIC has no implicit schema usage privilege
+        suite: baseline
+        verifier_id: public_has_schema_usage
+        expected_value: false
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: revoke_public_access
+          template_version: 1
+          reconcile_on_failure: true
+
+      - criterion_id: BASE-SCHEMA-OWNER-RETAINS-USAGE
+        title: Schema owner retains access after PUBLIC privileges are revoked
+        suite: baseline
+        verifier_id: schema_owner_has_schema_usage
+        expected_value: true
+        evidence_types:
+          - query_output
+        remediation:
+          template_name: null
+          template_version: null
+          reconcile_on_failure: false

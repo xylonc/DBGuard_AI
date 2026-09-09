@@ -211,3 +211,169 @@ class TestPydanticContract:
         assert request.title == "Security Controls"
         assert len(request.content) >= 100
         assert "DB-001" in request.content
+
+# ── Section-length regression ─────────────────────────────────────────
+
+
+def make_long_header_xlsx() -> bytes:
+    """Build an XLSX whose first data row starts with ``# `` and has a long body.
+
+    This reproduces the bug where a worksheet header cell like
+    ``# PostgreSQL CIS Benchmark v1.0.0`` causes the extractor to produce
+    lines such as::
+
+        # PostgreSQL CIS Benchmark v1.0.0: Enable detailed query logging …
+
+    The chunker then treats the entire rest of the line as a section header,
+    producing section values that exceed ``VARCHAR(255)`` and fail the INSERT.
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Benchmarks"
+    ws.append(["# PostgreSQL CIS Benchmark v1.0.0"])
+    ws.append(["Section 1: Installation and Configuration"])
+    ws.append([
+        "Enable detailed query logging for audit trail purposes on the "
+        "PostgreSQL database server instance configured to capture all "
+        "connection attempts and SQL queries executed by user roles across "
+        "all databases in the production environment with strict compliance "
+        "requirements for financial institutions operating in multi-tenant "
+        "cloud environments with shared infrastructure and regulatory "
+        "oversight bodies requiring comprehensive audit capabilities"
+    ])
+    buf = io.BytesIO()
+    wb.save(buf)
+    wb.close()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+class TestChunkSectionBounded:
+    """Regression tests: chunk section values must never exceed 255 chars."""
+
+    def test_xlsx_with_long_hash_header_section_is_bounded(self):
+        """XLSX containing a long ``# `` header line must not produce a
+        ``section`` value longer than 255 characters.
+
+        This is a regression test for the ``VARCHAR(255)`` insertion failure
+        where pasted CIS-benchmark-style content in an XLSX header cell
+        produced lines like::
+
+            # PostgreSQL CIS Benchmark v1.0.0: Enable detailed query logging …
+
+        and the chunker used the entire rest of the line as ``section``.
+        """
+        from app.xlsx_extractor import extract_xlsx_to_text
+        from services.rag.rag_service import RAGService, KnowledgeDocument
+
+        xlsx_bytes = make_long_header_xlsx()
+        text = extract_xlsx_to_text(xlsx_bytes)
+
+        # Verify the extracted text does contain a ``#``-prefixed line
+        # that would trigger the old bug.
+        lines = text.split("\n")
+        assert any(
+            line.startswith("# ") and len(line) > 260 for line in lines
+        ), "Test setup: extracted text must contain a >260-char # line"
+
+        doc = KnowledgeDocument(
+            document_id="regression-xlsx-long-header",
+            title="Benchmarks",
+            version="1.0.0",
+            content=text,
+            effective_date=datetime.now(timezone.utc),
+            status="draft",
+        )
+
+        chunks = RAGService()._chunk_document(doc)
+
+        assert len(chunks) > 0, "Expected at least one chunk"
+
+        for i, chunk in enumerate(chunks):
+            assert len(chunk.section) <= 255, (
+                f"Chunk {i} section is {len(chunk.section)} chars "
+                f"(exceeds VARCHAR(255)): {chunk.section[:60]}..."
+            )
+
+    def test_direct_300_char_section_header_is_clamped(self):
+        """A document with a direct 300-char ``#`` header must clamp to 255."""
+        from services.rag.rag_service import RAGService, KnowledgeDocument
+
+        content = f"{'#' + 'X' * 300}\\nBody text\\n"
+        doc = KnowledgeDocument(
+            document_id="regression-300-char-header",
+            title="Test",
+            version="1.0.0",
+            content=content,
+            effective_date=datetime.now(timezone.utc),
+            status="draft",
+        )
+
+        chunks = RAGService()._chunk_document(doc)
+        assert len(chunks) > 0
+
+        for i, chunk in enumerate(chunks):
+            assert len(chunk.section) <= 255, (
+                f"Chunk {i} section is {len(chunk.section)} chars (should be clamped)"
+            )
+
+    def test_split_oversized_chunk_section_stays_within_255(self):
+        """When an oversized chunk is split, the ``(cont.)`` suffix must
+        not push the section beyond 255 characters."""
+        from services.rag.rag_service import RAGService, KnowledgeChunk
+
+        long_section = "Y" * 255
+        long_content = "Z" * 5000
+
+        chunk = KnowledgeChunk(
+            document_id="regression-split",
+            section=long_section,
+            content=long_content,
+            chunk_hash="abc",
+            chunk_index=0,
+            postgresql_versions=["15"],
+            environment_applicability=["all"],
+            source_document_title="Test",
+            source_document_version="1.0",
+        )
+
+        sub_chunks = RAGService()._split_oversized_chunk(chunk)
+
+        assert len(sub_chunks) > 1, "Expected at least 2 sub-chunks from 5000-char content"
+
+        for i, sc in enumerate(sub_chunks):
+            assert len(sc.section) <= 255, (
+                f"Split chunk {i} section is {len(sc.section)} chars (with '(cont.)')"
+            )
+            if i > 0:
+                assert sc.section.endswith(" (cont.)"), (
+                    f"Split chunk {i} section should end with '(cont.)'"
+                )
+
+    def test_long_xlsx_content_preserved_in_chunk_text(self):
+        """The full long spreadsheet text must remain in the chunk ``content``
+        (``TEXT`` column) even though ``section`` is bounded."""
+        from app.xlsx_extractor import extract_xlsx_to_text
+        from services.rag.rag_service import RAGService, KnowledgeDocument
+
+        xlsx_bytes = make_long_header_xlsx()
+        text = extract_xlsx_to_text(xlsx_bytes)
+
+        doc = KnowledgeDocument(
+            document_id="regression-preserve-content",
+            title="Benchmarks",
+            version="1.0.0",
+            content=text,
+            effective_date=datetime.now(timezone.utc),
+            status="draft",
+        )
+
+        chunks = RAGService()._chunk_document(doc)
+        combined_content = "".join(c.content for c in chunks)
+
+        # The long description line should still be fully present
+        assert "Enable detailed query logging for audit trail purposes" in combined_content
+        assert "shared infrastructure" in combined_content
+        assert "regulatory oversight bodies" in combined_content

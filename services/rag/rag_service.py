@@ -300,8 +300,10 @@ class RAGService:
                     if chunk:
                         chunks.append(chunk)
                 
-                # Start new section
-                current_section = header_match.group(2).strip()
+                # Start new section — clamp to 255 chars to stay within
+                # the VARCHAR(255) limit on the ``section`` column.
+                new_section = header_match.group(2).strip()
+                current_section = new_section[:255]
                 current_chunk_lines = [line]  # Include header in chunk
             else:
                 current_chunk_lines.append(line)
@@ -375,7 +377,7 @@ class RAGService:
             sub_hash = hashlib.sha256(sub_text.encode()).hexdigest()
             sub_chunks.append(KnowledgeChunk(
                 document_id=chunk.document_id,
-                section=f"{chunk.section} (cont.)" if start > 0 else chunk.section,
+                section=chunk.section[:246] + " (cont.)" if start > 0 else chunk.section,
                 content=sub_text,
                 chunk_hash=sub_hash,
                 chunk_index=idx,

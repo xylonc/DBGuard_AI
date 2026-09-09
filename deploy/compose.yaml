@@ -1,0 +1,108 @@
+name: dbguard-ai
+
+# Proposal-phase stack: DBGuard API, restricted MCP adapter, the official pinned
+# HERMES runtime, its built-in dashboard, and one pgvector database.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: dbguardai/api:0.2.0
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://dbguard:${DBGUARD_DB_PASSWORD:-dbguard-local-only}@postgres:5432/dbguard
+      SNAPSHOT_STORAGE_DIR: /app/data/snapshots
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      LLM_MODEL: ${LLM_MODEL:-llama3.1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_API_BASE: ${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      OLLAMA_API_URL: ${OLLAMA_API_URL:-http://host.docker.internal:11434}
+    volumes:
+      - snapshots:/app/data/snapshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mcp:
+    image: dbguardai/api:0.2.0
+    command: ["python", "-m", "services.dbguard_mcp.server"]
+    environment:
+      DBGUARD_API_URL: http://api:8000
+      DBGUARD_MCP_PORT: 8001
+      DBGUARD_MCP_TIMEOUT_SECONDS: 60
+    expose:
+      - "8001"
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  hermes:
+    build:
+      context: ..
+      dockerfile: hermes/Dockerfile
+    image: dbguardai/hermes:v2026.8.31
+    command: ["gateway", "run"]
+    ports:
+      - "127.0.0.1:8642:8642"
+      - "127.0.0.1:9119:9119"
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: 8642
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:-dbguard-local-dev-key}
+      HERMES_DASHBOARD: "1"
+      HERMES_TUI_SKILLS: dbguard-hardening
+      HERMES_DASHBOARD_USERNAME: ${HERMES_DASHBOARD_USERNAME:-dbguard}
+      HERMES_DASHBOARD_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:-dbguard-local-only}
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-oss:20b}
+      HERMES_MODEL_BASE_URL: ${HERMES_MODEL_BASE_URL:-https://ollama.com/v1}
+      HERMES_MODEL_API_KEY: ${OLLAMA_API_KEY:-}
+    volumes:
+      - hermes-data:/opt/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mcp:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_DB: dbguard
+      POSTGRES_USER: dbguard
+      POSTGRES_PASSWORD: ${DBGUARD_DB_PASSWORD:-dbguard-local-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbguard -d dbguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  hermes-data:
+  postgres-data:
+  snapshots:

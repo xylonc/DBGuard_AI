@@ -8,8 +8,8 @@ Usage:
 import sys
 import os
 
-# Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Add the canonical backend package to the import path.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from app.services.vector_service import init_db, ingest_all_templates
 

@@ -10,6 +10,7 @@ Only the health check endpoint lives here directly.
 from fastapi import FastAPI
 from app.runs_endpoint import router as runs_router
 from app.templates_endpoint import router as templates_router
+from app.knowledge_endpoint import router as knowledge_router
 
 app = FastAPI(title="DBGuardAI")
 
@@ -25,3 +26,4 @@ def health_check():
 
 app.include_router(runs_router)
 app.include_router(templates_router)
+app.include_router(knowledge_router)

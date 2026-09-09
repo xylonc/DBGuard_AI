@@ -108,3 +108,11 @@ class KnowledgeSearchResult(BaseModel):
 class KnowledgeSearchResponse(BaseModel):
     status: str = "ok"
     results: list[KnowledgeSearchResult] = Field(default_factory=list)
+
+
+class KnowledgeIngestResponse(BaseModel):
+    """Response for knowledge ingestion operations."""
+    status: str
+    document_id: str
+    title: str
+    chunks_created: int = 0

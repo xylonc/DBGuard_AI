@@ -377,3 +377,68 @@ class TestChunkSectionBounded:
         assert "Enable detailed query logging for audit trail purposes" in combined_content
         assert "shared infrastructure" in combined_content
         assert "regulatory oversight bodies" in combined_content
+
+    def test_large_xlsx_stays_under_max_chunks(self):
+        """A representative 800-row CIS-style workbook (with pruned columns
+        omitted) must produce fewer than MAX_CHUNKS so no content is
+        silently truncated.
+
+        This is a regression test for the ``value too long`` /
+        ``exceeds MAX_CHUNKS`` errors that occurred when the XLSX
+        extractor produced ~1680-char tab-joined lines, inflating the
+        chunk count past 1000.
+
+        The test deliberately omits CIS-safeguards/IG/control-reference
+        columns that would be pruned by the extractor, matching the
+        real CIS workbook shape.
+        """
+        from app.xlsx_extractor import extract_xlsx_to_text
+        from services.rag.rag_service import RAGService, KnowledgeDocument
+
+        # Build an 800-row workbook — only the columns the extractor keeps
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Controls"
+        ws.append([
+            "Section #", "Recommendation #", "Title", "Severity",
+            "Description", "Rationale Statement", "Remediation Procedure",
+            "Audit Procedure", "Impact Statement",
+        ])
+        for i in range(2, 602):
+            ws.append([
+                str(i - 1),
+                f"4.{i-1:03d}",
+                f"Ensure security control {i-1} is enabled",
+                "High" if i % 3 == 0 else "Medium" if i % 2 == 0 else "Low",
+                f"This control ensures measure {i-1} is configured. " * 2,
+                f"Without this control the system may be vulnerable. " * 2,
+                f"Execute:\n```\n# echo 'setting={i-1}' >> /etc/config\n# systemctl restart app\n```\nApply and verify.",
+                f"Run: ```\n# whoami\n# psql -c 'SELECT * FROM controls WHERE id={i-1}'\n```\nVerify output.",
+                f"Performance impact: negligible for control {i-1}",
+            ])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        xlsx_bytes = buf.getvalue()
+
+        text = extract_xlsx_to_text(xlsx_bytes)
+        doc = KnowledgeDocument(
+            document_id="regression-large-xlsx",
+            title="Synthetic CIS Controls",
+            version="1.0",
+            content=text,
+            effective_date=datetime.now(timezone.utc),
+            status="draft",
+        )
+
+        chunks = RAGService()._chunk_document(doc)
+
+        assert len(chunks) < 1000, (
+            f"Chunk count {len(chunks)} exceeds MAX_CHUNKS (1000); "
+            f"content was silently truncated"
+        )
+        # All fields should be represented in the chunks
+        all_text = " ".join(c.content for c in chunks)
+        assert "Section #" in all_text
+        assert "Remediation Procedure" in all_text
+        assert "Audit Procedure" in all_text

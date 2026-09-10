@@ -76,70 +76,71 @@ print(f"postgresql_versions: {doc.postgresql_versions}")
 print(f"environment_applicability: {doc.environment_applicability}")
 
 # Try actual DB
-import psycopg2
-conn = psycopg2.connect(os.environ['DATABASE_URL'])
-cur = conn.cursor()
-doc_hash = doc.document_hash
-
-# Insert document
-try:
-    cur.execute("""
-        INSERT INTO knowledge_documents (
-            document_id, title, version, status,
-            effective_date, expiry_date,
-            postgresql_versions, environment_applicability,
-            policy_owner, classification, source_url, superseded_by,
-            document_hash, approved_by, approved_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (document_id) DO UPDATE SET title = EXCLUDED.title
-    """, (
-        doc.document_id, doc.title, doc.version, doc.status,
-        doc.effective_date, doc.expiry_date,
-        doc.postgresql_versions, doc.environment_applicability,
-        doc.policy_owner, doc.classification, doc.source_url,
-        doc.superseded_by, doc_hash, doc.approved_by,
-        datetime.utcnow() if doc.status == "active" else None,
-    ))
-    print("knowledge_documents INSERT: OK")
-except Exception as e:
-    conn.rollback()
-    print(f"knowledge_documents INSERT FAILED: {type(e).__name__}")
-    print(f"  {e}")
-    if hasattr(e, 'diag'):
-        print(f"  Table: {e.diag.table_name}, Column: {e.diag.column_name}")
-        print(f"  Detail: {e.diag.message_detail}")
-
-cur.execute("DELETE FROM knowledge_chunks WHERE document_id = %s", (doc.document_id,))
-
-# Insert chunks
-failed = False
-for i, chunk in enumerate(chunks):
+if __name__ == '__main__':
+    import psycopg2
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    cur = conn.cursor()
+    doc_hash = doc.document_hash
+    
+    # Insert document
     try:
         cur.execute("""
-            INSERT INTO knowledge_chunks (
-                document_id, section, content, chunk_hash,
-                chunk_index, postgresql_versions,
-                environment_applicability, source_document_title,
-                source_document_version
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO knowledge_documents (
+                document_id, title, version, status,
+                effective_date, expiry_date,
+                postgresql_versions, environment_applicability,
+                policy_owner, classification, source_url, superseded_by,
+                document_hash, approved_by, approved_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (document_id) DO UPDATE SET title = EXCLUDED.title
         """, (
-            chunk.document_id, chunk.section, chunk.content,
-            chunk.chunk_hash, chunk.chunk_index,
-            chunk.postgresql_versions, chunk.environment_applicability,
-            chunk.source_document_title, chunk.source_document_version,
+            doc.document_id, doc.title, doc.version, doc.status,
+            doc.effective_date, doc.expiry_date,
+            doc.postgresql_versions, doc.environment_applicability,
+            doc.policy_owner, doc.classification, doc.source_url,
+            doc.superseded_by, doc_hash, doc.approved_by,
+            datetime.utcnow() if doc.status == "active" else None,
         ))
-        conn.commit()
+        print("knowledge_documents INSERT: OK")
     except Exception as e:
         conn.rollback()
-        failed = True
-        print(f"chunk[{i}] FAILED: {type(e).__name__}")
+        print(f"knowledge_documents INSERT FAILED: {type(e).__name__}")
         print(f"  {e}")
         if hasattr(e, 'diag'):
             print(f"  Table: {e.diag.table_name}, Column: {e.diag.column_name}")
             print(f"  Detail: {e.diag.message_detail}")
-        break
-
-if not failed:
-    print(f"All {len(chunks)} chunks inserted OK!")
     
-conn.close()
+    cur.execute("DELETE FROM knowledge_chunks WHERE document_id = %s", (doc.document_id,))
+    
+    # Insert chunks
+    failed = False
+    for i, chunk in enumerate(chunks):
+        try:
+            cur.execute("""
+                INSERT INTO knowledge_chunks (
+                    document_id, section, content, chunk_hash,
+                    chunk_index, postgresql_versions,
+                    environment_applicability, source_document_title,
+                    source_document_version
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                chunk.document_id, chunk.section, chunk.content,
+                chunk.chunk_hash, chunk.chunk_index,
+                chunk.postgresql_versions, chunk.environment_applicability,
+                chunk.source_document_title, chunk.source_document_version,
+            ))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            failed = True
+            print(f"chunk[{i}] FAILED: {type(e).__name__}")
+            print(f"  {e}")
+            if hasattr(e, 'diag'):
+                print(f"  Table: {e.diag.table_name}, Column: {e.diag.column_name}")
+                print(f"  Detail: {e.diag.message_detail}")
+            break
+    
+    if not failed:
+        print(f"All {len(chunks)} chunks inserted OK!")
+        
+    conn.close()

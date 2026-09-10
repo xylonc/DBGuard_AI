@@ -7,6 +7,11 @@ Adds a single ``POST /api/v1/knowledge/upload`` route that:
 4. Calls the existing ``RAGService.ingest_document`` directly.
 5. Returns the standard ingestion result.
 
+Also adds a ``GET /api/v1/knowledge/search`` route that:
+1. Accepts a query string and optional filters.
+2. Calls the existing ``RAGService.search`` method.
+3. Returns matching chunks with similarity scores.
+
 The existing JSON-based ingestion endpoints (template ingest, etc.)
 are **not** modified or replaced.
 """
@@ -14,8 +19,8 @@ are **not** modified or replaced.
 import sys
 from pathlib import Path
 
-# Ensure project root is on the path so that `services.rag_service` is importable
-# and `app.config` / `app.services` are importable (needed by rag_service.py)
+# Ensure project root is on the path so that `app.config` and `app.services` are importable
+# The rag_service is now importable as a package from services/rag
 _project_root = Path(__file__).resolve().parent.parent.parent
 _backend = Path(__file__).resolve().parent.parent
 for p in (_project_root, _backend):
@@ -23,22 +28,22 @@ for p in (_project_root, _backend):
     if ps not in sys.path:
         sys.path.insert(0, ps)
 
-# Import rag_service as a file (not a package) to work around missing __init__.py
-_services_rag = str(_project_root / "services" / "rag")
-if _services_rag not in sys.path:
-    sys.path.insert(0, _services_rag)
+# Import rag_service as a package
+_services_dir = str(_project_root / "services")
+if _services_dir not in sys.path:
+    sys.path.insert(0, _services_dir)
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from app.models import (
     KnowledgeIngestRequest,
     KnowledgeIngestResponse,
 )
-from rag_service import RAGService, KnowledgeDocument, IngestionResult  # noqa: E402
+from rag.rag_service import RAGService, KnowledgeDocument, IngestionResult, RetrievalResult  # noqa: E402, F401  # type: ignore
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 
@@ -129,3 +134,66 @@ async def upload_knowledge_xlsx(file: UploadFile = File(...)):
         title=ingest_request.title,
         chunks_created=ingestion_result.chunks_created,
     )
+
+
+class KnowledgeSearchRequest:
+    """Request model for knowledge search (used for query params)."""
+    def __init__(
+        self,
+        query: str = Query(..., description="Search query text"),
+        pg_version: Optional[str] = Query(None, description="Filter by PostgreSQL version (e.g., '16')"),
+        environment: str = Query("all", description="Filter by environment (prod, dev, all)"),
+        top_k: int = Query(5, description="Maximum number of results to return"),
+        min_score: float = Query(0.5, description="Minimum similarity score threshold"),
+    ):
+        self.query = query
+        self.pg_version = pg_version
+        self.environment = environment
+        self.top_k = top_k
+        self.min_score = min_score
+
+
+@router.get("/search", response_model=List[Dict[str, Any]])
+async def search_knowledge(
+    query: str = Query(..., description="Search query text"),
+    pg_version: Optional[str] = Query(None, description="Filter by PostgreSQL version (e.g., '16')"),
+    environment: str = Query("all", description="Filter by environment (prod, dev, all)"),
+    top_k: int = Query(5, description="Maximum number of results to return"),
+    min_score: float = Query(0.5, description="Minimum similarity score threshold"),
+):
+    """Search the RAG knowledge base for relevant chunks.
+
+    Args:
+        query: Search query text
+        pg_version: Filter by PostgreSQL version (e.g., "16")
+        environment: Filter by environment (prod, dev, all)
+        top_k: Maximum number of results to return (default: 5)
+        min_score: Minimum similarity score threshold (default: 0.5)
+
+    Returns:
+        List of matching chunks with content, section, metadata, and similarity scores.
+    """
+    try:
+        results = rag_service.search(
+            query=query,
+            pg_version=pg_version,
+            environment=environment,
+            top_k=top_k,
+            min_score=min_score,
+        )
+        return [
+            {
+                "chunk_id": r.chunk_id,
+                "document_id": r.document_id,
+                "section": r.section,
+                "content": r.content,
+                "similarity_score": r.similarity_score,
+                "source_document_title": r.source_document_title,
+                "source_document_version": r.source_document_version,
+                "postgresql_versions": r.postgresql_versions,
+                "environment_applicability": r.environment_applicability,
+            }
+            for r in results
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")

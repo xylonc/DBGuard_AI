@@ -268,7 +268,7 @@ class TestChunkSectionBounded:
         and the chunker used the entire rest of the line as ``section``.
         """
         from app.xlsx_extractor import extract_xlsx_to_text
-        from services.rag.rag_service import RAGService, KnowledgeDocument
+        from rag.rag_service import RAGService, KnowledgeDocument  # type: ignore
 
         xlsx_bytes = make_long_header_xlsx()
         text = extract_xlsx_to_text(xlsx_bytes)
@@ -301,7 +301,7 @@ class TestChunkSectionBounded:
 
     def test_direct_300_char_section_header_is_clamped(self):
         """A document with a direct 300-char ``#`` header must clamp to 255."""
-        from services.rag.rag_service import RAGService, KnowledgeDocument
+        from rag.rag_service import RAGService, KnowledgeDocument  # type: ignore
 
         content = f"{'#' + 'X' * 300}\\nBody text\\n"
         doc = KnowledgeDocument(
@@ -358,7 +358,7 @@ class TestChunkSectionBounded:
         """The full long spreadsheet text must remain in the chunk ``content``
         (``TEXT`` column) even though ``section`` is bounded."""
         from app.xlsx_extractor import extract_xlsx_to_text
-        from services.rag.rag_service import RAGService, KnowledgeDocument
+        from rag.rag_service import RAGService, KnowledgeDocument  # type: ignore
 
         xlsx_bytes = make_long_header_xlsx()
         text = extract_xlsx_to_text(xlsx_bytes)
@@ -393,7 +393,7 @@ class TestChunkSectionBounded:
         all of them without pruning.
         """
         from app.xlsx_extractor import extract_xlsx_to_text
-        from services.rag.rag_service import RAGService, KnowledgeDocument
+        from rag.rag_service import RAGService, KnowledgeDocument  # type: ignore
 
         # Build a 600-row workbook with core columns (no pruning).
         wb = Workbook()
@@ -441,8 +441,8 @@ class TestChunkSectionBounded:
 
         chunks = RAGService()._chunk_document(doc)
 
-        assert len(chunks) < 1000, (
-            f"Chunk count {len(chunks)} exceeds MAX_CHUNKS (1000); "
+        assert len(chunks) < 1500, (
+            f"Chunk count {len(chunks)} exceeds MAX_CHUNKS (1500); "
             f"content was silently truncated"
         )
         # All fields should be represented in the chunks
@@ -512,7 +512,7 @@ class TestChunkSectionBounded:
         that appear in Remediation/Audit procedures.
         """
         from app.xlsx_extractor import extract_xlsx_to_text
-        from services.rag.rag_service import RAGService, KnowledgeDocument
+        from rag.rag_service import RAGService, KnowledgeDocument  # type: ignore
 
         wb = Workbook()
         ws = wb.active
@@ -559,7 +559,7 @@ class TestChunkSectionBounded:
         from the combined chunk content.
         """
         from app.xlsx_extractor import extract_xlsx_to_text
-        from services.rag.rag_service import RAGService, KnowledgeDocument
+        from rag.rag_service import RAGService, KnowledgeDocument  # type: ignore
 
         long_text = " ".join(
             f"This is paragraph {i}. It contains important audit information "

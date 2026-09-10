@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # LLM
     llm_model: str = "gpt-4o-mini"
     openai_api_key: str = ""
+    ollama_api_url: str = "http://localhost:11434"
     ollama_api_key: str = ""
     ollama_api_base: str = "https://api.ollama.com/v1"
 

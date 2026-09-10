@@ -403,7 +403,44 @@ class RAGService:
         try:
             cur = conn.cursor()
             
-            # Insert document metadata row (P0 fix: now stored on ingest)
+            # ── Diagnostic: check VARCHAR(255) field lengths (first 5 chunks) ──
+            _diagnostic_checked = 0
+            _chunk_ok = True
+            for ci, (chunk, _) in enumerate(embeddings):
+                if _diagnostic_checked >= 5:
+                    break
+                checks = {
+                    "document_id": chunk.document_id,
+                    "section": chunk.section,
+                    "chunk_hash": chunk.chunk_hash,
+                }
+                for col, val in checks.items():
+                    if len(val) > 255:
+                        logger.warning(
+                            f"knowledge_chunks[{ci}] field={col} len={len(val)} > 255: "
+                            f"{val[:40]}... (doc={chunk.document_id})"
+                        )
+                        _chunk_ok = False
+                if chunk.postgresql_versions:
+                    for elem in chunk.postgresql_versions:
+                        if len(elem) > 255:
+                            logger.warning(
+                                f"knowledge_chunks[{ci}] field=postgresql_versions "
+                                f"elem_len={len(elem)} > 255: {elem[:40]}..."
+                            )
+                            _chunk_ok = False
+                if chunk.environment_applicability:
+                    for elem in chunk.environment_applicability:
+                        if len(elem) > 255:
+                            logger.warning(
+                                f"knowledge_chunks[{ci}] field=environment_applicability "
+                                f"elem_len={len(elem)} > 255: {elem[:40]}..."
+                            )
+                            _chunk_ok = False
+                _diagnostic_checked += 1
+
+            if _chunk_ok:
+                logger.info("_store_chunks: sample checked; all chunk VARCHAR(255) fields within bounds")
             cur.execute("""
                 INSERT INTO knowledge_documents (
                     document_id, title, version, status,
@@ -446,35 +483,102 @@ class RAGService:
                 datetime.utcnow() if document.status == "active" else None,
             ))
 
+            # ── Diagnostic: log VARCHAR(255) field lengths before INSERT ───
+            _doc_checks = [
+                ("knowledge_documents.document_id", len(document.document_id)),
+                ("knowledge_documents.title", len(document.title)),
+                ("knowledge_documents.version", len(document.version)),
+                ("knowledge_documents.policy_owner", len(document.policy_owner or "")),
+                ("knowledge_documents.classification", len(document.classification or "")),
+                ("knowledge_documents.source_url", len(document.source_url or "")),
+                ("knowledge_documents.superseded_by", len(document.superseded_by or "")),
+                ("knowledge_documents.approved_by", len(document.approved_by or "")),
+                ("knowledge_documents.postgresql_versions_count", len(document.postgresql_versions) if document.postgresql_versions else 0),
+                ("knowledge_documents.environment_applicability_count", len(document.environment_applicability) if document.environment_applicability else 0),
+            ]
+            for label, val_len in _doc_checks:
+                if val_len > 255:
+                    logger.warning(f"DOC_OVER: {label} len={val_len}")
+            if document.postgresql_versions:
+                for v in document.postgresql_versions:
+                    if len(v) > 255:
+                        logger.warning(f"DOC_OVER: postgresql_versions elem len={len(v)} val={v[:40]}")
+            if document.environment_applicability:
+                for v in document.environment_applicability:
+                    if len(v) > 255:
+                        logger.warning(f"DOC_OVER: env_applicability elem len={len(v)} val={v[:40]}")
+
             # Re-ingestion replaces a document's previous chunks atomically.
             # Cascading foreign keys remove the corresponding embeddings.
-            cur.execute(
-                "DELETE FROM knowledge_chunks WHERE document_id = %s",
-                (document.document_id,),
-            )
+            try:
+                cur.execute(
+                    "DELETE FROM knowledge_chunks WHERE document_id = %s",
+                    (document.document_id,),
+                )
+            except Exception as _de:
+                logger.error(f"DELETE knowledge_chunks failed: {_de}")
+                raise
 
-            for chunk, embedding in embeddings:
-                # Store chunk metadata
-                cur.execute("""
-                    INSERT INTO knowledge_chunks (
-                        document_id, section, content, chunk_hash,
-                        chunk_index, postgresql_versions,
-                        environment_applicability, source_document_title,
-                        source_document_version
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                """, (
-                    chunk.document_id,
-                    chunk.section,
-                    chunk.content,
-                    chunk.chunk_hash,
-                    chunk.chunk_index,
-                    chunk.postgresql_versions,
-                    chunk.environment_applicability,
-                    chunk.source_document_title,
-                    chunk.source_document_version,
-                ))
-                
+            for ci, (chunk, embedding) in enumerate(embeddings):
+                # ── Per-chunk diagnostic for oversized values ──
+                _chunk_diag = {
+                    "document_id": chunk.document_id,
+                    "section": chunk.section,
+                    "chunk_hash": chunk.chunk_hash,
+                    "source_document_title": chunk.source_document_title,
+                    "source_document_version": chunk.source_document_version,
+                }
+                for field_name, val in _chunk_diag.items():
+                    flen = len(val) if val else 0
+                    if flen > 255:
+                        logger.warning(
+                            f"CHUNK_OVER[{ci}] {field_name} len={flen} "
+                            f"(doc={chunk.document_id})"
+                        )
+                if chunk.postgresql_versions:
+                    for _ei, _ev in enumerate(chunk.postgresql_versions):
+                        if len(_ev) > 255:
+                            logger.warning(
+                                f"CHUNK_OVER[{ci}] postgresql_versions[{_ei}] "
+                                f"len={len(_ev)} val={_ev[:40]}"
+                            )
+                if chunk.environment_applicability:
+                    for _ei, _ev in enumerate(chunk.environment_applicability):
+                        if len(_ev) > 255:
+                            logger.warning(
+                                f"CHUNK_OVER[{ci}] environment_applicability[{_ei}] "
+                                f"len={len(_ev)} val={_ev[:40]}"
+                            )
+
+                try:
+                    cur.execute("""
+                        INSERT INTO knowledge_chunks (
+                            document_id, section, content, chunk_hash,
+                            chunk_index, postgresql_versions,
+                            environment_applicability, source_document_title,
+                            source_document_version
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        chunk.document_id,
+                        chunk.section,
+                        chunk.content,
+                        chunk.chunk_hash,
+                        chunk.chunk_index,
+                        chunk.postgresql_versions,
+                        chunk.environment_applicability,
+                        chunk.source_document_title,
+                        chunk.source_document_version,
+                    ))
+                except Exception as _ie:
+                    logger.error(
+                        f"knowledge_chunks[{ci}] INSERT failed: {_ie} | "
+                        f"section_len={len(chunk.section)} doc_id_len={len(chunk.document_id)} "
+                        f"pg_versions={chunk.postgresql_versions} "
+                        f"env_app={chunk.environment_applicability}"
+                    )
+                    raise
+
                 chunk_id = cur.fetchone()[0]
                 
                 # Store embedding with chunk ID

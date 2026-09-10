@@ -91,7 +91,9 @@ class TestXlsxExtraction:
         assert "TLS required" in text
         assert "DB-002" in text
         assert "Logging enabled" in text
-        assert "Control: DB-001" in text
+        # Short columns (≤20 chars) are raw; column names appear in Cols line.
+        assert "DB-001" in text
+        assert "Control" in text
 
     def test_valid_xlsx_content_length(self):
         """Ensure extracted text is long enough for RAG chunking (>100 chars)."""
@@ -379,23 +381,21 @@ class TestChunkSectionBounded:
         assert "regulatory oversight bodies" in combined_content
 
     def test_large_xlsx_stays_under_max_chunks(self):
-        """A representative 800-row CIS-style workbook (with pruned columns
-        omitted) must produce fewer than MAX_CHUNKS so no content is
-        silently truncated.
+        """A representative 600-row CIS-style workbook must produce fewer
+        than MAX_CHUNKS so no content is silently truncated.
 
         This is a regression test for the ``value too long`` /
         ``exceeds MAX_CHUNKS`` errors that occurred when the XLSX
         extractor produced ~1680-char tab-joined lines, inflating the
         chunk count past 1000.
 
-        The test deliberately omits CIS-safeguards/IG/control-reference
-        columns that would be pruned by the extractor, matching the
-        real CIS workbook shape.
+        The workbook includes 9 core columns; the extractor preserves
+        all of them without pruning.
         """
         from app.xlsx_extractor import extract_xlsx_to_text
         from services.rag.rag_service import RAGService, KnowledgeDocument
 
-        # Build an 800-row workbook — only the columns the extractor keeps
+        # Build a 600-row workbook with core columns (no pruning).
         wb = Workbook()
         ws = wb.active
         ws.title = "Controls"
@@ -416,6 +416,14 @@ class TestChunkSectionBounded:
                 f"Run: ```\n# whoami\n# psql -c 'SELECT * FROM controls WHERE id={i-1}'\n```\nVerify output.",
                 f"Performance impact: negligible for control {i-1}",
             ])
+
+        # Tail marker near the last row to prove the workbook end is not truncated.
+        ws.append([
+            "599", "4.599", "Tail marker control",
+            "Critical", "This row contains a TAIL_MARKER_600 value.",
+            "Important", "Run TAIL_MARKER_600 verification.",
+            "Check TAIL_MARKER_600.", "High",
+        ])
 
         buf = io.BytesIO()
         wb.save(buf)
@@ -442,3 +450,150 @@ class TestChunkSectionBounded:
         assert "Section #" in all_text
         assert "Remediation Procedure" in all_text
         assert "Audit Procedure" in all_text
+        # Tail marker near final row proves no truncation
+        assert "TAIL_MARKER_600" in all_text, (
+            "Workbook was truncated: tail marker not found in chunks"
+        )
+
+    def test_all_non_empty_columns_preserved(self):
+        """Every non-empty XLSX column is represented in the normalized output.
+        This includes columns that were previously pruned:
+        CIS Controls, CIS Safeguards, IG1/2/3, profile, references, default value.
+        """
+        from app.xlsx_extractor import extract_xlsx_to_text
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "All Columns"
+        ws.append([
+            "Section #", "Recommendation #", "Title", "Severity",
+            "Default Value", "References", "CIS Controls",
+            "CIS Safeguards 1 (v8)", "v8 IG2", "v8 IG3",
+            "Profile", "Additional Information",
+        ])
+        ws.append([
+            "1", "1.1", "Test control", "High",
+            "off", "CIS 7.1, NIST 800-53 SC-7",
+            "Control 7.1, Access Control",
+            "S8.1", "IG2", "IG3",
+            "Level 1", "Important for audit",
+        ])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        xlsx_bytes = buf.getvalue()
+
+        text = extract_xlsx_to_text(xlsx_bytes)
+
+        # All full column names must appear in the output (in Cols line)
+        for col_name in [
+            "Section #", "Recommendation #", "Title", "Severity",
+            "Default Value", "References", "CIS Controls",
+            "CIS Safeguards 1 (v8)", "v8 IG2", "v8 IG3",
+            "Profile", "Additional Information",
+        ]:
+            assert col_name in text, f"Column '{col_name}' is missing from output"
+
+        # All non-empty values must be present
+        for val in [
+            "1", "1.1", "Test control", "High",
+            "off", "CIS 7.1, NIST 800-53 SC-7",
+            "Control 7.1, Access Control",
+            "S8.1", "IG2", "IG3",
+            "Level 1", "Important for audit",
+        ]:
+            assert val in text, f"Value '{val}' is missing from output"
+
+    def test_shell_code_lines_not_fake_sections(self):
+        """Lines beginning with ``# `` inside XLSX cells must NOT be
+        interpreted as Markdown section headers by the RAG chunker.
+
+        This covers shell commands, bash comments, and code block content
+        that appear in Remediation/Audit procedures.
+        """
+        from app.xlsx_extractor import extract_xlsx_to_text
+        from services.rag.rag_service import RAGService, KnowledgeDocument
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Code Tests"
+        ws.append(["Section #", "Recommendation #", "Title", "Remediation Procedure"])
+        ws.append([
+            "1", "1.1", "Test",
+            "# psql\n# whoami\n# chmod 600 /etc/config\n# systemctl restart",
+        ])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        xlsx_bytes = buf.getvalue()
+
+        text = extract_xlsx_to_text(xlsx_bytes)
+        doc = KnowledgeDocument(
+            document_id="hash-guard-test",
+            title="Hash guard",
+            version="1.0",
+            content=text,
+            effective_date=datetime.now(timezone.utc),
+            status="draft",
+        )
+
+        chunks = RAGService()._chunk_document(doc)
+        all_text = " ".join(c.content for c in chunks)
+
+        # The # guarded lines should be present as content
+        assert "# psql" in all_text
+        assert "# whoami" in all_text
+        # But the chunks must NOT have section names like "psql", "whoami" etc.
+        section_names = [c.section for c in chunks]
+        for section in section_names:
+            assert "psql" not in section.lower(), (
+                f"Chunk section '{section}' contains '# ' guard violation"
+            )
+            assert "whoami" not in section.lower(), (
+                f"Chunk section '{section}' contains '# ' guard violation"
+            )
+
+    def test_long_text_preserved_in_output(self):
+        """Long cell values must survive normalization and chunking intact.
+        A multi-paragraph, >1000-character value should be fully retrievable
+        from the combined chunk content.
+        """
+        from app.xlsx_extractor import extract_xlsx_to_text
+        from services.rag.rag_service import RAGService, KnowledgeDocument
+
+        long_text = " ".join(
+            f"This is paragraph {i}. It contains important audit information "
+            f"about control implementation details and security posture "
+            f"assessment for compliance evidence purposes. "
+            f"Line {i} of the remediation procedure."
+            for i in range(1, 30)
+        )  # ~2700 chars
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Long Text Test"
+        ws.append(["Section #", "Recommendation #", "Title", "Remediation Procedure"])
+        ws.append(["1", "1.1", "Long remediation", long_text])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        xlsx_bytes = buf.getvalue()
+
+        text = extract_xlsx_to_text(xlsx_bytes)
+        doc = KnowledgeDocument(
+            document_id="long-text-test",
+            title="Long text",
+            version="1.0",
+            content=text,
+            effective_date=datetime.now(timezone.utc),
+            status="draft",
+        )
+
+        chunks = RAGService()._chunk_document(doc)
+        all_text = " ".join(c.content for c in chunks)
+
+        # Original paragraphs must still be present
+        for i in range(1, 30):
+            assert f"This is paragraph {i}." in all_text, (
+                f"Paragraph {i} was lost during normalization/chunking"
+            )

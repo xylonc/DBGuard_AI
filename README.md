@@ -128,6 +128,35 @@ compatibility, but new integrations should always use `snapshot_id`.
 - Every generated command remains a proposal. A qualified engineer must verify
   it before it is applied.
 
+## Exporting and importing RAG data
+
+When you've ingested knowledge (CIS benchmarks, policies) and templates, you can
+export all data to JSON files and share them with your team. This avoids
+re-uploading XLSX files or re-ingesting templates.
+
+**Quick start:**
+
+```bash
+# Export everything (documents, chunks, templates, etc.)
+cd scripts
+make all
+
+# Commit the export to your repo
+git add export/
+git commit -m "Add RAG data: knowledge, templates, snapshots"
+```
+
+**On another machine:**
+
+```bash
+# Import everything from the exported JSON
+cd scripts
+make import-all
+```
+
+See [scripts/RAG_EXPORT_README.md](scripts/RAG_EXPORT_README.md) for full
+details, including selective export/import and environment variable options.
+
 ## Repository structure
 
 ```text
@@ -142,11 +171,14 @@ services/twin_runner/          Deferred twin lifecycle library
 services/reporting/            Deferred reporting library
 catalog/controls/              Future reviewed baseline controls
 catalog/images/examples/       Non-runnable image-record examples
+scripts/                       Export/import tools for team data sharing
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the detailed trust boundaries,
 endpoint behavior and application flow. See [hermes/README.md](hermes/README.md)
-for HERMES packaging, installation and troubleshooting.
+for HERMES packaging, installation and troubleshooting. See
+[scripts/RAG_EXPORT_README.md](scripts/RAG_EXPORT_README.md) for exporting and
+importing RAG data (knowledge, templates, snapshots) for team sharing.
 
 ## Deferred work
 

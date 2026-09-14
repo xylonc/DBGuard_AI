@@ -37,7 +37,7 @@ logger = logging.getLogger("dbguard.rag")
 
 CHUNK_SIZE = 500  # characters per chunk
 CHUNK_OVERLAP = 50  # overlap between chunks for context continuity
-MAX_CHUNKS = 1500  # max chunks per document to avoid excessive storage (increased 2026-09-10)
+MAX_CHUNKS = 1000  # max chunks per document to avoid excessive storage
 
 
 # ─── RAG Data Models (inlined to avoid cross-package import issues) ──

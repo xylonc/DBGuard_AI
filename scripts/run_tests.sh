@@ -16,8 +16,8 @@ export MSYS2_ARG_CONV_EXCL='*'
 COLLECTOR="${1:-./collector}"
 CONTAINER="dbguard-test"
 IMG="postgres:16"
-OUT="$(pwd)/test-out"
-OUTREL="test-out"   # relative form, for the Windows python interpreter
+OUT="$(pwd)/scripts/test-out"
+OUTREL="scripts/test-out"   # relative form, for the Windows python interpreter
 PASS=0; FAIL=0
 
 ok()  { PASS=$((PASS+1)); printf '  \033[32mPASS\033[0m  %s\n' "$1"; }

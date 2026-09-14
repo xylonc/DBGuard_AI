@@ -1,8 +1,10 @@
 """FastAPI entry point for DBGuardAI's proposal-focused POC."""
 
 from dataclasses import asdict
+from datetime import datetime, timezone
+import uuid
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from jinja2 import TemplateError
 
 from app.collector_models import (
@@ -14,6 +16,7 @@ from app.models import (
     HardenResponse,
     KnowledgeApprovalRequest,
     KnowledgeIngestRequest,
+    KnowledgeIngestResponse,
     KnowledgeSearchResponse,
     ProposalCompileRequest,
     TemplateIngestRequest,
@@ -247,3 +250,63 @@ def search_approved_knowledge(
         min_score=min_score,
     )
     return KnowledgeSearchResponse(results=[vars(result) for result in results])
+
+@app.post("/api/v1/knowledge/upload", response_model=KnowledgeIngestResponse)
+async def upload_knowledge_xlsx(file: UploadFile = File(...)):
+    """Upload an XLSX file for knowledge ingestion.
+
+    The file is parsed, converted to normalized text, validated via the
+    existing ``KnowledgeIngestRequest`` Pydantic model, and passed into
+    the existing RAG ingestion pipeline (chunking → embedding → pgvector).
+    """
+    # 1. Validate file type
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .xlsx files are accepted.",
+        )
+
+    # 2. Read file bytes
+    content_bytes = await file.read()
+
+    if not content_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # 3. Extract text from XLSX
+    from app.xlsx_extractor import extract_xlsx_to_text
+
+    try:
+        normalized_text = extract_xlsx_to_text(content_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to parse XLSX: {exc}",
+        )
+
+    # 4. Build KnowledgeDocument directly — skip KnowledgeIngestRequest
+    #    because it enforces a 100-char minimum on content, which is
+    #    not appropriate for XLSX ingestion (small sheets may be valid).
+    document = KnowledgeDocument(
+        document_id=f"xlsx-{uuid.uuid4().hex[:12]}",
+        title=file.filename.replace(".xlsx", "").replace("_", " ").title(),
+        version="1.0.0",
+        content=normalized_text,
+        effective_date=datetime.now(timezone.utc),
+        status="draft",
+    )
+    ingestion_result = RAGService(settings.database_url).ingest_document(document)
+
+    if ingestion_result.status in {"failed", "rejected"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ingestion failed: {'; '.join(ingestion_result.errors)}",
+        )
+
+    return KnowledgeIngestResponse(
+        status=ingestion_result.status,
+        document_id=document.document_id,
+        title=document.title,
+        chunks_created=ingestion_result.chunks_created,
+    )

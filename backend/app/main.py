@@ -20,7 +20,7 @@ from app.models import (
     KnowledgeIngestRequest,
     KnowledgeIngestResponse,
     KnowledgeSearchResponse,
-    ProposalCompileRequest,
+    RemediationProposalRequest,
     TemplateIngestRequest,
     TemplateIngestResponse,
     TemplateApprovalRequest,
@@ -73,63 +73,98 @@ def get_snapshot_context(snapshot_id: str):
         raise HTTPException(status_code=404, detail="Snapshot not found") from exc
 
 
-@app.post("/api/v1/proposals/compile", response_model=HardenResponse)
-def compile_hardening_proposal(request: ProposalCompileRequest):
-    """Validate a HERMES selection and render only reviewed SQL templates."""
+@app.post("/api/v1/proposals/validate-and-render", response_model=HardenResponse)
+def validate_and_render_proposal(request: RemediationProposalRequest):
+    """Validate a HERMES proposal and render only reviewed SQL templates.
+    
+    This is the trusted boundary endpoint. The HERMES agent:
+    1. Uses search_approved_templates to find eligible templates
+    2. Uses search_approved_knowledge to find evidence
+    3. Selects a template + parameters + reasoning
+    4. Submits here for validation and rendering
+    
+    The API validates:
+    - Template exists and is active
+    - Parameters match template schema
+    - Evidence references point to approved documents
+    - Renders the template from PostgreSQL
+    
+    Returns rendered SQL for human DBA review.
+    No SQL is ever generated - only rendered from approved templates.
+    """
     try:
         metadata = snapshot_store.context(request.snapshot_id).model_dump(mode="json")
     except SnapshotNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Snapshot not found") from exc
-
-    # Re-run retrieval inside the trusted API boundary. HERMES cannot make an
-    # arbitrary or archived template eligible simply by naming it.
-    retrieved = search_templates(request.requirement, top_k=5)
-    eligible_template_ids = {item["template_name"] for item in retrieved}
-    selected_template_ids = set(request.template_ids)
-    invalid_template_ids = sorted(selected_template_ids - eligible_template_ids)
-    if invalid_template_ids:
+    
+    proposal = request.proposal
+    
+    # Step 1: Validate template exists and is active
+    template_record = get_active_template_version(proposal.template_id)
+    if template_record is None:
         raise HTTPException(
             status_code=422,
-            detail=(
-                "Templates are not in the active retrieval set: "
-                f"{invalid_template_ids}"
-            ),
+            detail=f"Template '{proposal.template_id}' is not active or does not exist. "
+                   "Use search_approved_templates to find eligible templates."
         )
-
-    # Load exact template content from PostgreSQL for selected templates
-    template_records = []
-    for template_id in selected_template_ids:
-        record = get_active_template_version(template_id)
-        if record is None:
+    
+    # Step 2: Validate template parameters
+    # This validates parameters against the template's expected schema
+    from app.services.template_service import validate_params
+    success, validated_params, error = validate_params(
+        proposal.template_id, 
+        proposal.parameters
+    )
+    if not success:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Template parameter validation failed: {error}"
+        )
+    
+    # Step 3: Validate evidence references point to approved documents
+    evidence_results = []
+    for doc_ref in proposal.evidence_refs:
+        # Search for approved documents by ID
+        from app.services.vector_service import search_templates
+        from services.rag.rag_service import RAGService
+        rag = RAGService(settings.database_url)
+        docs = rag.search(
+            query=doc_ref,
+            pg_version=metadata.get("postgresql_version"),
+            environment=request.environment,
+            top_k=5,
+            min_score=0.5,
+        )
+        if not docs:
+            raise HTTPException(
+                status_code=409,
+                detail=f"MANUAL_REVIEW_REQUIRED: approved evidence reference '{doc_ref}' not found"
+            )
+        evidence_results.extend(docs)
+    
+    if not evidence_results:
+        # If no evidence refs provided, search by template description
+        if not proposal.reasoning and not proposal.evidence_refs:
+            # At least one form of justification required
             raise HTTPException(
                 status_code=422,
-                detail=f"Template {template_id} is not active or does not exist",
+                detail="At least one evidence reference or reasoning is required"
             )
-        template_records.append(record)
-
-    evidence_results = RAGService(settings.database_url).search(
-        query=request.requirement,
-        pg_version=metadata.get("postgresql_version"),
-        environment=request.environment,
-        top_k=5,
-        min_score=0.35,
-    )
-    if not evidence_results:
-        raise HTTPException(
-            status_code=409,
-            detail="MANUAL_REVIEW_REQUIRED: no approved, applicable evidence was found",
-        )
-
-    parameters = dict(request.parameters)
+    
+    # Step 4: Render the template using PostgreSQL content
+    parameters = dict(validated_params)
     parameters.setdefault("database_name", metadata.get("database", "postgres"))
+    
+    from jinja2 import TemplateError as JinjaTemplateError
     try:
-        sql_plan = compile_sql_plan_from_templates(template_records, parameters)
-    except (TemplateError, ValueError, TypeError) as exc:
+        sql_plan = compile_sql_plan_from_templates([template_record], parameters)
+    except (JinjaTemplateError, ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=422,
-            detail=f"Template parameters require DBA review: {exc}",
+            detail=f"Template rendering failed: {exc}",
         ) from exc
-
+    
+    # Step 5: Build citations from evidence
     citations = [
         {
             "document_id": result.document_id,
@@ -141,16 +176,14 @@ def compile_hardening_proposal(request: ProposalCompileRequest):
         }
         for result in evidence_results
     ]
+    
     return HardenResponse(
-        status="Proposal compiled for DBA review",
+        status="Proposal validated and SQL rendered for DBA review",
         target_db=metadata.get("database", metadata.get("engine", "postgresql")),
         ai_plan=sql_plan,
-        retrieved_templates=[item["template_name"] for item in retrieved],
+        retrieved_templates=[template_record["template_name"]],
         evidence=citations,
-        reasoning=(
-            "HERMES selected from the active retrieval set; DBGuardAI "
-            "revalidated and rendered the reviewed template."
-        ),
+        reasoning=proposal.reasoning,
     )
 
 

@@ -2,12 +2,10 @@
 
 import os
 from typing import Any
-
 import requests
 from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-
 
 DBGUARD_API_URL = os.getenv("DBGUARD_API_URL", "http://api:8000").rstrip("/")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("DBGUARD_MCP_TIMEOUT_SECONDS", "60"))
@@ -78,22 +76,33 @@ def search_approved_templates(query: str, top_k: int = 5) -> dict[str, Any]:
 
 
 @mcp.tool()
-def compile_hardening_proposal(
+def validate_and_render_proposal(
     snapshot_id: str,
-    requirement: str,
-    template_ids: list[str],
-    parameters: dict[str, Any],
+    proposal: dict[str, Any],
     environment: str = "all",
 ) -> dict[str, Any]:
-    """Validate selected templates and render a review-only SQL proposal."""
+    """Validate a template-driven proposal and render SQL.
+    
+    The agent submits:
+    1. template_id: approved template ID from search_approved_templates
+    2. parameters: template parameters matching the template schema
+    3. reasoning: agent reasoning for why this template applies
+    4. evidence_refs: list of approved RAG document IDs
+    
+    The API validates and returns rendered SQL for human DBA review.
+    No SQL is generated - only rendered from approved templates.
+    
+    Returns:
+    - ai_plan: rendered SQL string
+    - evidence: citations from approved knowledge
+    - reasoning: agent's justification
+    """
     return _request_json(
         "POST",
-        "/api/v1/proposals/compile",
+        "/api/v1/proposals/validate-and-render",
         json={
             "snapshot_id": snapshot_id,
-            "requirement": requirement,
-            "template_ids": template_ids,
-            "parameters": parameters,
+            "proposal": proposal,
             "environment": environment,
         },
     )

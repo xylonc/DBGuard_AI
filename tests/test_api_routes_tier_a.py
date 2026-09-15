@@ -31,9 +31,6 @@ def client():
         mock_rag_instance.search.return_value = []
         mock_rag_class.return_value = mock_rag_instance
         
-        # Setup SnapshotStore mock
-        mock_store_instance = MagicMock()
-        mock_store_class.return_value = mock_store_instance
         
         # Setup template mocks
         mock_search.return_value = []

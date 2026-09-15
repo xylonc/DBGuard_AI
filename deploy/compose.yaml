@@ -11,7 +11,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://dbguard:${DBGUARD_DB_PASSWORD:-dbguard-local-only}@postgres:5432/dbguard
+      DATABASE_URL: postgresql://dbguard:securepassword123@postgres:5432/dbguard_test
       SNAPSHOT_STORAGE_DIR: /app/data/snapshots
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
@@ -89,14 +89,14 @@ services:
     ports:
       - "127.0.0.1:5433:5432"
     environment:
-      POSTGRES_DB: dbguard
+      POSTGRES_DB: dbguard_test
       POSTGRES_USER: dbguard
-      POSTGRES_PASSWORD: ${DBGUARD_DB_PASSWORD:-dbguard-local-only}
+      POSTGRES_PASSWORD: securepassword123
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dbguard -d dbguard"]
+      test: ["CMD-SHELL", "pg_isready -U dbguard -d dbguard_test"]
       interval: 10s
       timeout: 5s
       retries: 10

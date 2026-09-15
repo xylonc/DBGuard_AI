@@ -1,6 +1,8 @@
 """FastAPI entry point for DBGuardAI's proposal-focused POC."""
 
 from dataclasses import asdict
+
+from fastapi import FastAPI, HTTPException, Query
 from datetime import datetime, timezone
 import uuid
 

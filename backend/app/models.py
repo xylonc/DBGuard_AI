@@ -1,9 +1,81 @@
 """Pydantic schemas for the proposal and knowledge APIs."""
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing import Any, Literal, Optional, Union
+
+
+class RemediationProposal(BaseModel):
+    """Generic, template-driven remediation proposal contract.
+    
+    This is the single authoritative contract for proposing remediation.
+    The AI/Hermes agent selects from approved templates and provides
+    structured parameters - NOT arbitrary SQL or Python action objects.
+    
+    Template selection + parameters → validation → rendering → execution
+    """
+    
+    control_id: str = Field(
+        description="CIS Control identifier (e.g., 'CIS-3.1.2')"
+    )
+    finding_id: Optional[str] = Field(
+        default=None,
+        description="Optional finding identifier from assessment"
+    )
+    template_id: str = Field(
+        description="Approved template ID (must exist in active registry)"
+    )
+    template_version: Optional[int] = Field(
+        default=None,
+        description="Optional exact version; defaults to latest active"
+    )
+    parameters: dict[str, Any] = Field(
+        description="Template parameters - validated against template schema"
+    )
+    reasoning: str = Field(
+        min_length=1,
+        description="Agent reasoning: why this template, how it applies"
+    )
+    evidence_refs: list[str] = Field(
+        default_factory=list,
+        description="References to approved RAG evidence documents"
+    )
+    
+    @field_validator("parameters", mode="after")
+    @classmethod
+    def validate_parameters_not_arbitrary_sql(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Prevent arbitrary SQL injection through parameters."""
+        for key, value in v.items():
+            if isinstance(value, str):
+                # Check for SQL injection patterns in parameter values
+                # Match dangerous SQL patterns anywhere in the string
+                dangerous_patterns = [
+                    r"(?i)\b(drop|truncate|delete|update|insert)\b",  # SQL keywords
+                    r"--",  # Inline comment
+                    r"/\*",  # Block comment start
+                    r"(?i)\bexec\b\s*\(",  # EXEC function call
+                ]
+                for pattern in dangerous_patterns:
+                    if re.search(pattern, value, re.IGNORECASE):
+                        raise ValueError(
+                            f"Parameter '{key}' contains dangerous SQL pattern: {pattern}"
+                        )
+        return v
+
+
+class RemediationProposalRequest(BaseModel):
+    """Request to create a remediation proposal from an approved template.
+    
+    HERMES/MCP submits a proposal by selecting an approved template ID
+    and providing structured parameters. The API validates, renders, and
+    executes the template.
+    """
+    
+    snapshot_id: str = Field(min_length=1, max_length=64)
+    proposal: RemediationProposal
+    environment: str = Field(default="all", min_length=1, max_length=64)
 
 
 class HardenResponse(BaseModel):

@@ -63,27 +63,31 @@ def test_legacy_harden_endpoint_returns_404(client):
 
 
 def test_compile_proposal_endpoint_exists(client):
-    """Test that POST /api/v1/proposals/compile is still available."""
+    """Test that POST /api/v1/proposals/validate-and-render is still available."""
     response = client.post(
-        "/api/v1/proposals/compile",
+        "/api/v1/proposals/validate-and-render",
         json={
             "snapshot_id": "nonexistent-snapshot-id",
-            "requirement": "Create a read-only user",
-            "template_ids": ["test-template"],
+            "proposal": {
+                "control_id": "CIS-3.1.2",
+                "template_id": "test-template",
+                "parameters": {"param": "value"},
+                "reasoning": "Test reasoning",
+            },
         },
     )
     # 404 for missing snapshot is expected, but 404 for unknown route is not
     assert response.status_code in {404, 422}, (
-        f"Expected 404/422 for /api/v1/proposals/compile, got {response.status_code}"
+        f"Expected 404/422 for /api/v1/proposals/validate-and-render, got {response.status_code}"
     )
 
 
-def test_routes_table_contains_compile():
-    """Test that /api/v1/proposals/compile is in the FastAPI route table."""
+def test_routes_table_contains_validate_and_render():
+    """Test that /api/v1/proposals/validate-and-render is in the FastAPI route table."""
     from backend.app.main import app
     route_paths = [route.path for route in app.routes]
-    assert "/api/v1/proposals/compile" in route_paths, (
-        "Expected /api/v1/proposals/compile in route table"
+    assert "/api/v1/proposals/validate-and-render" in route_paths, (
+        "Expected /api/v1/proposals/validate-and-render in route table"
     )
 
 

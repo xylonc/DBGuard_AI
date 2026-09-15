@@ -162,7 +162,20 @@ class RAGService:
     """
     
     def __init__(self, db_url: Optional[str] = None):
-        self.db_url = db_url or os.getenv("DATABASE_URL", "postgresql://dbguard:dbguard@localhost:5433/dbguard")
+        # Build connection string from environment variables or use provided URL
+        if db_url is None:
+            db_url = os.getenv("DATABASE_URL")
+        
+        if db_url is None:
+            # Build from individual environment variables with sensible defaults
+            host = os.getenv("POSTGRES_HOST", "localhost")
+            port = os.getenv("POSTGRES_PORT", "5432")
+            user = os.getenv("POSTGRES_USER", "dbguard")
+            password = os.getenv("POSTGRES_PASSWORD", "dbguard")
+            dbname = os.getenv("POSTGRES_DB", "dbguard")
+            db_url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+        
+        self.db_url = db_url
         self.embedding_dim = settings.embedding_dim
         self.embedding_model = settings.embedding_model
         self.chunk_size = CHUNK_SIZE
@@ -253,7 +266,13 @@ class RAGService:
         if not document.document_id or not document.title:
             return False
         
-        if not document.content or len(document.content) < 100:
+        # Validate content exists and has minimum length
+        if not document.content:
+            return False
+        
+        # Allow documents with minimal content (even if they don't produce chunks)
+        # as long as there's some non-whitespace content
+        if len(document.content.strip()) < 10:
             return False
         
         if not document.effective_date:
@@ -264,13 +283,13 @@ class RAGService:
 
         if document.status == "active" and not document.approved_by:
             return False
-        
+
         # Check for supersession
         if document.superseded_by:
             existing = self.get_document_metadata(document.superseded_by)
             if existing and existing.status in ('active', 'superseded'):
                 return True  # Superseding an existing document is fine
-        
+
         return True
     
     def _chunk_document(self, document: KnowledgeDocument) -> List[KnowledgeChunk]:

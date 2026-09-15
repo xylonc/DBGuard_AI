@@ -1,6 +1,7 @@
 """Tests for PostgreSQL template registry as authoritative source of truth."""
 
 import hashlib
+import os
 import unittest
 from unittest.mock import patch
 
@@ -29,8 +30,21 @@ class TemplateRegistryTests(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         # Use a test database URL - this assumes a test DB is available
-        self.test_template_name = "test_template_registry"
+        self.test_template_name = f"test_template_{os.urandom(4).hex()}"
         self.test_description = "Test template for registry validation"
+
+    def tearDown(self):
+        """Clean up test templates after each test."""
+        try:
+            db_url = os.getenv("DATABASE_URL", "postgresql://dbguard:dbguard@localhost:5432/dbguard")
+            conn = psycopg2.connect(db_url)
+            cur = conn.cursor()
+            # Delete templates created during this test run
+            cur.execute("DELETE FROM templates WHERE template_name LIKE %s", (f"%{self.test_template_name}%",))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
 
     def test_compute_template_hash(self):
         """Test that SHA-256 hash is computed correctly."""
@@ -103,7 +117,7 @@ class TemplateRegistryTests(unittest.TestCase):
             version=1,
         )
 
-        # Should not appear in search
+        # Should not appear in search (only active templates are returned)
         search_results = search_templates("test template", top_k=5)
         template_names = [r["template_name"] for r in search_results]
         self.assertNotIn(template_name, template_names)

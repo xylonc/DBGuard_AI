@@ -29,4 +29,4 @@ from app.models import (
 from app.services.assessment_service import AssessmentService
 from app.services.snapshot_service import SnapshotStore, SnapshotNotFoundError
 from app.services.template_service import compile_sql_plan_from_templates, validate_params, quote_identifier
-from app.services.twin_service import TwinExecutionService, build_proposal_review_package
+from app.services.sandbox_service import SandboxValidationService, build_proposal_artifact

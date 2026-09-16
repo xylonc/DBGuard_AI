@@ -7,8 +7,10 @@ AI permission to connect to the target database or execute a command.
 
 ## Current implemented scope
 
-The runnable POC covers the proposal workflow. Baseline assessment and SQL
-execution are deliberately outside this phase.
+The runnable POC covers the VALIDATE phase with one clean workflow:
+stored snapshot → failed assessment finding → validated/rendered remediation proposal →
+isolated PostgreSQL sandbox reproduction → fail verification → apply proposal →
+pass verification → rollback → original state restored → destroyed sandbox → evidence.
 
 ```mermaid
 flowchart LR
@@ -22,7 +24,15 @@ flowchart LR
     S --> P[Validated proposal compiler]
     R --> P
     P -->|SQL + citations + risks| H
-    H --> V[DBA or engineer verification]
+    H -->|validated proposal + rendered SQL| V[DBGuard API sandbox validate]
+    V -->|SandboxValidationService| W[Twin Runner]
+    W -->|restricted methods| X[Ephemeral PostgreSQL sandbox]
+    X -->|reproduce FAIL| Y[Re-verify via AssessmentService]
+    Y -->|apply proposal| Z[Verify PASS]
+    Z -->|rollback| AA[Verify original state restored]
+    AA --> AB[Destroy sandbox]
+    AB -->|structured evidence| H
+    H --> AC[DBA or engineer verification]
 ```
 
 ## What runs
@@ -86,6 +96,7 @@ MCP allowlist contains only:
 | `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |
 | `search_approved_templates` | Finds only active, human-reviewed SQL templates |
 | `compile_hardening_proposal` | Revalidates the selection and renders a review-only SQL proposal |
+| `validate_in_sandbox` | Validates proposal in ephemeral PostgreSQL sandbox with flip verification |
 
 HERMES cannot use this bridge to ingest or approve content, access PostgreSQL,
 execute SQL, use the host shell, or operate Docker.
@@ -101,11 +112,12 @@ execute SQL, use the host shell, or operate Docker.
 | `POST` | `/api/v1/knowledge/documents/{id}/approve` | Record human approval of a draft source |
 | `GET` | `/api/v1/knowledge/documents/{id}` | Inspect source provenance and lifecycle |
 | `GET` | `/api/v1/knowledge/search` | Search only approved, applicable guidance |
-| `POST` | `/api/v1/templates/ingest` | Ingest one draft or reviewed SQL template |
+| `POST` | `/api/v1/templates/ingest` | Ingest a draft or reviewed SQL template |
 | `POST` | `/api/v1/templates/ingest-all` | Ingest bundled SQL templates |
 | `GET` | `/api/v1/templates/search` | Search approved templates by semantic similarity |
 | `POST` | `/api/v1/templates/{name}/approve` | Record human approval of an exact template version |
 | `POST` | `/api/v1/proposals/compile` | Validate HERMES's choices and deterministically render approved templates from PostgreSQL |
+| `POST` | `/api/v1/sandbox/validate` | Validate proposal in ephemeral PostgreSQL sandbox with flip verification |
 
 The HERMES workflow uses `/api/v1/proposals/compile` so there is only one
 reasoning agent. The trusted backend still reruns retrieval, rejects template
@@ -150,8 +162,7 @@ for HERMES packaging, installation and troubleshooting.
 
 ## Deferred work
 
-- baseline assessment and scoring;
-- twin-runner HTTP boundary and verified PostgreSQL image catalog;
+- twin-runner HTTP boundary and verified PostgreSQL image catalog; (**IMPLEMENTED**)
 - proposal review-package reporting and approval workflow;
 - production identity, authorization, audit logging and secret management;
 - production network isolation and deployment hardening.

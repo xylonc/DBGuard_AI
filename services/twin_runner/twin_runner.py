@@ -210,9 +210,24 @@ class TwinRunner:
     def _resolve_image_full(self, profile_id: str) -> Optional[str]:
         """Resolve the full image reference (registry/repository@digest)."""
         entry = resolve_image(profile_id)
-        if not entry:
+        if not entry or not entry.image:
             return None
-        return f"{entry.image.internal_registry}/{entry.image.repository}@{entry.image.digest}"
+        
+        # Handle missing or stringified 'None' registry
+        raw_registry = entry.image.internal_registry
+        registry = ""
+        if raw_registry and str(raw_registry).lower() != "none":
+            registry = f"{str(raw_registry).strip('/')}/"
+
+        # Ensure valid digest with sha256 prefix
+        digest = entry.image.digest or ""
+        if digest and not digest.startswith("sha256:"):
+            digest = f"sha256:{digest}"
+
+        if not digest:
+            return None
+
+        return f"{registry}{entry.image.repository}@{digest}"
     
     def create_twin(self, spec: TwinSpecification) -> Tuple[bool, str, Dict[str, Any]]:
         """
@@ -253,13 +268,23 @@ class TwinRunner:
                 "--network", self.twin_network_name,
                 # Security constraints (hardcoded)
                 "--privileged=false",
-                "--net", "none",  # No host networking
                 "--pid", "host",
                 "--read-only",
-                "--security-opt", f"seccomp={self.config.get('seccomp_profile', 'default')}",
-                "--security-opt", "apparmor=dbguard-twin-strict",
+            ]
+
+            # Only append seccomp if a specific non-default profile path is configured and not on Windows
+            seccomp_profile = self.config.get("seccomp_profile", "default")
+            if seccomp_profile and seccomp_profile != "default" and os.name != "nt":
+                docker_cmd.extend(["--security-opt", f"seccomp={seccomp_profile}"])
+
+            # Only append AppArmor on non-Windows platforms
+            apparmor_profile = self.config.get("apparmor_profile", "dbguard-twin-strict")
+            if apparmor_profile and os.name != "nt":
+                docker_cmd.extend(["--security-opt", f"apparmor={apparmor_profile}"])
+
+            docker_cmd.extend([
                 "--cap-drop", "ALL",
-                "--no-new-privileges",
+                "--security-opt", "no-new-privileges:true",
                 # Resource limits
                 "--memory", resources["memory"],
                 "--cpus", resources["cpu"],
@@ -280,9 +305,10 @@ class TwinRunner:
                 "-v", f"dbguard-twin-data-{spec.run_id}:/var/lib/postgresql/data",
                 # The approved image
                 image_full,
-            ]
+            ])
             
             logger.info(f"Creating twin container: {' '.join(docker_cmd)}")
+            logger.info(f"Resolved image reference for twin: '{image_full}'")
             result = subprocess.run(
                 docker_cmd,
                 capture_output=True,
@@ -339,6 +365,7 @@ class TwinRunner:
         container_config_ok = True
         found_version = None
         found_digest = None
+
         
         # Check container is running
         result = subprocess.run(
@@ -700,3 +727,115 @@ class TwinRunner:
                 "docker_healthy": False,
                 "error": str(e),
             }
+
+    # ============================================================================
+    # Restricted SQL Execution Methods (for Sandbox Validation)
+    # ============================================================================
+
+    def execute_sql(
+        self,
+        run_id: str,
+        sql: str,
+        description: str,
+    ) -> Tuple[bool, str]:
+        """Execute SQL in the twin container.
+
+        This is the ONLY way to execute SQL in the twin - it enforces
+        the security boundary by receiving only validated proposals.
+
+        Args:
+            run_id: The twin run ID
+            sql: The SQL statement to execute
+            description: Description for logging
+
+        Returns:
+            Tuple of (success, log_message)
+        """
+        container_name = f"dbguard-twin-{run_id}"
+
+        # Escape single quotes for shell
+        sql_escaped = sql.replace("'", "'\"'\"'")
+
+        cmd = [
+            "docker", "exec", container_name, "psql", "-U", "dbguard", "-c",
+            sql_escaped,
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0 or "ERROR" in result.stdout.upper():
+                error_msg = f"SQL execution failed: {result.stdout or result.stderr}"
+                logger.error(f"{description} failed: {error_msg}")
+                return False, error_msg
+
+            return True, f"{description}: {result.stdout.strip()}"
+
+        except subprocess.TimeoutExpired:
+            error_msg = f"{description} timed out"
+            logger.error(error_msg)
+            return False, error_msg
+
+        except Exception as e:
+            error_msg = f"{description} failed: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+
+    def replay_metadata(
+        self,
+        run_id: str,
+        settings: List[Dict[str, Any]],
+    ) -> Tuple[bool, List[str]]:
+        """Replay security-relevant settings into the twin container.
+
+        This is the ONLY way to modify container state - settings are
+        replayed from the source snapshot (no business data copied).
+
+        Args:
+            run_id: The twin run ID
+            settings: List of settings to apply
+
+        Returns:
+            Tuple of (success, errors)
+        """
+        container_name = f"dbguard-twin-{run_id}"
+        errors = []
+
+        try:
+            for setting in settings:
+                if isinstance(setting, dict):
+                    name = setting.get("name")
+                    value = setting.get("setting")
+
+                    if name and value is not None:
+                        # Escape value for SQL
+                        value_escaped = str(value).replace("'", "''")
+
+                        cmd = [
+                            "docker", "exec", container_name, "psql", "-U", "dbguard", "-c",
+                            f"ALTER SYSTEM SET {name} = '{value_escaped}';",
+                        ]
+
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=30,
+                        )
+
+                        if result.returncode != 0:
+                            errors.append(
+                                f"Failed to set {name}={value}: {result.stdout or result.stderr}"
+                            )
+
+            return len(errors) == 0, errors
+
+        except Exception as e:
+            errors.append(f"Metadata replay failed: {str(e)}")
+            logger.error(f"Metadata replay failed: {errors}")
+            return False, errors

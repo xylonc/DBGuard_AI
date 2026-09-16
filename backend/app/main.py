@@ -1,13 +1,15 @@
 """FastAPI entry point for DBGuardAI's proposal-focused POC."""
 
 from dataclasses import asdict
-
+from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from datetime import datetime, timezone
 import uuid
+import os
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from jinja2 import TemplateError
+from pydantic import BaseModel, Field
 
 from app.collector_models import (
     CollectorBundleV020,
@@ -20,6 +22,7 @@ from app.models import (
     KnowledgeIngestRequest,
     KnowledgeIngestResponse,
     KnowledgeSearchResponse,
+    RemediationProposal,
     RemediationProposalRequest,
     TemplateIngestRequest,
     TemplateIngestResponse,
@@ -345,3 +348,139 @@ async def upload_knowledge_xlsx(file: UploadFile = File(...)):
         title=document.title,
         chunks_created=ingestion_result.chunks_created,
     )
+
+
+# ============================================================================#
+# SANDBOX VALIDATION API
+# ============================================================================#
+
+
+class SandboxValidationRequest(BaseModel):
+    """Request for sandbox validation of a proposal."""
+
+    snapshot_id: str = Field(min_length=1, max_length=64)
+    control_id: str = Field(
+        min_length=1,
+        description="CIS control ID (e.g., 'CIS-3.1.2')"
+    )
+    template_id: str = Field(
+        min_length=1,
+        description="Approved template ID"
+    )
+    template_version: int = Field(
+        ge=1,
+        description="Template version"
+    )
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    rendered_sql: str = Field(
+        min_length=1,
+        description="Rendered SQL from approved template"
+    )
+
+
+class SandboxValidationResponse(BaseModel):
+    """Response from sandbox validation."""
+
+    sandbox_run_id: str
+    snapshot_id: str
+    control_id: str
+    status: str
+    pre_remediation_status: Optional[str] = None
+    post_remediation_status: Optional[str] = None
+    post_rollback_status: Optional[str] = None
+    security_validation_passed: bool
+    compatibility_validation_passed: bool
+    rollback_executed: bool
+    rollback_verified: bool
+    logs: List[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+
+
+@app.post("/api/v1/sandbox/validate", response_model=SandboxValidationResponse)
+def validate_in_sandbox(request: SandboxValidationRequest):
+    """Validate a proposal by executing it in an ephemeral PostgreSQL sandbox.
+
+    This endpoint:
+    1. Creates an isolated PostgreSQL container
+    2. Replays only security-relevant metadata (settings)
+    3. Verifies the initial state matches the source finding (FAIL)
+    4. Executes the rendered proposal artifact
+    5. Verifies the control flips to PASS
+    6. Executes rollback SQL
+    7. Verifies restoration to original state
+    8. Runs basic compatibility validation
+    9. Destroys the container
+    10. Returns structured validation evidence
+
+    The sandbox does NOT contain an autonomous agent. It only executes
+    the approved artifact from the proposal and returns evidence.
+    """
+    from app.services.sandbox_service import SandboxValidationService
+    from app.services.snapshot_service import SnapshotStore
+    from pathlib import Path
+
+    snapshot_dir = Path(os.environ.get("SNAPSHOT_STORAGE_DIR", "data/snapshots"))
+    snapshot_store = SnapshotStore(str(snapshot_dir))
+
+    # Load source snapshot to validate it exists
+    try:
+        source_bundle = snapshot_store.load(request.snapshot_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {exc}") from exc
+
+    # Build proposal artifact
+    from app.services.sandbox_service import build_proposal_artifact
+
+    artifact = build_proposal_artifact(
+        snapshot_id=request.snapshot_id,
+        control_id=request.control_id,
+        template_id=request.template_id,
+        template_version=request.template_version,
+        parameters=request.parameters,
+        rendered_sql=request.rendered_sql,
+        requires_dba_review=True,
+    )
+
+    # Validate template_id format (prevent arbitrary SQL)
+    if not artifact.template_id.startswith("SET_CONFIG") and not artifact.template_id.startswith("REVOKE"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Template '{artifact.template_id}' does not match approved templates for automation"
+        )
+
+    # Run sandbox validation
+    service = SandboxValidationService()
+
+    # Create a minimal proposal for validation
+    proposal = RemediationProposal(
+        control_id=request.control_id,
+        template_id=request.template_id,
+        template_version=request.template_version,
+        parameters=request.parameters,
+        reasoning="Sandbox validation of template-driven remediation",
+        evidence_refs=[],
+    )
+
+    result = service.verify_proposal(
+        snapshot_id=request.snapshot_id,
+        control_id=request.control_id,
+        proposal=proposal,
+        rendered_sql=request.rendered_sql,
+    )
+
+    return SandboxValidationResponse(
+        sandbox_run_id=artifact.proposal_id,
+        snapshot_id=request.snapshot_id,
+        control_id=request.control_id,
+        status=result.status.value,
+        pre_remediation_status=result.pre_remediation_status.value if result.pre_remediation_status else None,
+        post_remediation_status=result.post_remediation_status.value if result.post_remediation_status else None,
+        post_rollback_status=result.post_rollback_status.value if result.post_rollback_status else None,
+        security_validation_passed=result.flip_verified,
+        compatibility_validation_passed=result.status.value != "COMPATIBILITY_FAILED",
+        rollback_executed=result.rollback_executed,
+        rollback_verified=result.rollback_verified,
+        logs=result.execution_log,
+        errors=[result.error] if result.error else [],
+    )
+

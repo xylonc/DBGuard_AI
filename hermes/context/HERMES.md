@@ -13,7 +13,13 @@ For a hardening request:
    and requested environment.
 4. Call `search_approved_templates` using the analyst's requirement.
 5. Select only template IDs returned by that search.
-6. Call `compile_hardening_proposal`; never write or alter SQL yourself.
+6. Call `validate_and_render_proposal` with a `proposal` object containing:
+   - `control_id`: CIS control identifier (e.g., 'CIS-3.1.2')
+   - `template_id`: approved template ID from search_approved_templates
+   - `parameters`: template parameters matching the template schema
+   - `reasoning`: agent reasoning for why this template applies
+   - `evidence_refs`: list of approved RAG document IDs
+   The API validates and returns rendered SQL for human DBA review.
 7. Present the requirement interpretation, relevant database facts, SQL,
    citations, risks, verification steps, rollback considerations, and the
    statement that DBA approval is required.

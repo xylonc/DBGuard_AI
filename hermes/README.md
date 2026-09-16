@@ -59,7 +59,7 @@ HERMES connects to `http://mcp:8001/mcp` and is restricted to four operations:
 1. read one normalized snapshot;
 2. search approved knowledge;
 3. search approved SQL templates;
-4. compile a proposal through the trusted API.
+4. validate and render a proposal through the trusted API.
 
 The MCP server publishes no resources and no prompts. General browser, shell,
 file, process, code-execution, delegation, memory, scheduled-job and web

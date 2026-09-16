@@ -92,11 +92,10 @@ MCP allowlist contains only:
 
 | HERMES operation | What it does |
 |---|---|
-| `get_snapshot_context` | Reads normalized, redacted facts from one uploaded collector snapshot |
-| `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |
-| `search_approved_templates` | Finds only active, human-reviewed SQL templates |
-| `compile_hardening_proposal` | Revalidates the selection and renders a review-only SQL proposal |
-| `validate_in_sandbox` | Validates proposal in ephemeral PostgreSQL sandbox with flip verification |
+|| `get_snapshot_context` | Reads normalized, redacted facts from one uploaded collector snapshot |
+|| `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |
+|| `search_approved_templates` | Finds only active, human-reviewed SQL templates |
+|| `validate_and_render_proposal` | Validates proposal and renders review-only SQL from approved templates |
 
 HERMES cannot use this bridge to ingest or approve content, access PostgreSQL,
 execute SQL, use the host shell, or operate Docker.
@@ -116,15 +115,14 @@ execute SQL, use the host shell, or operate Docker.
 | `POST` | `/api/v1/templates/ingest-all` | Ingest bundled SQL templates |
 | `GET` | `/api/v1/templates/search` | Search approved templates by semantic similarity |
 | `POST` | `/api/v1/templates/{name}/approve` | Record human approval of an exact template version |
-| `POST` | `/api/v1/proposals/compile` | Validate HERMES's choices and deterministically render approved templates from PostgreSQL |
+| `POST` | `/api/v1/proposals/validate-and-render` | Validate HERMES's choices and deterministically render approved templates from PostgreSQL |
 | `POST` | `/api/v1/sandbox/validate` | Validate proposal in ephemeral PostgreSQL sandbox with flip verification |
 
-The HERMES workflow uses `/api/v1/proposals/compile` so there is only one
-reasoning agent. The trusted backend still reruns retrieval, rejects template
+The trusted backend still reruns retrieval, rejects template
 IDs outside the active result set, applies safe parameter handling, and
 requires approved RAG evidence before returning SQL.
 
-The older `metadata_snapshot` field remains on `/api/v1/proposals/compile` for client
+The older `metadata_snapshot` field remains on `/api/v1/proposals/validate-and-render` for client
 compatibility, but new integrations should always use `snapshot_id`.
 
 ## Evidence and approval rules

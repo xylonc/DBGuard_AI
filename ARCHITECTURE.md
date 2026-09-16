@@ -76,8 +76,7 @@ The default Docker Compose deployment starts:
 - `api`: snapshot intake, knowledge management, template management, semantic
   retrieval, proposal generation, and **sandbox validation**;
 - `postgres`: PostgreSQL with pgvector for knowledge and template storage;
-- `mcp`: a stateless HTTP adapter that exposes five operations (four plus
-  `validate_in_sandbox`) for HERMES;
+- `mcp`: a stateless HTTP adapter that exposes four operations for HERMES;
 - `hermes`: the official v0.21.0 runtime pinned by image digest, DBGuard context
   and skill, authenticated dashboard, gateway API, and persistent sessions.
 
@@ -238,7 +237,7 @@ sequenceDiagram
     M->>A: Retrieval requests
     A->>D: Filter lifecycle + applicability, then vector search
     D-->>H: Evidence and eligible template IDs
-    H->>M: compile_hardening_proposal
+    H->>M: validate_and_render_proposal
     M->>A: Requirement + selected IDs + parameters
     A->>A: Revalidate selection and render reviewed templates
     A-->>H: Review-only SQL + citations
@@ -250,7 +249,7 @@ The MCP server exposes exactly these four tools:
 - `get_snapshot_context`;
 - `search_approved_knowledge`;
 - `search_approved_templates`;
-- `compile_hardening_proposal`.
+- `validate_and_render_proposal`.
 
 It exposes zero MCP prompts and zero MCP resources. HERMES may represent these
 behind its deferred `tool_search`, `tool_describe` and `tool_call` facade, but

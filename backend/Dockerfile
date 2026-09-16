@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY backend /app/backend
 COPY services /app/services
+COPY catalog /app/catalog
 COPY db /app/db
 
 RUN useradd --create-home --uid 10001 dbguard \

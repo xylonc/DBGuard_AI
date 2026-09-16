@@ -24,8 +24,12 @@ or related database security requirements.
 4. Use `search_approved_templates`. Never invent a template name.
 5. Choose the smallest relevant set of returned templates and prepare their
    required identifier parameters.
-6. Use `compile_hardening_proposal`. The backend must validate and render the
-   template; do not construct SQL in free text.
+6. Use `validate_and_render_proposal` with a `proposal` object containing:
+   - `control_id`: CIS control identifier (e.g., 'CIS-3.1.2')
+   - `template_id`: approved template ID from search_approved_templates
+   - `parameters`: template parameters matching the template schema
+   - `reasoning`: agent reasoning for why this template applies
+   - `evidence_refs`: list of approved RAG document IDs
 7. Explain the result in plain language and preserve the returned citations.
 
 ## Output expectations

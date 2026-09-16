@@ -53,6 +53,7 @@ mcp_servers:
     tools:
       include:
         - get_snapshot_context
+        - get_snapshot_assessment
         - search_approved_knowledge
         - search_approved_templates
         - validate_and_render_proposal

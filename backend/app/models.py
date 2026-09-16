@@ -283,6 +283,10 @@ class Finding(BaseModel):
         default=None,
         description="CIS severity level (e.g., '1', '2A', '2B', '3')"
     )
+    evidence_paths: Optional[list[str]] = Field(
+        default=None,
+        description="JSON paths of evidence fields read (e.g., settings[name='log_connections'].setting)"
+    )
 
 
 class AssessmentSummary(BaseModel):

@@ -17,6 +17,10 @@ from app.collector_models import (
     SnapshotUploadResponse,
 )
 from app.models import (
+    AssessmentReport,
+    AssessmentSummary,
+    Finding,
+    FindingStatus,
     HardenResponse,
     KnowledgeApprovalRequest,
     KnowledgeIngestRequest,
@@ -29,6 +33,8 @@ from app.models import (
     TemplateApprovalRequest,
     TemplateSearchResponse,
 )
+from app.services.assessment_service import AssessmentService
+from catalog.controls.assess.registry import CONTROL_REGISTRY
 from app.services.snapshot_service import SnapshotNotFoundError, SnapshotStore
 from app.services.template_service import compile_sql_plan_from_templates
 from app.services.vector_service import (
@@ -59,6 +65,32 @@ def health_check():
         "assessment_enabled": False,
         "twin_runner_enabled": False,
     }
+
+
+@app.get("/api/v1/snapshots/{snapshot_id}/assessment", response_model=AssessmentReport)
+def get_assessment_report(snapshot_id: str):
+    """Evaluate a snapshot against the control registry and return findings.
+    
+    This endpoint performs deterministic assessment of a snapshot using the
+    offline ASSESS evaluation engine. It returns pass/fail/gap status for
+    each control.
+    """
+    try:
+        bundle = snapshot_store.load(snapshot_id)
+    except SnapshotNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from exc
+    
+    # Convert bundle to dict for assessment
+    snapshot = bundle.model_dump(mode="json", exclude_none=False)
+    
+    # Run assessment
+    assessment_service = AssessmentService(CONTROL_REGISTRY)
+    report = assessment_service.evaluate(snapshot)
+    
+    # Override snapshot_id to match the requested one
+    report.snapshot_id = snapshot_id
+    
+    return report
 
 
 @app.post("/api/v1/snapshots", response_model=SnapshotUploadResponse, status_code=201)

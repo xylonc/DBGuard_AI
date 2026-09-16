@@ -93,8 +93,7 @@ execute arbitrary SQL or shell commands.
 Answers: “Is DBGuardAI running?”
 
 It returns the service status and makes the current scope explicit. Assessment
-and twin execution are reported as disabled, so the UI cannot imply that a
-proposal has been tested or applied.
+and twin execution are reported as disabled.
 
 ### Collector snapshots
 
@@ -244,16 +243,17 @@ sequenceDiagram
     H-->>Analyst: Explanation, gaps, risks and DBA approval warning
 ```
 
-The MCP server exposes exactly these four tools:
+The MCP server exposes exactly these five tools:
 
 - `get_snapshot_context`;
+- `get_snapshot_assessment`;
 - `search_approved_knowledge`;
 - `search_approved_templates`;
 - `validate_and_render_proposal`.
 
 It exposes zero MCP prompts and zero MCP resources. HERMES may represent these
 behind its deferred `tool_search`, `tool_describe` and `tool_call` facade, but
-the underlying registry remains limited to the same four operations.
+the underlying registry remains limited to the same five operations.
 
 ## Approval lifecycle
 

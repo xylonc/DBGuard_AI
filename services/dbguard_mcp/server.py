@@ -46,6 +46,20 @@ def get_snapshot_context(snapshot_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_snapshot_assessment(snapshot_id: str) -> dict[str, Any]:
+    """Evaluate a snapshot against control rules and return findings.
+    
+    This tool retrieves the assessment report for a snapshot, including:
+    - findings: pass/fail/gap status for each control
+    - summary: counts by status
+    - rationale and evidence for each finding
+    
+    Use this to understand the current security state before proposing fixes.
+    """
+    return _request_json("GET", f"/api/v1/snapshots/{snapshot_id}/assessment")
+
+
+@mcp.tool()
 def search_approved_knowledge(
     query: str,
     pg_version: str | None = None,

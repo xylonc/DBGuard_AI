@@ -92,10 +92,11 @@ MCP allowlist contains only:
 
 | HERMES operation | What it does |
 |---|---|
-|| `get_snapshot_context` | Reads normalized, redacted facts from one uploaded collector snapshot |
-|| `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |
-|| `search_approved_templates` | Finds only active, human-reviewed SQL templates |
-|| `validate_and_render_proposal` | Validates proposal and renders review-only SQL from approved templates |
+| `get_snapshot_context` | Reads normalized, redacted facts from one uploaded collector snapshot |
+| `get_snapshot_assessment` | Evaluates snapshot against control rules, returns pass/fail/gap findings |
+| `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |
+| `search_approved_templates` | Finds only active, human-reviewed SQL templates |
+| `validate_and_render_proposal` | Validates proposal and renders review-only SQL from approved templates |
 
 HERMES cannot use this bridge to ingest or approve content, access PostgreSQL,
 execute SQL, use the host shell, or operate Docker.
@@ -107,6 +108,7 @@ execute SQL, use the host shell, or operate Docker.
 | `GET` | `/api/v1/health` | Check whether the DBGuard API is ready |
 | `POST` | `/api/v1/snapshots` | Validate and store collector bundle `0.2.0` |
 | `GET` | `/api/v1/snapshots/{snapshot_id}` | Read safe normalized snapshot context |
+| `GET` | `/api/v1/snapshots/{snapshot_id}/assessment` | Evaluate snapshot against control rules, return pass/fail/gap findings |
 | `POST` | `/api/v1/knowledge/documents` | Ingest a draft or explicitly reviewed source |
 | `POST` | `/api/v1/knowledge/documents/{id}/approve` | Record human approval of a draft source |
 | `GET` | `/api/v1/knowledge/documents/{id}` | Inspect source provenance and lifecycle |

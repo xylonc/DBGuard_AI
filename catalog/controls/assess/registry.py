@@ -86,19 +86,47 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
     # Template: SET_CONFIG_PARAMETER (maps to approved Jinja template)
     # --------------------------------------------------------------------------
     def _check_log_connections(snapshot: dict[str, Any]) -> Finding:
-        """Check if log_connections is enabled."""
-        settings = snapshot.get("settings", [])
+        """Check if log_connections is enabled.
+        
+        Critical invariant: absence from the settings list means the collector
+        could not retrieve it - this is a gap, not a pass.
+        """
+        settings = snapshot.get("settings")
+        gaps = snapshot.get("gaps", [])
+        
+        # If settings section is null/missing, this is a gap
         if settings is None:
-            return Finding(
-                control_id="CIS-3.1.2",
-                status=FindingStatus.GAPPED,
-                title="Ensure log_connections is enabled",
-                rationale="Collector could not retrieve settings (settings section is null)",
-                evidence_found=None,
-                control_metadata=None,
-                is_gapped=True,
-                severity="2B",
-            )
+            # Check for matching gap record
+            gap_reason = None
+            for gap in gaps:
+                if isinstance(gap, dict) and gap.get("section") == "settings":
+                    gap_reason = gap.get("reason", "unknown")
+                    break
+            
+            if gap_reason:
+                return Finding(
+                    control_id="CIS-3.1.2",
+                    status=FindingStatus.GAPPED,
+                    title="Ensure log_connections is enabled",
+                    rationale=f"Collector could not retrieve settings (gap: {gap_reason})",
+                    evidence_found=None,
+                    control_metadata=None,
+                    is_gapped=True,
+                    severity="2B",
+                    evidence_paths=["settings"],
+                )
+            else:
+                return Finding(
+                    control_id="CIS-3.1.2",
+                    status=FindingStatus.GAPPED,
+                    title="Ensure log_connections is enabled",
+                    rationale="Collector could not retrieve settings (section unavailable without gap record - collector contract violation)",
+                    evidence_found=None,
+                    control_metadata=None,
+                    is_gapped=True,
+                    severity="2B",
+                    evidence_paths=["settings"],
+                )
 
         log_conn_setting = None
         for item in settings:
@@ -107,16 +135,18 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 break
 
         if log_conn_setting is None:
-            # Settings is a list but log_connections not present
+            # Settings list is present but log_connections not found - this is a gap
+            # because the collector should always collect security-relevant settings
             return Finding(
                 control_id="CIS-3.1.2",
-                status=FindingStatus.PASS,
+                status=FindingStatus.GAPPED,
                 title="Ensure log_connections is enabled",
-                rationale="log_connections is not present in settings (defaults to off but not required to be on)",
-                evidence_found={"log_connections": None},
+                rationale="log_connections is not present in settings list (collector should include all security-relevant settings - this indicates collection failure)",
+                evidence_found={"settings_found": [s.get("name") for s in settings if isinstance(s, dict) and s.get("name")], "log_connections": None},
                 control_metadata=None,
-                is_gapped=False,
+                is_gapped=True,
                 severity="2B",
+                evidence_paths=["settings", "settings[name='log_connections'].setting"],
             )
 
         if log_conn_setting.lower() == "on":
@@ -129,6 +159,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 control_metadata=None,
                 is_gapped=False,
                 severity="2B",
+                evidence_paths=["settings[name='log_connections'].setting"],
             )
         else:
             return Finding(
@@ -146,6 +177,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 ),
                 is_gapped=False,
                 severity="2B",
+                evidence_paths=["settings[name='log_connections'].setting"],
             )
 
     registry["CIS-3.1.2"] = ControlDefinition(
@@ -170,70 +202,112 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
     # --------------------------------------------------------------------------
     def _check_public_schema_create(snapshot: dict[str, Any]) -> Finding:
         """Check if PUBLIC has CREATE privilege on public schema."""
-        schemas = snapshot.get("schemas", [])
+        schemas = snapshot.get("schemas")
+        gaps = snapshot.get("gaps", [])
+        
+        # If schemas section is null/missing, this is a gap
         if schemas is None:
+            # Check for matching gap record
+            gap_reason = None
+            for gap in gaps:
+                if isinstance(gap, dict) and gap.get("section") == "schemas":
+                    gap_reason = gap.get("reason", "unknown")
+                    break
+            
+            if gap_reason:
+                return Finding(
+                    control_id="CIS-4.1.1",
+                    status=FindingStatus.GAPPED,
+                    title="Ensure PUBLIC schema CREATE privilege is revoked",
+                    rationale=f"Collector could not retrieve schema information (gap: {gap_reason})",
+                    evidence_found=None,
+                    control_metadata=None,
+                    is_gapped=True,
+                    severity="2A",
+                    evidence_paths=["schemas"],
+                )
+            else:
+                return Finding(
+                    control_id="CIS-4.1.1",
+                    status=FindingStatus.GAPPED,
+                    title="Ensure PUBLIC schema CREATE privilege is revoked",
+                    rationale="Collector could not retrieve schema information (section unavailable without gap record - collector contract violation)",
+                    evidence_found=None,
+                    control_metadata=None,
+                    is_gapped=True,
+                    severity="2A",
+                    evidence_paths=["schemas"],
+                )
+
+        # Look for public schema entry
+        public_schema_entry = None
+        for schema in schemas:
+            if isinstance(schema, dict) and schema.get("nspname") == "public":
+                public_schema_entry = schema
+                break
+
+        if public_schema_entry is None:
+            # public schema not found in schemas - this should never happen
+            # but if it does, it's a gap
             return Finding(
                 control_id="CIS-4.1.1",
                 status=FindingStatus.GAPPED,
                 title="Ensure PUBLIC schema CREATE privilege is revoked",
-                rationale="Collector could not retrieve schema information (schemas section is null)",
-                evidence_found=None,
+                rationale="public schema entry not found in schemas list (collector should always include public schema - this indicates collection failure)",
+                evidence_found={"schemas_found": [s.get("nspname") for s in schemas if isinstance(s, dict) and s.get("nspname")]},
                 control_metadata=None,
                 is_gapped=True,
                 severity="2A",
+                evidence_paths=["schemas", "schemas[nspname='public'].nspname"],
             )
 
-        # Look for public schema entry
-        for schema in schemas:
-            if isinstance(schema, dict) and schema.get("nspname") == "public":
-                public_has_create = schema.get("public_has_create", False)
-                if public_has_create:
-                    return Finding(
-                        control_id="CIS-4.1.1",
-                        status=FindingStatus.FAIL,
-                        title="Ensure PUBLIC schema CREATE privilege is revoked",
-                        rationale="PUBLIC has CREATE privilege on public schema",
-                        evidence_found={"public_has_create": True, "schema": "public"},
-                        control_metadata=ControlMetadata(
-                            template_id="REVOKE_SCHEMA_PRIVILEGE",
-                            template_version=1,
-                            is_automatable=True,
-                            risk_level="low",
-                            requires_dba_review=True,
-                        ),
-                        is_gapped=False,
-                        severity="2A",
-                    )
-                else:
-                    return Finding(
-                        control_id="CIS-4.1.1",
-                        status=FindingStatus.PASS,
-                        title="Ensure PUBLIC schema CREATE privilege is revoked",
-                        rationale="PUBLIC does not have CREATE privilege on public schema",
-                        evidence_found={"public_has_create": False, "schema": "public"},
-                        control_metadata=None,
-                        is_gapped=False,
-                        severity="2A",
-                    )
-
-        # Schema not found - this shouldn't happen for 'public' schema
-        # But if it does, we should flag as FAIL with no data
-        return Finding(
-            control_id="CIS-4.1.1",
-            status=FindingStatus.FAIL,
-            title="Ensure PUBLIC schema CREATE privilege is revoked",
-            rationale="Could not determine PUBLIC schema privileges (schema entry missing)",
-            evidence_found=None,
-            control_metadata=ControlMetadata(
-                template_id="REVOKE_SCHEMA_PRIVILEGE",
-                template_version=1,
-                is_automatable=True,
-                risk_level="low",
-                requires_dba_review=True,
-            ),
-            is_gapped=False,
-            severity="2A",
-        )
+        # Entry exists, now check public_has_create
+        public_has_create = public_schema_entry.get("public_has_create")
+        
+        if public_has_create is None:
+            # Field is missing from the entry
+            return Finding(
+                control_id="CIS-4.1.1",
+                status=FindingStatus.GAPPED,
+                title="Ensure PUBLIC schema CREATE privilege is revoked",
+                rationale="public_has_create field is missing from public schema entry (collector contract violation)",
+                evidence_found={"public_schema_found": True, "public_has_create": None},
+                control_metadata=None,
+                is_gapped=True,
+                severity="2A",
+                evidence_paths=["schemas[nspname='public'].nspname", "schemas[nspname='public'].public_has_create"],
+            )
+        
+        if public_has_create:
+            return Finding(
+                control_id="CIS-4.1.1",
+                status=FindingStatus.FAIL,
+                title="Ensure PUBLIC schema CREATE privilege is revoked",
+                rationale="PUBLIC has CREATE privilege on public schema",
+                evidence_found={"public_has_create": True, "schema": "public"},
+                control_metadata=ControlMetadata(
+                    template_id="REVOKE_SCHEMA_PRIVILEGE",
+                    template_version=1,
+                    is_automatable=True,
+                    risk_level="low",
+                    requires_dba_review=True,
+                ),
+                is_gapped=False,
+                severity="2A",
+                evidence_paths=["schemas[nspname='public'].nspname", "schemas[nspname='public'].public_has_create"],
+            )
+        else:
+            return Finding(
+                control_id="CIS-4.1.1",
+                status=FindingStatus.PASS,
+                title="Ensure PUBLIC schema CREATE privilege is revoked",
+                rationale="PUBLIC does not have CREATE privilege on public schema",
+                evidence_found={"public_has_create": False, "schema": "public"},
+                control_metadata=None,
+                is_gapped=False,
+                severity="2A",
+                evidence_paths=["schemas[nspname='public'].nspname", "schemas[nspname='public'].public_has_create"],
+            )
 
     registry["CIS-4.1.1"] = ControlDefinition(
         control_id="CIS-4.1.1",
@@ -256,8 +330,13 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
     # Template: MANUAL_PROCEDURE (maps to approved Jinja template for manual review)
     # --------------------------------------------------------------------------
     def _check_password_encryption(snapshot: dict[str, Any]) -> Finding:
-        """Check if any users still use MD5 password encryption."""
-        password_types = snapshot.get("password_types", [])
+        """Check if any users still use MD5 password encryption.
+        
+        Note: This is a MANUAL_REVIEW control because migration requires
+        each affected user to reset their password. We can detect md5
+        passwords but cannot automate the migration.
+        """
+        password_types = snapshot.get("password_types")
         gaps = snapshot.get("gaps", [])
 
         # Check if password_types section is gapped
@@ -282,6 +361,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                         ),
                         is_gapped=True,
                         severity="1",
+                        evidence_paths=["password_types"],
                     )
             # No matching gap found but still null
             return Finding(
@@ -299,23 +379,31 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 ),
                 is_gapped=False,
                 severity="1",
+                evidence_paths=["password_types"],
             )
 
         # Count MD5 password entries
         md5_count = 0
+        scram_count = 0
+        none_count = 0
+        
         for entry in password_types:
             if isinstance(entry, dict):
                 password_type = entry.get("password_type", "")
                 if password_type == "md5":
                     md5_count += 1
+                elif password_type == "scram-sha-256":
+                    scram_count += 1
+                elif password_type == "none":
+                    none_count += 1
 
         if md5_count > 0:
             return Finding(
                 control_id="CIS-2.1",
                 status=FindingStatus.MANUAL_REVIEW,
                 title="Ensure password encryption uses SCRAM-SHA-256",
-                rationale=f"{md5_count} user(s) still using MD5 password encryption (non-automatable migration required)",
-                evidence_found={"md5_password_count": md5_count},
+                rationale=f"{md5_count} user(s) still using MD5 password encryption (non-automatable migration required - each affected user must reset password)",
+                evidence_found={"md5_password_count": md5_count, "scram_password_count": scram_count, "none_password_count": none_count},
                 control_metadata=ControlMetadata(
                     template_id="MANUAL_PROCEDURE",
                     template_version=1,
@@ -325,17 +413,19 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 ),
                 is_gapped=False,
                 severity="1",
+                evidence_paths=["password_types"],
             )
         else:
             return Finding(
                 control_id="CIS-2.1",
                 status=FindingStatus.PASS,
                 title="Ensure password encryption uses SCRAM-SHA-256",
-                rationale="All users use SCRAM-SHA-256 or other secure password encryption",
-                evidence_found={"md5_password_count": 0},
+                rationale=f"All login roles use SCRAM-SHA-256 ({scram_count} users), no MD5 passwords detected ({md5_count} found, {none_count} roles without passwords)",
+                evidence_found={"md5_password_count": 0, "scram_password_count": scram_count, "none_password_count": none_count},
                 control_metadata=None,
                 is_gapped=False,
                 severity="1",
+                evidence_paths=["password_types"],
             )
 
     registry["CIS-2.1"] = ControlDefinition(

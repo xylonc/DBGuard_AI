@@ -5,7 +5,7 @@ ASSESS evaluation engine. Each control defines:
 
 - Metadata (ID, CIS title, description, severity)
 - Rule evaluation function operating on normalized snapshot JSON
-- Default TypedAction template generated upon failure
+- Template mapping for remediation (replaces TypedAction)
 
 The ASSESS engine is purely OFFLINE. It evaluates snapshot JSON files stored
 in DBGuard. It never connects to a target database or runs live queries.
@@ -19,12 +19,9 @@ A gapped control MUST evaluate to GAPPED / MANUAL_REVIEW, NEVER a false PASS.
 from typing import Any, Callable, Optional
 
 from app.models import (
-    AnyTypedAction,
+    ControlMetadata,
     Finding,
     FindingStatus,
-    ManualProcedureAction,
-    RevokeSchemaPrivilegeAction,
-    SetConfigParameterAction,
 )
 
 
@@ -36,7 +33,12 @@ ControlRule = Callable[[dict[str, Any]], Finding]
 
 
 class ControlDefinition:
-    """Definition of a single assessment control."""
+    """Definition of a single assessment control.
+
+    Controls now map to approved Jinja templates for remediation via
+    the template_id field in ControlMetadata. The AI/Hermes agent proposes
+    remediation by selecting from these approved templates.
+    """
 
     def __init__(
         self,
@@ -45,16 +47,22 @@ class ControlDefinition:
         description: str,
         severity: str,
         rule_func: ControlRule,
-        default_action: Optional[AnyTypedAction] = None,
+        template_id: Optional[str] = None,
+        template_version: Optional[int] = None,
         is_automatable: bool = True,
+        risk_level: str = "medium",
+        requires_dba_review: bool = True,
     ):
         self.control_id = control_id
         self.cis_title = cis_title
         self.description = description
         self.severity = severity
         self.rule_func = rule_func
-        self.default_action = default_action
+        self.template_id = template_id
+        self.template_version = template_version
         self.is_automatable = is_automatable
+        self.risk_level = risk_level
+        self.requires_dba_review = requires_dba_review
 
     def evaluate(self, snapshot: dict[str, Any]) -> Finding:
         """Evaluate this control against a normalized snapshot."""
@@ -75,7 +83,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
     # --------------------------------------------------------------------------
     # Type: Fully Automatable SQL Parameter
     # Pass condition: pg_settings where name = 'log_connections' has setting = 'on'
-    # Target Typed Action: SET_CONFIG_PARAMETER (name: "log_connections", value: "on")
+    # Template: SET_CONFIG_PARAMETER (maps to approved Jinja template)
     # --------------------------------------------------------------------------
     def _check_log_connections(snapshot: dict[str, Any]) -> Finding:
         """Check if log_connections is enabled."""
@@ -87,7 +95,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure log_connections is enabled",
                 rationale="Collector could not retrieve settings (settings section is null)",
                 evidence_found=None,
-                typed_action=None,
+                control_metadata=None,
                 is_gapped=True,
                 severity="2B",
             )
@@ -106,7 +114,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure log_connections is enabled",
                 rationale="log_connections is not present in settings (defaults to off but not required to be on)",
                 evidence_found={"log_connections": None},
-                typed_action=None,
+                control_metadata=None,
                 is_gapped=False,
                 severity="2B",
             )
@@ -118,7 +126,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure log_connections is enabled",
                 rationale=f"log_connections is set to '{log_conn_setting}'",
                 evidence_found={"log_connections": log_conn_setting},
-                typed_action=None,
+                control_metadata=None,
                 is_gapped=False,
                 severity="2B",
             )
@@ -129,10 +137,12 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure log_connections is enabled",
                 rationale=f"log_connections is set to '{log_conn_setting}', should be 'on'",
                 evidence_found={"log_connections": log_conn_setting},
-                typed_action=SetConfigParameterAction(
-                    name="log_connections",
-                    value="on",
-                    description="Enable connection logging for security auditing",
+                control_metadata=ControlMetadata(
+                    template_id="SET_CONFIG_PARAMETER",
+                    template_version=1,
+                    is_automatable=True,
+                    risk_level="low",
+                    requires_dba_review=True,
                 ),
                 is_gapped=False,
                 severity="2B",
@@ -144,12 +154,11 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
         description="Enable logging of connection attempts for security auditing purposes.",
         severity="2B",
         rule_func=_check_log_connections,
-        default_action=SetConfigParameterAction(
-            name="log_connections",
-            value="on",
-            description="Enable connection logging for security auditing",
-        ),
+        template_id="SET_CONFIG_PARAMETER",
+        template_version=1,
         is_automatable=True,
+        risk_level="low",
+        requires_dba_review=True,
     )
 
     # --------------------------------------------------------------------------
@@ -157,7 +166,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
     # --------------------------------------------------------------------------
     # Type: Fully Automatable SQL Privilege
     # Pass condition: has_schema_privilege('public', 'public', 'CREATE') is false
-    # Target Typed Action: REVOKE_SCHEMA_PRIVILEGE (schema: "public", privilege: "CREATE", grantee: "PUBLIC")
+    # Template: REVOKE_SCHEMA_PRIVILEGE (maps to approved Jinja template)
     # --------------------------------------------------------------------------
     def _check_public_schema_create(snapshot: dict[str, Any]) -> Finding:
         """Check if PUBLIC has CREATE privilege on public schema."""
@@ -169,7 +178,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure PUBLIC schema CREATE privilege is revoked",
                 rationale="Collector could not retrieve schema information (schemas section is null)",
                 evidence_found=None,
-                typed_action=None,
+                control_metadata=None,
                 is_gapped=True,
                 severity="2A",
             )
@@ -185,11 +194,12 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                         title="Ensure PUBLIC schema CREATE privilege is revoked",
                         rationale="PUBLIC has CREATE privilege on public schema",
                         evidence_found={"public_has_create": True, "schema": "public"},
-                        typed_action=RevokeSchemaPrivilegeAction(
-                            schema_name="public",
-                            privilege="CREATE",
-                            grantee="PUBLIC",
-                            description="Revoke CREATE privilege on public schema from PUBLIC role",
+                        control_metadata=ControlMetadata(
+                            template_id="REVOKE_SCHEMA_PRIVILEGE",
+                            template_version=1,
+                            is_automatable=True,
+                            risk_level="low",
+                            requires_dba_review=True,
                         ),
                         is_gapped=False,
                         severity="2A",
@@ -201,7 +211,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                         title="Ensure PUBLIC schema CREATE privilege is revoked",
                         rationale="PUBLIC does not have CREATE privilege on public schema",
                         evidence_found={"public_has_create": False, "schema": "public"},
-                        typed_action=None,
+                        control_metadata=None,
                         is_gapped=False,
                         severity="2A",
                     )
@@ -214,11 +224,12 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
             title="Ensure PUBLIC schema CREATE privilege is revoked",
             rationale="Could not determine PUBLIC schema privileges (schema entry missing)",
             evidence_found=None,
-            typed_action=RevokeSchemaPrivilegeAction(
-                schema_name="public",
-                privilege="CREATE",
-                grantee="PUBLIC",
-                description="Revoke CREATE privilege on public schema from PUBLIC role",
+            control_metadata=ControlMetadata(
+                template_id="REVOKE_SCHEMA_PRIVILEGE",
+                template_version=1,
+                is_automatable=True,
+                risk_level="low",
+                requires_dba_review=True,
             ),
             is_gapped=False,
             severity="2A",
@@ -230,13 +241,11 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
         description="Revoke the CREATE privilege on the public schema from the PUBLIC role.",
         severity="2A",
         rule_func=_check_public_schema_create,
-        default_action=RevokeSchemaPrivilegeAction(
-            schema_name="public",
-            privilege="CREATE",
-            grantee="PUBLIC",
-            description="Revoke CREATE privilege on public schema from PUBLIC role",
-        ),
+        template_id="REVOKE_SCHEMA_PRIVILEGE",
+        template_version=1,
         is_automatable=True,
+        risk_level="low",
+        requires_dba_review=True,
     )
 
     # --------------------------------------------------------------------------
@@ -244,7 +253,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
     # --------------------------------------------------------------------------
     # Type: Non-SQL / Operational Migration
     # Pass condition: pg_authid.rolpassword matching 'md5%' count == 0
-    # Target Typed Action: MANUAL_PROCEDURE (steps: ["Set password_encryption='scram-sha-256'", "Rotate user credentials", "Update app configs"])
+    # Template: MANUAL_PROCEDURE (maps to approved Jinja template for manual review)
     # --------------------------------------------------------------------------
     def _check_password_encryption(snapshot: dict[str, Any]) -> Finding:
         """Check if any users still use MD5 password encryption."""
@@ -264,14 +273,12 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                             f"(gap: {gap.get('reason', 'unknown')})"
                         ),
                         evidence_found=None,
-                        typed_action=ManualProcedureAction(
-                            steps=[
-                                "Set password_encryption='scram-sha-256' in postgresql.conf",
-                                "Rotate all user credentials with new passwords",
-                                "Update application connection strings to support SCRAM",
-                                "Verify client driver compatibility",
-                            ],
-                            description="Migrate password encryption from MD5 to SCRAM-SHA-256",
+                        control_metadata=ControlMetadata(
+                            template_id="MANUAL_PROCEDURE",
+                            template_version=1,
+                            is_automatable=False,
+                            risk_level="high",
+                            requires_dba_review=True,
                         ),
                         is_gapped=True,
                         severity="1",
@@ -283,14 +290,12 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure password encryption uses SCRAM-SHA-256",
                 rationale="Collector could not retrieve password types (section unavailable without gap record)",
                 evidence_found=None,
-                typed_action=ManualProcedureAction(
-                    steps=[
-                        "Set password_encryption='scram-sha-256' in postgresql.conf",
-                        "Rotate all user credentials with new passwords",
-                        "Update application connection strings to support SCRAM",
-                        "Verify client driver compatibility",
-                    ],
-                    description="Migrate password encryption from MD5 to SCRAM-SHA-256",
+                control_metadata=ControlMetadata(
+                    template_id="MANUAL_PROCEDURE",
+                    template_version=1,
+                    is_automatable=False,
+                    risk_level="high",
+                    requires_dba_review=True,
                 ),
                 is_gapped=False,
                 severity="1",
@@ -311,14 +316,12 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure password encryption uses SCRAM-SHA-256",
                 rationale=f"{md5_count} user(s) still using MD5 password encryption (non-automatable migration required)",
                 evidence_found={"md5_password_count": md5_count},
-                typed_action=ManualProcedureAction(
-                    steps=[
-                        "Set password_encryption='scram-sha-256' in postgresql.conf",
-                        "Rotate all user credentials with new passwords",
-                        "Update application connection strings to support SCRAM",
-                        "Verify client driver compatibility",
-                    ],
-                    description="Migrate password encryption from MD5 to SCRAM-SHA-256",
+                control_metadata=ControlMetadata(
+                    template_id="MANUAL_PROCEDURE",
+                    template_version=1,
+                    is_automatable=False,
+                    risk_level="high",
+                    requires_dba_review=True,
                 ),
                 is_gapped=False,
                 severity="1",
@@ -330,7 +333,7 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
                 title="Ensure password encryption uses SCRAM-SHA-256",
                 rationale="All users use SCRAM-SHA-256 or other secure password encryption",
                 evidence_found={"md5_password_count": 0},
-                typed_action=None,
+                control_metadata=None,
                 is_gapped=False,
                 severity="1",
             )
@@ -341,16 +344,11 @@ def _build_control_registry() -> dict[str, ControlDefinition]:
         description="Ensure all client authentication uses SCRAM-SHA-256 instead of deprecated MD5.",
         severity="1",
         rule_func=_check_password_encryption,
-        default_action=ManualProcedureAction(
-            steps=[
-                "Set password_encryption='scram-sha-256' in postgresql.conf",
-                "Rotate all user credentials with new passwords",
-                "Update application connection strings to support SCRAM",
-                "Verify client driver compatibility",
-            ],
-            description="Migrate password encryption from MD5 to SCRAM-SHA-256",
-        ),
+        template_id="MANUAL_PROCEDURE",
+        template_version=1,
         is_automatable=False,
+        risk_level="high",
+        requires_dba_review=True,
     )
 
     return registry

@@ -2,7 +2,7 @@
 
 Tests cover:
 - PASS findings for all 3 target controls
-- FAIL findings with correct TypedAction generation
+- FAIL findings with correct template mapping
 - GAPPED findings (null evidence + gap record)
 - MANUAL_REVIEW for non-SQL controls (CIS-2.1)
 
@@ -19,11 +19,9 @@ import pytest
 from app.models import (
     AssessmentReport,
     AssessmentSummary,
+    ControlMetadata,
     Finding,
     FindingStatus,
-    ManualProcedureAction,
-    RevokeSchemaPrivilegeAction,
-    SetConfigParameterAction,
 )
 from app.services.assessment_service import AssessmentService
 from catalog.controls.assess.registry import CONTROL_REGISTRY
@@ -80,7 +78,7 @@ class TestCIS312LogConnections:
         assert cis_312_finding.title == "Ensure log_connections is enabled"
         assert "set to 'on'" in cis_312_finding.rationale
         assert cis_312_finding.evidence_found == {"log_connections": "on"}
-        assert cis_312_finding.typed_action is None
+        assert cis_312_finding.control_metadata is None
         assert cis_312_finding.is_gapped is False
 
     def test_pass_when_log_connections_not_present(self, assessment_service, base_snapshot):
@@ -115,13 +113,14 @@ class TestCIS312LogConnections:
         assert "set to 'off', should be 'on'" in cis_312_finding.rationale
         assert cis_312_finding.evidence_found == {"log_connections": "off"}
 
-        # Verify TypedAction is correctly generated
-        assert cis_312_finding.typed_action is not None
-        assert isinstance(cis_312_finding.typed_action, SetConfigParameterAction)
-        assert cis_312_finding.typed_action.name == "log_connections"
-        assert cis_312_finding.typed_action.value == "on"
-        assert cis_312_finding.typed_action.description == "Enable connection logging for security auditing"
-        assert cis_312_finding.typed_action.action_type == "SET_CONFIG_PARAMETER"
+        # Verify ControlMetadata with template_id is correctly generated
+        assert cis_312_finding.control_metadata is not None
+        assert isinstance(cis_312_finding.control_metadata, ControlMetadata)
+        assert cis_312_finding.control_metadata.template_id == "SET_CONFIG_PARAMETER"
+        assert cis_312_finding.control_metadata.template_version == 1
+        assert cis_312_finding.control_metadata.is_automatable is True
+        assert cis_312_finding.control_metadata.risk_level == "low"
+        assert cis_312_finding.control_metadata.requires_dba_review is True
 
     def test_gapped_when_settings_is_null_with_gap_record(self, assessment_service, base_snapshot):
         """Test GAPPED when settings section is null and gap record exists."""
@@ -143,7 +142,7 @@ class TestCIS312LogConnections:
         assert cis_312_finding.status == FindingStatus.GAPPED
         assert cis_312_finding.rationale == "Collector could not retrieve settings (settings section is null)"
         assert cis_312_finding.evidence_found is None
-        assert cis_312_finding.typed_action is None
+        assert cis_312_finding.control_metadata is None
         assert cis_312_finding.is_gapped is True
 
 
@@ -176,7 +175,7 @@ class TestCIS411PublicSchemaCreate:
         assert cis_411_finding.status == FindingStatus.PASS
         assert "PUBLIC does not have CREATE privilege" in cis_411_finding.rationale
         assert cis_411_finding.evidence_found == {"public_has_create": False, "schema": "public"}
-        assert cis_411_finding.typed_action is None
+        assert cis_411_finding.control_metadata is None
 
     def test_fail_when_public_has_create(self, assessment_service, base_snapshot):
         """Test FAIL when PUBLIC has CREATE privilege on public schema."""
@@ -200,13 +199,14 @@ class TestCIS411PublicSchemaCreate:
         assert "PUBLIC has CREATE privilege" in cis_411_finding.rationale
         assert cis_411_finding.evidence_found == {"public_has_create": True, "schema": "public"}
 
-        # Verify TypedAction is correctly generated
-        assert cis_411_finding.typed_action is not None
-        assert isinstance(cis_411_finding.typed_action, RevokeSchemaPrivilegeAction)
-        assert cis_411_finding.typed_action.schema_name == "public"
-        assert cis_411_finding.typed_action.privilege == "CREATE"
-        assert cis_411_finding.typed_action.grantee == "PUBLIC"
-        assert cis_411_finding.typed_action.action_type == "REVOKE_SCHEMA_PRIVILEGE"
+        # Verify ControlMetadata with template_id is correctly generated
+        assert cis_411_finding.control_metadata is not None
+        assert isinstance(cis_411_finding.control_metadata, ControlMetadata)
+        assert cis_411_finding.control_metadata.template_id == "REVOKE_SCHEMA_PRIVILEGE"
+        assert cis_411_finding.control_metadata.template_version == 1
+        assert cis_411_finding.control_metadata.is_automatable is True
+        assert cis_411_finding.control_metadata.risk_level == "low"
+        assert cis_411_finding.control_metadata.requires_dba_review is True
 
     def test_gapped_when_schemas_is_null_with_gap_record(self, assessment_service, base_snapshot):
         """Test GAPPED when schemas section is null and gap record exists."""
@@ -228,7 +228,7 @@ class TestCIS411PublicSchemaCreate:
         assert cis_411_finding.status == FindingStatus.GAPPED
         assert "Collector could not retrieve schema information" in cis_411_finding.rationale
         assert cis_411_finding.evidence_found is None
-        assert cis_411_finding.typed_action is None
+        assert cis_411_finding.control_metadata is None
         assert cis_411_finding.is_gapped is True
 
 
@@ -256,7 +256,7 @@ class TestCIS21PasswordEncryption:
         assert cis_21_finding.status == FindingStatus.PASS
         assert "All users use SCRAM-SHA-256" in cis_21_finding.rationale
         assert cis_21_finding.evidence_found == {"md5_password_count": 0}
-        assert cis_21_finding.typed_action is None
+        assert cis_21_finding.control_metadata is None
 
     def test_manual_review_when_md5_passwords_exist(self, assessment_service, base_snapshot):
         """Test MANUAL_REVIEW when users use MD5 password encryption."""
@@ -275,11 +275,14 @@ class TestCIS21PasswordEncryption:
         assert "1 user(s) still using MD5 password encryption" in cis_21_finding.rationale
         assert cis_21_finding.evidence_found == {"md5_password_count": 1}
 
-        # Verify TypedAction is MANUAL_PROCEDURE with correct steps
-        assert cis_21_finding.typed_action is not None
-        assert cis_21_finding.typed_action.action_type == "MANUAL_PROCEDURE"
-        assert isinstance(cis_21_finding.typed_action, ManualProcedureAction)
-        assert hasattr(cis_21_finding.typed_action, "steps")
+        # Verify ControlMetadata with template_id for MANUAL_PROCEDURE
+        assert cis_21_finding.control_metadata is not None
+        assert isinstance(cis_21_finding.control_metadata, ControlMetadata)
+        assert cis_21_finding.control_metadata.template_id == "MANUAL_PROCEDURE"
+        assert cis_21_finding.control_metadata.template_version == 1
+        assert cis_21_finding.control_metadata.is_automatable is False
+        assert cis_21_finding.control_metadata.risk_level == "high"
+        assert cis_21_finding.control_metadata.requires_dba_review is True
 
     def test_manual_review_when_password_types_null_with_gap_record(self, assessment_service, base_snapshot):
         """Test MANUAL_REVIEW when password_types is null and gap record exists."""
@@ -302,9 +305,14 @@ class TestCIS21PasswordEncryption:
         assert "Collector could not retrieve password types" in cis_21_finding.rationale
         assert cis_21_finding.evidence_found is None
 
-        # Verify TypedAction is MANUAL_PROCEDURE
-        assert cis_21_finding.typed_action is not None
-        assert cis_21_finding.typed_action.action_type == "MANUAL_PROCEDURE"
+        # Verify ControlMetadata with template_id for MANUAL_PROCEDURE
+        assert cis_21_finding.control_metadata is not None
+        assert isinstance(cis_21_finding.control_metadata, ControlMetadata)
+        assert cis_21_finding.control_metadata.template_id == "MANUAL_PROCEDURE"
+        assert cis_21_finding.control_metadata.template_version == 1
+        assert cis_21_finding.control_metadata.is_automatable is False
+        assert cis_21_finding.control_metadata.risk_level == "high"
+        assert cis_21_finding.control_metadata.requires_dba_review is True
         assert cis_21_finding.is_gapped is True
 
     def test_manual_review_when_password_types_null_without_gap_record(self, assessment_service, base_snapshot):
@@ -322,6 +330,15 @@ class TestCIS21PasswordEncryption:
         assert "Collector could not retrieve password types" in cis_21_finding.rationale
         assert cis_21_finding.evidence_found is None
         assert cis_21_finding.is_gapped is False
+
+        # Verify ControlMetadata with template_id for MANUAL_PROCEDURE
+        assert cis_21_finding.control_metadata is not None
+        assert isinstance(cis_21_finding.control_metadata, ControlMetadata)
+        assert cis_21_finding.control_metadata.template_id == "MANUAL_PROCEDURE"
+        assert cis_21_finding.control_metadata.template_version == 1
+        assert cis_21_finding.control_metadata.is_automatable is False
+        assert cis_21_finding.control_metadata.risk_level == "high"
+        assert cis_21_finding.control_metadata.requires_dba_review is True
 
 
 # ============================================================================

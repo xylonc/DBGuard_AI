@@ -215,51 +215,45 @@ class FindingStatus(str, Enum):
     """Control requires human intervention and cannot be automated."""
 
 
-class TypedAction(BaseModel):
-    """Base class for typed remediation actions."""
+# ============================================================================
+# Template-driven control metadata (replaces TypedAction)
+# ============================================================================
 
-    model_config = ConfigDict(extra="forbid")
-
-    action_type: str
-    description: str = Field(description="Human-readable description of the remediation")
-
-
-class SetConfigParameterAction(TypedAction):
-    """Automated configuration parameter adjustment."""
-
-    action_type: Literal["SET_CONFIG_PARAMETER"] = "SET_CONFIG_PARAMETER"
-    name: str = Field(description="PostgreSQL GUC name")
-    value: str = Field(description="Target value for the parameter")
-
-
-class RevokeSchemaPrivilegeAction(TypedAction):
-    """Automated privilege revocation from a schema."""
-
-    action_type: Literal["REVOKE_SCHEMA_PRIVILEGE"] = "REVOKE_SCHEMA_PRIVILEGE"
-    schema_name: str = Field(description="Schema name (e.g., 'public')")
-    privilege: str = Field(description="Privilege to revoke (e.g., 'CREATE')")
-    grantee: str = Field(description="Grantee role name (e.g., 'PUBLIC')")
-
-
-class ManualProcedureAction(TypedAction):
-    """Non-automated procedure requiring human intervention."""
-
-    action_type: Literal["MANUAL_PROCEDURE"] = "MANUAL_PROCEDURE"
-    steps: list[str] = Field(
-        description="Ordered steps for the manual procedure"
+class ControlMetadata(BaseModel):
+    """Metadata for a control, mapping to Jinja templates for remediation.
+    
+    This replaces the old TypedAction system. Controls now map directly to
+    approved Jinja templates, and the AI/Hermes agent proposes by selecting
+    template_id + parameters.
+    """
+    
+    template_id: str = Field(
+        description="Approved Jinja template ID for remediation"
+    )
+    template_version: Optional[int] = Field(
+        default=None,
+        description="Optional template version"
+    )
+    is_automatable: bool = Field(
+        description="True if remediation can be automated via template rendering"
+    )
+    risk_level: str = Field(
+        default="medium",
+        description="Risk level (low, medium, high)"
+    )
+    requires_dba_review: bool = Field(
+        default=True,
+        description="Whether DBA approval is required before execution"
     )
 
 
-# Union of all supported action types
-AnyTypedAction = Union[
-    SetConfigParameterAction,
-    RevokeSchemaPrivilegeAction,
-    ManualProcedureAction,
-]
-
-
 class Finding(BaseModel):
-    """Result of evaluating a single control against snapshot evidence."""
+    """Result of evaluating a single control against snapshot evidence.
+    
+    When status is FAIL, the finding includes control_metadata that maps
+    to an approved Jinja template for remediation. The AI/Hermes agent
+    proposes remediation by selecting from these approved templates.
+    """
 
     control_id: str = Field(
         description="Unique control identifier (e.g., CIS-3.1.2)"
@@ -277,9 +271,9 @@ class Finding(BaseModel):
         default=None,
         description="Raw evidence extracted from snapshot that determined the status"
     )
-    typed_action: Optional[AnyTypedAction] = Field(
+    control_metadata: Optional[ControlMetadata] = Field(
         default=None,
-        description="Remediation action when status is FAIL or MANUAL_REVIEW"
+        description="Template mapping for remediation when status is FAIL or MANUAL_REVIEW"
     )
     is_gapped: bool = Field(
         default=False,

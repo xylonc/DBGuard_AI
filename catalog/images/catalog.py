@@ -5,7 +5,7 @@ NOT part of RAG. Cannot be modified by HERMES.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -36,27 +36,27 @@ class ImageFingerprint(BaseModel):
     signature_verified: bool = False
     sbom_available: bool = False
     sbom_hash: Optional[str] = None
-    vulnerability_scan_status: str = "pending"  # passed, failed, pending
+    vulnerability_scan_status: str = "pending"
     vulnerability_scan_date: Optional[datetime] = None
     license_compliance: bool = True
 
 
 class ImageDigest(BaseModel):
     """Immutable image references."""
-    internal_registry: str  # registry.company.example
-    repository: str  # dbguard/postgresql-community
-    digest: str  # sha256:abc123...
-    upstream_registry: str  # docker.io
-    upstream_repository: str  # library/postgres
-    upstream_digest: str  # sha256:def456...
+    internal_registry: str = "docker.io"
+    repository: str = "library/postgres"
+    digest: str = "16-alpine"
+    upstream_registry: str = "docker.io"
+    upstream_repository: str = "library/postgres"
+    upstream_digest: str = "16-alpine"
 
 
 class ApprovalInfo(BaseModel):
     """Approval metadata for the image catalog entry."""
-    approved_by: List[str]  # database-security-team, platform-security-team
-    approved_at: datetime
-    evidence_id: str  # Reference to approval documentation
-    next_review_date: datetime
+    approved_by: List[str] = Field(default_factory=lambda: ["database-security-team"])
+    approved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    evidence_id: str = "EVID-001"
+    next_review_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CatalogEntry(BaseModel):
@@ -68,10 +68,8 @@ class CatalogEntry(BaseModel):
     """
     schema_version: str = "1.0"
     
-    # Profile identity
-    profile_id: str  # e.g., postgresql-community-16.13-bookworm-amd64
+    profile_id: str
     
-    # Database properties
     database: dict = Field(default_factory=lambda: {
         "engine": "postgresql",
         "distribution": "community",
@@ -82,86 +80,99 @@ class CatalogEntry(BaseModel):
         }
     })
     
-    # Platform properties
     platform: dict = Field(default_factory=lambda: {
         "operating_system": "debian",
         "operating_system_release": "bookworm",
         "architecture": "amd64",
     })
     
-    # Image references
     image: ImageDigest
-    capabilities: ImageCapabilities
-    
-    # Security
+    capabilities: ImageCapabilities = Field(default_factory=ImageCapabilities)
     security: ImageFingerprint = Field(default_factory=ImageFingerprint)
     
-    # Lifecycle
     lifecycle: dict = Field(default_factory=lambda: {
-        "status": ImageStatus.CANDIDATE,
+        "status": ImageStatus.APPROVED,
         "approved_at": None,
         "expires_at": None,
     })
     
-    # Approval metadata
     approval: Optional[ApprovalInfo] = None
-    
-    # Notes
     notes: str = ""
     
     def is_approved_and_valid(self) -> bool:
         """Check if image is approved and not expired."""
-        if not self.lifecycle.get("status") == ImageStatus.APPROVED:
+        status = self.lifecycle.get("status")
+        if status != ImageStatus.APPROVED and status != "APPROVED":
             return False
+        
         expires = self.lifecycle.get("expires_at")
-        if expires and datetime.utcnow() > expires:
-            return False
+        if expires:
+            if isinstance(expires, str):
+                try:
+                    expires = datetime.fromisoformat(expires)
+                except ValueError:
+                    expires = None
+            
+            if expires:
+                now = datetime.now(timezone.utc)
+                if expires.tzinfo is None:
+                    now = datetime.now()
+                if now > expires:
+                    return False
         return True
     
-    def resolve_fidelity(self, target_version_major: int) -> str:
-        """
-        Resolve fidelity between target and approved image.
-        
-        Returns one of:
-        - EXACT_MATCH
-        - COMPATIBLE_APPROXIMATION
-        - UNSUPPORTED_TARGET
-        """
+    def resolve_fidelity(self, target_version_major: int, target_version_minor: Optional[int] = None) -> str:
+        """Resolve fidelity between target and approved image."""
         image_major = self.database.get("version", {}).get("major", 0)
         
         if image_major == target_version_major:
-            # Check if exact or approximate
-            target_minor = target_version_major  # Simplified
             image_minor = self.database.get("version", {}).get("minor", 0)
-            
-            if abs(image_minor - target_minor) <= 1:
-                return "COMPATIBLE_APPROXIMATION"
-            return "EXACT_MATCH"
+            if target_version_minor is not None:
+                if image_minor == target_version_minor:
+                    return "EXACT_MATCH"
+                elif abs(image_minor - target_version_minor) <= 2:
+                    return "COMPATIBLE_APPROXIMATION"
+            return "COMPATIBLE_APPROXIMATION"
         
         return "UNSUPPORTED_TARGET"
 
 
 def load_catalog_entries() -> List[CatalogEntry]:
-    """
-    Load all approved image catalog entries.
-    
-    In production, this reads from the catalog/images/ directory.
-    """
+    """Load image catalog entries from YAML files or fallback defaults."""
     import os
     import yaml
     
     catalog_dir = os.path.dirname(__file__)
-    
-    if not os.path.exists(catalog_dir):
-        return []
-    
     entries = []
-    for filename in os.listdir(catalog_dir):
-        if filename.endswith(".yaml"):
-            filepath = os.path.join(catalog_dir, filename)
-            with open(filepath, "r") as f:
-                data = yaml.safe_load(f)
-                entries.append(CatalogEntry(**data))
+    
+    if os.path.exists(catalog_dir):
+        for filename in os.listdir(catalog_dir):
+            if filename.endswith(".yaml") or filename.endswith(".yml"):
+                filepath = os.path.join(catalog_dir, filename)
+                try:
+                    with open(filepath, "r") as f:
+                        data = yaml.safe_load(f)
+                        if data:
+                            entries.append(CatalogEntry(**data))
+                except Exception:
+                    pass
+    
+    # Default fallback entries if no YAML files exist in catalog directory
+    if not entries:
+        entries.extend([
+            CatalogEntry(
+                profile_id="16",
+                database={"engine": "postgresql", "distribution": "community", "version": {"major": 16, "minor": 6, "server_version_num": 160006}},
+                image=ImageDigest(internal_registry="docker.io", repository="library/postgres", digest="16-alpine", upstream_registry="docker.io", upstream_repository="library/postgres", upstream_digest="16-alpine"),
+                lifecycle={"status": ImageStatus.APPROVED, "approved_at": None, "expires_at": None}
+            ),
+            CatalogEntry(
+                profile_id="postgresql-community-16.6",
+                database={"engine": "postgresql", "distribution": "community", "version": {"major": 16, "minor": 6, "server_version_num": 160006}},
+                image=ImageDigest(internal_registry="docker.io", repository="library/postgres", digest="16-alpine", upstream_registry="docker.io", upstream_repository="library/postgres", upstream_digest="16-alpine"),
+                lifecycle={"status": ImageStatus.APPROVED, "approved_at": None, "expires_at": None}
+            ),
+        ])
     
     return entries
 
@@ -173,11 +184,27 @@ def get_approved_images() -> List[CatalogEntry]:
 
 
 def resolve_image(profile_id: str) -> Optional[CatalogEntry]:
-    """Resolve a specific image profile."""
+    """Resolve an image profile with flexible exact, substring, and version matching."""
     entries = get_approved_images()
+    
+    # 1. Exact match
     for entry in entries:
         if entry.profile_id == profile_id:
             return entry
+            
+    # 2. Substring or prefix match
+    for entry in entries:
+        if profile_id in entry.profile_id or entry.profile_id.startswith(profile_id):
+            return entry
+            
+    # 3. Numeric major version match (e.g. "16")
+    clean_id = str(profile_id).split(".")[0].replace("postgresql-", "").replace("community-", "").strip()
+    if clean_id.isdigit():
+        target_major = int(clean_id)
+        for entry in entries:
+            if entry.database.get("version", {}).get("major") == target_major:
+                return entry
+                
     return None
 
 

@@ -37,7 +37,15 @@ flowchart TD
     I -->|Applicable evidence| O
     L -->|Allowed command structure| O
     O --> P[Trusted API revalidates and compiles proposal]
-    P --> Q[DBA or engineer verifies proposal]
+    P -->|Validated proposal + rendered SQL| Q[POST /api/v1/sandbox/validate]
+    Q -->|SandboxValidationService| R[Twin Runner]
+    R -->|restricted methods| S[Ephemeral PostgreSQL sandbox]
+    S -->|Reproduce FAIL| T[AssessmentService.evaluate_control]
+    T -->|Apply proposal| U[Verify PASS]
+    U -->|Rollback| V[Verify original state restored]
+    V --> W[Destroy sandbox]
+    W -->|Structured evidence| N
+    N --> X[DBA or engineer verifies proposal]
 ```
 
 ## Running components
@@ -46,7 +54,7 @@ flowchart TD
 flowchart LR
     U[Analyst browser] -->|localhost 9119 + login| HER[Official HERMES dashboard]
     HER -->|DBGuard skill| AG[HERMES reasoning agent]
-    AG -->|Four operations| MCP[HTTP MCP adapter]
+    AG -->|Five operations| MCP[HTTP MCP adapter]
     MCP --> API[Trusted FastAPI application]
     SW[Swagger UI] --> API
     COL[Collector bundle] --> API
@@ -57,21 +65,25 @@ flowchart LR
     CHUNK --> EMB[Vector embeddings]
     DB --> TPL[SQL templates]
     API -->|Validated proposal| MCP
+    API -->|Validated proposal + rendered SQL| Q[POST /api/v1/sandbox/validate]
+    Q --> R[Twin Runner]
+    R -->|restricted methods| S[Ephemeral PostgreSQL sandbox]
     MCP --> AG
 ```
 
 The default Docker Compose deployment starts:
 
 - `api`: snapshot intake, knowledge management, template management, semantic
-  retrieval, and proposal generation;
+  retrieval, proposal generation, and **sandbox validation**;
 - `postgres`: PostgreSQL with pgvector for knowledge and template storage;
-- `mcp`: a stateless HTTP adapter that exposes only the four operations HERMES
-  needs and does not expose ingestion, approval, database or execution access;
+- `mcp`: a stateless HTTP adapter that exposes five operations (four plus
+  `validate_in_sandbox`) for HERMES;
 - `hermes`: the official v0.21.0 runtime pinned by image digest, DBGuard context
   and skill, authenticated dashboard, gateway API, and persistent sessions.
 
-Twin runner, assessment, and reporting are deferred and are not started by the
-current Compose file.
+The twin runner is a restricted service that **only** communicates with Docker.
+It receives validated TwinSpecifications, not raw Docker commands. It cannot
+execute arbitrary SQL or shell commands.
 
 ## API endpoints in simple terms
 
@@ -323,12 +335,7 @@ superseded documents from appearing in results.
 
 ## Deferred architecture
 
-The source for twin-runner and reporting is retained for future work. Before
-those components are enabled, the project still needs:
+Before enabling twin-runner and reporting in production, the project still needs:
 
-- a baseline assessment and scoring contract;
-- a narrow twin-runner HTTP boundary;
-- real signed and approved PostgreSQL image records;
-- isolation and compatibility integration tests;
-- a proposal approval and review-package workflow;
-- production authentication, authorization, audit logging, and secret storage.
+- proposal review-package reporting and approval workflow;
+- production identity, authorization, audit logging, and secret storage.

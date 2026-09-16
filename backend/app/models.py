@@ -334,6 +334,9 @@ class TwinExecutionStatus(str, Enum):
     VERIFIED = "VERIFIED"
     """Flip verified: FAIL -> PASS after remediation."""
     
+    SANDBOX_REPRODUCTION_FAILED = "SANDBOX_REPRODUCTION_FAILED"
+    """Sandbox failed to reproduce original FAIL state."""
+    
     ROLLBACK_EXECUTING = "ROLLBACK_EXECUTING"
     """Rollback SQL being executed."""
     
@@ -342,6 +345,9 @@ class TwinExecutionStatus(str, Enum):
     
     FAILED = "FAILED"
     """Execution failed with error details."""
+    
+    COMPATIBILITY_FAILED = "COMPATIBILITY_FAILED"
+    """Compatibility check failed after remediation."""
 
 
 class TwinExecutionResult(BaseModel):
@@ -351,6 +357,7 @@ class TwinExecutionResult(BaseModel):
     status: TwinExecutionStatus
     remediation_executed: bool = False
     rollback_executed: bool = False
+    rollback_verified: bool = False
     flip_verified: bool = False
     error: Optional[str] = None
     execution_log: list[str] = Field(default_factory=list)

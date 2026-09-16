@@ -1,0 +1,6 @@
+-- Purpose: Set a PostgreSQL server configuration parameter to a hardened value.
+-- Hardening Action: Set configuration parameter, for example enable log_connections or log_disconnections logging.
+-- Applied with ALTER SYSTEM (written to postgresql.auto.conf) and then reloaded.
+-- Parameters with postmaster context still require a server restart to take effect.
+ALTER SYSTEM SET {{ param_name | ident }} = '{{ param_value }}';
+SELECT pg_reload_conf();

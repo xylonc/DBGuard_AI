@@ -170,6 +170,8 @@ class TestLiveE2ESandbox:
         time.sleep(1)  # Give cleanup time to complete
         cleanup_lingering_containers()
 
+    @pytest.mark.legacy_sandbox
+    @pytest.mark.xfail(strict=True, raises=ImportError, reason="legacy twin runner: test imports app.collector_models.Envelope, which no longer exists; superseded by Phase 2")
     def test_live_pipeline_assess_fail_propose_render_validate_verified(
         self,
         snapshot_dir: str,
@@ -376,6 +378,8 @@ class TestLiveE2EEdgeCases:
         time.sleep(1)
         cleanup_lingering_containers()
 
+    @pytest.mark.legacy_sandbox
+    @pytest.mark.xfail(strict=True, raises=ImportError, reason="legacy twin runner: test imports app.collector_models.Envelope, which no longer exists; superseded by Phase 2")
     def test_sandbox_rejects_non_automatable_control(
         self,
         snapshot_dir: str,

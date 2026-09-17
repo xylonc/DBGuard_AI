@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dbguardai.local/schemas/snapshot-v0.3.0.json",
+  "title": "DBGuardAI snapshot schema (version 0.3.0)",
+  "description": "Contract for snapshot bundles. Version 0.3.0 extends v0.2.0 by adding a checks object keyed by spec_id to record assessment results for each spec.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope", "baseline", "checks"],
+  "properties": {
+    "envelope": {
+      "description": "The v0.2.0 envelope with collector metadata. This is unchanged from 0.2.0.",
+      "$ref": "#/$defs/envelope"
+    },
+    "baseline": {
+      "description": "The v0.2.0 bundle body (all sections: roles, settings, hba_rules, etc.). This represents the baseline snapshot without assessment.",
+      "$ref": "#/$defs/baseline"
+    },
+    "checks": {
+      "description": "Assessment results keyed by spec_id. Each spec_id must match a spec in the benchmark spec set.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/check_entry"
+      }
+    }
+  },
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "database", "target_id"],
+      "properties": {
+        "schema_version": {
+          "description": "Must be '0.2.0' for the baseline envelope.",
+          "const": "0.2.0"
+        },
+        "database": { "type": "string", "minLength": 1 },
+        "target_id": { "type": "string", "minLength": 1 },
+        "collected_at": { "type": "string", "format": "date-time" },
+        "collected_by": { "type": "string", "minLength": 1 },
+        "is_superuser": { "type": "boolean" },
+        "has_pg_monitor": { "type": "boolean" },
+        "deployment_type": { "enum": ["self-managed", "managed"] },
+        "collector_version": { "type": "string", "minLength": 1 },
+        "can_read_pg_authid": { "type": "boolean" },
+        "has_read_all_settings": { "type": "boolean" }
+      }
+    },
+    "baseline": {
+      "description": "The v0.2.0 bundle body - all sections from the collector. Keys are section names, values are arrays or objects depending on the section.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "check_entry": {
+      "description": "A single assessment check result for one spec.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec_hash", "query", "status"],
+      "properties": {
+        "spec_hash": {
+          "description": "The SHA-256 hash of the spec that generated this check.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "query": {
+          "description": "The query or command that was executed.",
+          "type": "string", "minLength": 1
+        },
+        "status": {
+          "description": "Result status: ok (success), error, or not_collected.",
+          "enum": ["ok", "error", "not_collected"]
+        },
+        "result": {
+          "description": "Raw result when status is 'ok'. Empty arrays/objects are valid results.",
+          "type": ["object", "array", "string", "number", "boolean", "null"]
+        },
+        "error": {
+          "description": "Error message when status is 'error'. Required when status is error.",
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": { "status": { "const": "ok" } },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["result"]
+      },
+      "else": {
+        "not": { "required": ["result"] }
+      },
+      "if": {
+        "properties": { "status": { "const": "error" } },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["error"]
+      },
+      "else": {
+        "not": { "required": ["error"] }
+      }
+    }
+  }
+}

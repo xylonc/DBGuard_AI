@@ -8,10 +8,13 @@ Tests:
   E. Backticks, newlines, and surrounding spaces preserved exactly
   F. Two runs produce identical output
   G. Workbook order preserved (non-sorted recommendations)
-  H. Rows with Title but no Recommendation # raise error
+  H. Rows with Audit Procedure but no Recommendation # raise error
+  I. Section row with Section #, Title, Description only -> skipped
+  J. Assessment Status "automated" (lowercase) -> rejected
+  K. Missing Title on a recommendation row -> rejected
 
 Plus one test on the real workbook (skipped if absent) checking:
-  I. IDs are unique and every record has a source_sha256
+  L. IDs are unique, every record has a source_sha256, and source_row is strictly increasing
 """
 
 import hashlib
@@ -78,11 +81,14 @@ def test_section_rows_skipped():
     Uses a synthetic workbook with exactly ONE section row and asserts:
     - No record has a null recommendation
     - record_count is correct (only non-section rows)
+    
+    Section row has only Section #, Title, Description (no other content).
     """
     headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
+    # Section row: only Section #, Title, Description are non-empty (all others must be empty)
     rows = [
-        ["", "1", "General", "Section", "Not Assessed", None, None, None, None, None, None, None, None],  # section row - should be skipped (no Description, Audit, Remediation)
-        ["1.1.1", "1.1", "Level 1", "Test", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],  # real row
+        ["", "1", None, "General Section", None, None, None, None, None, None, None, None, None],  # section row - skipped (all outside {Section #, Title, Description} are empty)
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],  # real row
     ]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
@@ -105,8 +111,8 @@ def test_duplicate_recommendation_raises():
     """Duplicate recommendation should raise WorkbookFormatError with specific message."""
     headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
     rows = [
-        ["1.1.1", "1.1", "Level 1", "Test", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
-        ["1.1.1", "1.1", "Level 1", "Duplicate", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],  # duplicate
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Duplicate", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],  # duplicate
     ]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
@@ -121,7 +127,7 @@ def test_missing_header_raises():
     """Missing required header should raise WorkbookFormatError with specific message."""
     # Missing "Recommendation #" header (but has others)
     headers = ["Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
-    rows = [["1.1", "Level 1", "Test", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"]]
+    rows = [["1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"]]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
     with TemporaryDirectory() as tmpdir:
@@ -136,7 +142,7 @@ def test_columns_found_by_name_when_shuffled():
     # Shuffled headers (all 13 required columns)
     headers = ["Title", "Default Value", "Recommendation #", "Assessment Status", "Profile", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Section #"]
     rows = [
-        ["Test Title", "off", "1.1.1", "Mandatory", "Level 1", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "1.1"],
+        ["Test Title", "off", "1.1.1", "Automated", "Level 1 - PostgreSQL", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "1.1"],
     ]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
@@ -149,15 +155,15 @@ def test_columns_found_by_name_when_shuffled():
         assert records[0]["title"] == "Test Title"
         assert records[0]["pg_default_value"] == "off"
         assert records[0]["recommendation"] == "1.1.1"
-        assert records[0]["assessment_status"] == "Mandatory"
-        assert records[0]["profile"] == "Level 1"
+        assert records[0]["assessment_status"] == "Automated"
+        assert records[0]["profile"] == "Level 1 - PostgreSQL"
 
 
 def test_special_characters_preserved():
     """Backticks, newlines, and surrounding spaces should be preserved exactly."""
     headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
     rows = [
-        ["1.1.1", "1.1", "Level 1", "  Title with spaces  ", "Mandatory", "Description with `backticks` and\nnewlines", "Rat", "Imp", "Rem", "Audit line 1\nAudit line 2", "Add", "Ref", "Def"],
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL on Linux", "  Title with spaces  ", "Manual", "Description with `backticks` and\nnewlines", "Rat", "Imp", "Rem", "Audit line 1\nAudit line 2", "Add", "Ref", "Def"],
     ]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
@@ -171,16 +177,16 @@ def test_special_characters_preserved():
         assert records[0]["audit_procedure"] == "Audit line 1\nAudit line 2"
         assert records[0]["recommendation"] == "1.1.1"
         assert records[0]["section"] == "1.1"
-        assert records[0]["profile"] == "Level 1"
-        assert records[0]["assessment_status"] == "Mandatory"
+        assert records[0]["profile"] == "Level 1 - PostgreSQL on Linux"
+        assert records[0]["assessment_status"] == "Manual"
 
 
 def test_two_runs_identical():
     """Running the parser twice should produce byte-identical output."""
     headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
     rows = [
-        ["1.1.1", "1.1", "Level 1", "Test", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
-        ["1.1.2", "1.1", "Level 1", "Test2", "Optional", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+        ["1.1.2", "1.1", "Level 1 - PostgreSQL on Linux", "Test2", "Manual", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
     ]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
@@ -196,14 +202,13 @@ def test_two_runs_identical():
 
 
 def test_workbook_order_preserved():
-    """Workbook order is preserved in output, reversed by the order guard break."""
+    """Workbook order is preserved in output - output order must equal workbook order, not numeric order."""
     headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
     # Non-sorted order: 2.1, 1.10, 1.2
-    # After reversal: 1.2, 1.10, 2.1
     rows = [
-        ["2.1", "2", "Level 1", "Second", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
-        ["1.10", "1", "Level 1", "Eleventh", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
-        ["1.2", "1", "Level 1", "Second", "Mandatory", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+        ["2.1", "2", "Level 1 - PostgreSQL", "Second", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+        ["1.10", "1", "Level 1 - PostgreSQL on Linux", "Eleventh", "Manual", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+        ["1.2", "1", "Level 1 - PostgreSQL", "Second", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
     ]
     
     xlsx_path = make_test_xlsx(headers=headers, rows=rows)
@@ -222,12 +227,79 @@ def test_workbook_order_preserved():
         assert records[2]["source_row"] == 4
 
 
+def test_audit_procedure_no_recommendation_raises():
+    """Row with Audit Procedure but no Recommendation # should raise WorkbookFormatError."""
+    headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
+    # Section row with Audit Procedure content - should raise error
+    rows = [
+        ["", "1", "Level 1 - PostgreSQL", "Section Title", "Automated", "Section Desc", "Rat", "Imp", "Rem", "Audit content", "Add", "Ref", "Def"],  # section row with Audit Procedure -> error
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+    ]
+    
+    xlsx_path = make_test_xlsx(headers=headers, rows=rows)
+    with TemporaryDirectory() as tmpdir:
+        output = Path(tmpdir) / "output.json"
+        with pytest.raises(WorkbookFormatError) as exc_info:
+            parse_workbook(str(xlsx_path), str(output))
+        assert "Row 2: recommendation content but no Recommendation #" in str(exc_info.value)
+
+
+def test_section_row_valid():
+    """Section row with only Section #, Title, Description should be skipped."""
+    headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
+    # Valid section row: only Section #, Title, Description are non-empty
+    rows = [
+        ["", "1", None, "Section Title", None, "Section Desc", None, None, None, None, None, None, None],
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
+    ]
+    
+    xlsx_path = make_test_xlsx(headers=headers, rows=rows)
+    with TemporaryDirectory() as tmpdir:
+        output = Path(tmpdir) / "output.json"
+        parse_workbook(str(xlsx_path), str(output))
+        records = get_records_from_json(output)
+        
+        # Only 1 real record (section row skipped)
+        assert len(records) == 1
+        assert records[0]["recommendation"] == "1.1.1"
+
+
+def test_assessment_status_lowercase_raises():
+    """Assessment Status 'automated' (lowercase) should raise WorkbookFormatError."""
+    headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
+    rows = [
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],  # lowercase -> error
+    ]
+    
+    xlsx_path = make_test_xlsx(headers=headers, rows=rows)
+    with TemporaryDirectory() as tmpdir:
+        output = Path(tmpdir) / "output.json"
+        with pytest.raises(WorkbookFormatError) as exc_info:
+            parse_workbook(str(xlsx_path), str(output))
+        assert "Row 2: Assessment Status must be 'Automated' or 'Manual', got 'automated'" in str(exc_info.value)
+
+
+def test_missing_title_raises():
+    """Missing Title on a recommendation row should raise WorkbookFormatError."""
+    headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
+    rows = [
+        ["1.1.1", "1.1", "Level 1 - PostgreSQL", None, "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],  # missing Title -> error
+    ]
+    
+    xlsx_path = make_test_xlsx(headers=headers, rows=rows)
+    with TemporaryDirectory() as tmpdir:
+        output = Path(tmpdir) / "output.json"
+        with pytest.raises(WorkbookFormatError) as exc_info:
+            parse_workbook(str(xlsx_path), str(output))
+        assert "Row 2: missing Title on recommendation row" in str(exc_info.value)
+
+
 @pytest.mark.skipif(
     not Path(__file__).resolve().parent.parent / "local docs" / "CIS_PostgreSQL_17_Benchmark_v1.1.0.xlsx",
     reason="Real workbook not present",
 )
 def test_real_workbook():
-    """Test on the real workbook: IDs are unique, every record has a source_sha256."""
+    """Test on the real workbook: IDs are unique, every record has a source_sha256, source_row is strictly increasing."""
     workbook_path = Path(__file__).resolve().parent.parent / "local docs" / "CIS_PostgreSQL_17_Benchmark_v1.1.0.xlsx"
     
     if not workbook_path.exists():
@@ -249,6 +321,12 @@ def test_real_workbook():
             sha = record["source_sha256"]
             assert len(sha) == 64, f"Invalid SHA-256 length: {len(sha)}"
             int(sha, 16)  # Verify it's a valid hex string
+        
+        # Check source_row is strictly increasing
+        source_rows = [r["source_row"] for r in records]
+        assert source_rows == sorted(source_rows), "source_row values are not in ascending order"
+        for i in range(1, len(source_rows)):
+            assert source_rows[i] > source_rows[i-1], f"source_row not strictly increasing: {source_rows[i-1]} -> {source_rows[i]}"
 
 
 def test_script_runs_twice_with_identical_output():

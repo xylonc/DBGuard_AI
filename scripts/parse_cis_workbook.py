@@ -53,21 +53,53 @@ def parse_workbook(input_path: str, output_path: str) -> None:
     # Build column index map
     col_idx = {col: headers.index(col) for col in required_columns}
     
+    # Define section-row columns (only these can be non-empty for a valid section row)
+    section_row_columns = {"Recommendation #", "Section #", "Title", "Description"}
+    
+    # Define recommendation-row validation columns
+    recommendation_row_required = {"Recommendation #", "Title", "Profile", "Assessment Status"}
+    
     # Parse records
     records = []
     seen_recommendations = set()
     
     for row in range(2, sheet.max_row + 1):
         recommendation = sheet.cell(row, col_idx["Recommendation #"] + 1).value
+        title = sheet.cell(row, col_idx["Title"] + 1).value
+        profile = sheet.cell(row, col_idx["Profile"] + 1).value
+        assessment_status = sheet.cell(row, col_idx["Assessment Status"] + 1).value
         
-        # Skip section rows (empty Recommendation #)
+        # Check for section row (empty Recommendation #)
         if recommendation is None or str(recommendation).strip() == "":
+            # Check if this is a valid section row (all non-section-row columns must be empty)
+            non_section_empty = True
+            for col_name in required_columns:
+                if col_name not in section_row_columns:
+                    cell_val = sheet.cell(row, col_idx[col_name] + 1).value
+                    if cell_val is not None and str(cell_val).strip() != "":
+                        non_section_empty = False
+                        break
+            
+            if not non_section_empty:
+                raise WorkbookFormatError(f"Row {row}: recommendation content but no Recommendation #")
+            # Skip section row
             continue
         
+        # Recommendation row validation
         # Check for duplicate recommendation
         if recommendation in seen_recommendations:
             raise WorkbookFormatError(f"Duplicate recommendation: {recommendation}")
         seen_recommendations.add(recommendation)
+        
+        # Validate recommendation row has required fields
+        if title is None or str(title).strip() == "":
+            raise WorkbookFormatError(f"Row {row}: missing Title on recommendation row")
+        if profile is None or str(profile).strip() == "":
+            raise WorkbookFormatError(f"Row {row}: missing Profile on recommendation row")
+        if assessment_status is None or str(assessment_status).strip() == "":
+            raise WorkbookFormatError(f"Row {row}: missing Assessment Status on recommendation row")
+        if assessment_status not in ("Automated", "Manual"):
+            raise WorkbookFormatError(f"Row {row}: Assessment Status must be 'Automated' or 'Manual', got {assessment_status!r}")
         
         # Extract cell values (empty cell -> null)
         def get_cell(col_name):

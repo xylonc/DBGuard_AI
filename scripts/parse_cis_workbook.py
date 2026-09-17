@@ -55,10 +55,7 @@ def parse_workbook(input_path: str, output_path: str) -> None:
     
     # Define section-row columns (only these can be non-empty for a valid section row)
     section_row_columns = {"Recommendation #", "Section #", "Title", "Description"}
-    
-    # Define recommendation-row validation columns
-    recommendation_row_required = {"Recommendation #", "Title", "Profile", "Assessment Status"}
-    
+
     # Parse records
     records = []
     seen_recommendations = set()
@@ -73,9 +70,9 @@ def parse_workbook(input_path: str, output_path: str) -> None:
         if recommendation is None or str(recommendation).strip() == "":
             # Check if this is a valid section row (all non-section-row columns must be empty)
             non_section_empty = True
-            for col_name in required_columns:
-                if col_name not in section_row_columns:
-                    cell_val = sheet.cell(row, col_idx[col_name] + 1).value
+            for col_num, col_name in enumerate(headers):
+                if col_name is not None and col_name not in section_row_columns:
+                    cell_val = sheet.cell(row, col_num + 1).value
                     if cell_val is not None and str(cell_val).strip() != "":
                         non_section_empty = False
                         break

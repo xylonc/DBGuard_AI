@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbguardai.local/schemas/spec-v1.json",
   "title": "DBGuardAI control spec (schema_version 1)",
-  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id == 'cis-pg17-v1.1.0:' + ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.query == 'SHOW ' + check.setting_name; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every expected value is a whole token in the quote; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
+  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id == 'cis-pg' + ref.pg_major + '-v' + ref.benchmark_version + ':' + ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.query == 'SHOW ' + check.setting_name; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every expected value is a whole token in the quote; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec_id", "schema_version", "authored_by", "ref", "tier", "reason"],

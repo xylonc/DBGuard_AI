@@ -1,0 +1,22 @@
+spec_id: "cis-pg17-v1.1.0:6.9"
+schema_version: 1
+authored_by: human
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "6.9"
+  title: "Ensure the TLSv1.0 and TLSv1.1 Protocols are Disabled"
+  source_sha256: "b5efb90dbe8422ca9da66be94ee0dcc9ea10c9125cbc625735864b34a95e3ab3"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: ssl_min_protocol_version
+  query: "SHOW ssl_min_protocol_version"
+  operator: in
+  expected: ["TLSv1.2", "TLSv1.3"]
+  pass_condition_quote: "Check the output to verify that the `ssl_min_protocol_version` directive is set to either `TLSv1.2` or `TLSv1.3` (preferred)."
+proof:
+  break: { setting_name: ssl_min_protocol_version, value: "TLSv1.1" }
+  fix:   { setting_name: ssl_min_protocol_version, value: "TLSv1.2" }

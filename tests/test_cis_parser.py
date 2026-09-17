@@ -23,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import tempfile
 
 import pytest
 from openpyxl import Workbook
@@ -56,8 +57,7 @@ def make_test_xlsx(sheet_name: str = "Combined Profiles", headers: list[str] | N
                 ws.cell(row=row_idx, column=col_idx, value=value)
     
     # Save to temp file
-    tmp = Path(TemporaryDirectory().name)
-    tmp.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp())
     output = tmp / "test.xlsx"
     wb.save(output)
     return output
@@ -232,7 +232,7 @@ def test_audit_procedure_no_recommendation_raises():
     headers = ["Recommendation #", "Section #", "Profile", "Title", "Assessment Status", "Description", "Rationale Statement", "Impact Statement", "Remediation Procedure", "Audit Procedure", "Additional Information", "References", "Default Value"]
     # Section row with Audit Procedure content - should raise error
     rows = [
-        ["", "1", "Level 1 - PostgreSQL", "Section Title", "Automated", "Section Desc", "Rat", "Imp", "Rem", "Audit content", "Add", "Ref", "Def"],  # section row with Audit Procedure -> error
+        ["", "1", None, "Section Title", None, "Section Desc", None, None, None, "Audit content", None, None, None],  # section row with Audit Procedure -> error
         ["1.1.1", "1.1", "Level 1 - PostgreSQL", "Test", "Automated", "Desc", "Rat", "Imp", "Rem", "Aud", "Add", "Ref", "Def"],
     ]
     

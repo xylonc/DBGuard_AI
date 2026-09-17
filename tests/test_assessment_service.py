@@ -81,8 +81,8 @@ class TestCIS312LogConnections:
         assert cis_312_finding.control_metadata is None
         assert cis_312_finding.is_gapped is False
 
-    def test_pass_when_log_connections_not_present(self, assessment_service, base_snapshot):
-        """Test PASS when log_connections is not present in settings (defaults)."""
+    def test_gapped_when_log_connections_not_present(self, assessment_service, base_snapshot):
+        """Test GAPPED when log_connections is not present in settings (should always be collected)."""
         base_snapshot["settings"] = [
             {"name": "password_encryption", "setting": "scram-sha-256"},
         ]
@@ -93,9 +93,11 @@ class TestCIS312LogConnections:
             f for f in report.findings if f.control_id == "CIS-3.1.2"
         )
 
-        assert cis_312_finding.status == FindingStatus.PASS
-        assert cis_312_finding.rationale == "log_connections is not present in settings (defaults to off but not required to be on)"
-        assert cis_312_finding.evidence_found == {"log_connections": None}
+        assert cis_312_finding.status == FindingStatus.GAPPED
+        assert "log_connections is not present in settings list" in cis_312_finding.rationale
+        assert "settings_found" in cis_312_finding.evidence_found
+        assert cis_312_finding.evidence_found["log_connections"] is None
+        assert cis_312_finding.is_gapped is True
 
     def test_fail_when_log_connections_is_off(self, assessment_service, base_snapshot):
         """Test FAIL when log_connections is set to 'off'."""
@@ -140,7 +142,7 @@ class TestCIS312LogConnections:
         )
 
         assert cis_312_finding.status == FindingStatus.GAPPED
-        assert cis_312_finding.rationale == "Collector could not retrieve settings (settings section is null)"
+        assert "Collector could not retrieve settings (gap: insufficient_privilege)" in cis_312_finding.rationale
         assert cis_312_finding.evidence_found is None
         assert cis_312_finding.control_metadata is None
         assert cis_312_finding.is_gapped is True
@@ -254,8 +256,9 @@ class TestCIS21PasswordEncryption:
         )
 
         assert cis_21_finding.status == FindingStatus.PASS
-        assert "All users use SCRAM-SHA-256" in cis_21_finding.rationale
-        assert cis_21_finding.evidence_found == {"md5_password_count": 0}
+        assert "All login roles use SCRAM-SHA-256" in cis_21_finding.rationale
+        assert cis_21_finding.evidence_found["md5_password_count"] == 0
+        assert cis_21_finding.evidence_found["scram_password_count"] == 2
         assert cis_21_finding.control_metadata is None
 
     def test_manual_review_when_md5_passwords_exist(self, assessment_service, base_snapshot):
@@ -273,7 +276,8 @@ class TestCIS21PasswordEncryption:
 
         assert cis_21_finding.status == FindingStatus.MANUAL_REVIEW
         assert "1 user(s) still using MD5 password encryption" in cis_21_finding.rationale
-        assert cis_21_finding.evidence_found == {"md5_password_count": 1}
+        assert cis_21_finding.evidence_found["md5_password_count"] == 1
+        assert cis_21_finding.evidence_found["scram_password_count"] == 1
 
         # Verify ControlMetadata with template_id for MANUAL_PROCEDURE
         assert cis_21_finding.control_metadata is not None

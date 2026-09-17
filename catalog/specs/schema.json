@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dbguardai.local/schemas/spec-v1.json",
+  "title": "DBGuardAI control spec (schema_version 1)",
+  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id == 'cis-pg17-v1.1.0:' + ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.query == 'SHOW ' + check.setting_name; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every expected value is a whole token in the quote; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec_id", "schema_version", "authored_by", "ref", "tier", "reason"],
+  "properties": {
+    "spec_id": {
+      "type": "string",
+      "pattern": "^cis-pg17-v1\\.1\\.0:[0-9]+(\\.[0-9]+)*$"
+    },
+    "schema_version": { "const": 1 },
+    "authored_by": { "enum": ["human", "agent"] },
+    "ref": { "$ref": "#/$defs/ref" },
+    "tier": { "enum": ["automated", "parameterised", "manual_checklist", "needs_capability"] },
+    "reason": { "type": ["string", "null"] },
+    "check": { "$ref": "#/$defs/check" },
+    "proof": { "$ref": "#/$defs/proof" }
+  },
+  "if": {
+    "properties": { "tier": { "const": "automated" } },
+    "required": ["tier"]
+  },
+  "then": {
+    "required": ["check", "proof"],
+    "properties": { "reason": { "type": "null" } }
+  },
+  "else": {
+    "properties": { "reason": { "type": "string", "minLength": 1, "pattern": "\\S" } },
+    "not": { "anyOf": [ { "required": ["check"] }, { "required": ["proof"] } ] }
+  },
+  "$defs": {
+    "setting_name": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_.]*$"
+    },
+    "ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["benchmark", "benchmark_version", "pg_major", "recommendation", "title", "source_sha256"],
+      "properties": {
+        "benchmark": { "type": "string", "minLength": 1 },
+        "benchmark_version": { "type": "string", "minLength": 1 },
+        "pg_major": { "type": "integer", "minimum": 1 },
+        "recommendation": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "setting_name", "query", "operator", "expected", "pass_condition_quote"],
+      "properties": {
+        "kind": { "const": "setting" },
+        "setting_name": { "$ref": "#/$defs/setting_name" },
+        "query": { "type": "string", "pattern": "^SHOW [a-z_][a-z0-9_.]*$" },
+        "operator": { "enum": ["equals", "not_equals", "in"] },
+        "expected": true,
+        "pass_condition_quote": { "type": "string", "minLength": 1 }
+      },
+      "if": {
+        "properties": { "operator": { "const": "in" } },
+        "required": ["operator"]
+      },
+      "then": {
+        "properties": {
+          "expected": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "expected": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "proof_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setting_name", "value"],
+      "properties": {
+        "setting_name": { "$ref": "#/$defs/setting_name" },
+        "value": { "type": "string" }
+      }
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["break", "fix"],
+      "properties": {
+        "break": { "$ref": "#/$defs/proof_step" },
+        "fix": { "$ref": "#/$defs/proof_step" }
+      }
+    }
+  }
+}

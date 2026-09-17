@@ -78,26 +78,35 @@
           "type": "string"
         }
       },
-      "if": {
-        "properties": { "status": { "const": "ok" } },
-        "required": ["status"]
-      },
-      "then": {
-        "required": ["result"]
-      },
-      "else": {
-        "not": { "required": ["result"] }
-      },
-      "if": {
-        "properties": { "status": { "const": "error" } },
-        "required": ["status"]
-      },
-      "then": {
-        "required": ["error"]
-      },
-      "else": {
-        "not": { "required": ["error"] }
-      }
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "ok" } },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["result"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "error" } },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["error"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "not_collected" } },
+            "required": ["status"]
+          },
+          "then": {
+            "not": { "required": ["result"] }
+          }
+        }
+      ]
     }
   }
 }

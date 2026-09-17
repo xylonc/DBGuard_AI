@@ -179,7 +179,13 @@ class TestTraceability:
         """spec_id must be version-qualified; a pg16 prefix is rejected."""
         spec = copy.deepcopy(VALID_3120_SPEC)
         spec["spec_id"] = "cis-pg16-v1.1.0:3.1.20"
-        assert_only_error(validate_spec(spec, load_records()), "spec_id")
+        assert_only_error(validate_spec(spec, load_records()), "spec_id prefix mismatch")
+
+    def test_spec_id_wrong_recommendation_rejected(self):
+        """spec_id recommendation number must match ref.recommendation."""
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["spec_id"] = "cis-pg17-v1.1.0:3.1.21"  # wrong recommendation
+        assert_only_error(validate_spec(spec, load_records()), "spec_id mismatch")
 
     def test_wrong_title(self):
         spec = copy.deepcopy(VALID_3120_SPEC)
@@ -295,6 +301,11 @@ class TestNonAutomatedTier:
         del spec["check"]
         del spec["proof"]
         assert_only_error(validate_spec(spec, load_records()), "reason")
+
+    def test_records_index_benchmark_id(self):
+        """Loading the real records.json gives benchmark_id 'cis-pg17-v1.1.0'."""
+        records = load_records()
+        assert records.benchmark_id == "cis-pg17-v1.1.0"
 
     def test_automated_check_kind_manual_checklist_rejected(self):
         spec = copy.deepcopy(VALID_3120_SPEC)

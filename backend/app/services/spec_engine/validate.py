@@ -85,10 +85,16 @@ def validate_spec(spec: Any, records: RecordsIndex) -> list[str]:
             errors.append("ref.pg_major must be an integer")
 
         # spec_id is derived from ref, so it is version-qualified and never hardcoded.
+        # The prefix must match the RecordsIndex.benchmark_id (from the records.json directory).
         if "spec_id" in spec and all(k in ref for k in ("pg_major", "benchmark_version", "recommendation")):
-            expected_id = f"cis-pg{ref['pg_major']}-v{ref['benchmark_version']}:{ref['recommendation']}"
+            actual_prefix = spec["spec_id"].split(":")[0]
+            expected_prefix = records.benchmark_id
+            expected_id = f"{expected_prefix}:{ref['recommendation']}"
             if spec["spec_id"] != expected_id:
-                errors.append(f"spec_id mismatch: expected {expected_id!r}, got {spec['spec_id']!r}")
+                if actual_prefix != expected_prefix:
+                    errors.append(f"spec_id prefix mismatch: expected {expected_prefix!r}, got {actual_prefix!r}")
+                else:
+                    errors.append(f"spec_id mismatch: expected {expected_id!r}, got {spec['spec_id']!r}")
 
         if _is_str(ref.get("benchmark")) and ref["benchmark"] != records.benchmark:
             errors.append(f"ref.benchmark mismatch: expected {records.benchmark!r}, got {ref['benchmark']!r}")

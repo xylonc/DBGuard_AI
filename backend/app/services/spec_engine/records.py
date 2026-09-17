@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +15,13 @@ class RecordsIntegrityError(Exception):
 class RecordsIndex:
     """Index of benchmark records with lookup by recommendation."""
 
-    def __init__(self, records: list[dict[str, Any]], benchmark: str, benchmark_version: str):
+    BENCHMARK_ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9.]+)+$")
+
+    def __init__(self, records: list[dict[str, Any]], benchmark: str, benchmark_version: str, benchmark_id: str):
         self.records = records
         self.benchmark = benchmark
         self.benchmark_version = benchmark_version
+        self.benchmark_id = benchmark_id
         self._by_recommendation: dict[str, dict[str, Any]] = {}
         for r in records:
             rec = r["recommendation"]
@@ -69,8 +73,17 @@ class RecordsIndex:
                     f"expected {expected_sha}, got {r.get('source_sha256')}"
                 )
 
+        # Derive benchmark_id from the parent directory name
+        parent_dir = path.parent.name
+        if not cls.BENCHMARK_ID_RE.fullmatch(parent_dir):
+            raise RecordsIntegrityError(
+                f"records.json parent directory name '{parent_dir}' does not match "
+                f"benchmark_id pattern {cls.BENCHMARK_ID_RE.pattern}"
+            )
+
         return cls(
             records=data["records"],
             benchmark=data["benchmark"],
             benchmark_version=data["benchmark_version"],
+            benchmark_id=parent_dir,
         )

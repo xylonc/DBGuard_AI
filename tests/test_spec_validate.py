@@ -296,6 +296,16 @@ class TestNonAutomatedTier:
         del spec["proof"]
         assert_only_error(validate_spec(spec, load_records()), "reason")
 
+    def test_automated_check_kind_manual_checklist_rejected(self):
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["check"]["kind"] = "manual_checklist"
+        assert_only_error(validate_spec(spec, load_records()), "check.kind")
+
+    def test_automated_check_kind_needs_capability_rejected(self):
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["check"]["kind"] = "needs_capability"
+        assert_only_error(validate_spec(spec, load_records()), "check.kind")
+
 
 # ---------------------------------------------------------------------------
 # Operators

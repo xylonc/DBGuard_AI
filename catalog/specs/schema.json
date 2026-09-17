@@ -54,7 +54,7 @@
       "additionalProperties": false,
       "required": ["kind", "setting_name", "query", "operator", "expected", "pass_condition_quote"],
       "properties": {
-        "kind": { "enum": ["setting", "needs_capability", "manual_checklist"] },
+        "kind": { "enum": ["setting"] },
         "setting_name": { "$ref": "#/$defs/setting_name" },
         "query": { "type": "string", "pattern": "^SHOW [a-z_][a-z0-9_.]*$" },
         "operator": { "enum": ["equals", "not_equals", "in"] },

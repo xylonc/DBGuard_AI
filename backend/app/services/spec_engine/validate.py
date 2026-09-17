@@ -11,6 +11,7 @@ from .records import RecordsIndex
 
 TIERS = ("automated", "parameterised", "manual_checklist", "needs_capability")
 OPERATORS = {"equals": equals, "not_equals": not_equals, "in": in_}
+CHECK_KINDS = ("setting",)
 
 TOP_REQUIRED = ("spec_id", "schema_version", "authored_by", "ref", "tier", "reason")
 AUTOMATED_ONLY = ("check", "proof")  # required when tier == automated, forbidden otherwise
@@ -139,8 +140,8 @@ def validate_spec(spec: Any, records: RecordsIndex) -> list[str]:
     if isinstance(check, dict):
         _check_keys(check, CHECK_KEYS, CHECK_KEYS, "check", errors)
 
-        if "kind" in check and check["kind"] != "setting":
-            errors.append(f"check.kind must be 'setting', got {check['kind']!r}")
+        if "kind" in check and check["kind"] not in CHECK_KINDS:
+            errors.append(f"check.kind must be one of {CHECK_KINDS}, got {check['kind']!r}")
 
         setting_name = check.get("setting_name")
         name_ok = _is_str(setting_name) and SETTING_NAME_RE.fullmatch(setting_name) is not None

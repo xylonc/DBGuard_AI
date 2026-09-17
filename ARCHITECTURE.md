@@ -334,7 +334,14 @@ superseded documents from appearing in results.
 
 ## Deferred architecture
 
+> **Status (Sept 2026)**: These items are part of future phases. Phase 0 (contracts)
+> is the current priority. See [pcss.md](../local%20docs/pcss.md) for the phased plan.
+
 Before enabling twin-runner and reporting in production, the project still needs:
 
-- proposal review-package reporting and approval workflow;
-- production identity, authorization, audit logging, and secret storage.
+| Phase | Item |
+|-------|------|
+| **Phase 2** | Twin-runner HTTP boundary and verified PostgreSQL image catalog |
+| **Phase 3** | Proposal review-package reporting and approval workflow |
+| **Phase 3** | Production identity, authorization, audit logging, and secret storage |
+| **Phase 3** | Production network isolation and deployment hardening |

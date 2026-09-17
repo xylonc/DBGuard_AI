@@ -1,5 +1,9 @@
 # Twin Runner Service
 
+> **Status (Sept 2026)**: This service is deferred to **Phase 2**. It is retained
+> here for documentation purposes only; no runnable implementation is included in
+> the current Phase 0 POC.
+
 The twin runner is a **restricted Docker container lifecycle manager** for PostgreSQL
 configuration verification. It is the ONLY DBGuard component permitted to communicate
 with the Docker daemon.

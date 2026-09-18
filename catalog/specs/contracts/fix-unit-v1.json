@@ -36,7 +36,7 @@
       "$ref": "#/$defs/prior_state"
     },
     "precheck": {
-      "description": "Validation step: confirms the current state matches prior_state and fails the check.",
+      "description": "Validation step: confirms the current state matches prior_state and fails the check. precheck.expected_value MUST equal prior_state.value. JSON Schema cannot enforce this constraint dynamically - it must be validated by application code.",
       "$ref": "#/$defs/precheck"
     },
     "apply": {

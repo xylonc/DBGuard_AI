@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbguardai.local/schemas/spec-v1.json",
   "title": "DBGuardAI control spec (schema_version 1)",
-  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id == 'cis-pg17-v1.1.0:' + ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.query == 'SHOW ' + check.setting_name; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every expected value is a whole token in the quote; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
+  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id prefix (everything before ':') is derived from RecordsIndex.benchmark_id (the records.json directory name) plus pg_major and benchmark_version from ref; the recommendation number after ':' must match ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.kind is 'setting' or deferred kinds (needs_capability, manual_checklist); check.query == 'SHOW ' + check.setting_name for setting kind; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every expected value is a whole token in the quote; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec_id", "schema_version", "authored_by", "ref", "tier", "reason"],
   "properties": {
     "spec_id": {
       "type": "string",
-      "pattern": "^cis-pg17-v1\\.1\\.0:[0-9]+(\\.[0-9]+)*$"
+      "pattern": "^[a-z][a-z0-9-]+-pg[0-9]+-v[0-9]+\\.[0-9]+\\.[0-9]+:[0-9]+(\\.[0-9]+)*$"
     },
     "schema_version": { "const": 1 },
     "authored_by": { "enum": ["human", "agent"] },
@@ -29,7 +29,7 @@
   },
   "else": {
     "properties": { "reason": { "type": "string", "minLength": 1, "pattern": "\\S" } },
-    "not": { "anyOf": [ { "required": ["check"] }, { "required": ["proof"] } ] }
+    "not": { "anyOf": [ { "required": [ "check" ] }, { "required": [ "proof" ] } ] }
   },
   "$defs": {
     "setting_name": {
@@ -54,7 +54,7 @@
       "additionalProperties": false,
       "required": ["kind", "setting_name", "query", "operator", "expected", "pass_condition_quote"],
       "properties": {
-        "kind": { "const": "setting" },
+        "kind": { "enum": ["setting"] },
         "setting_name": { "$ref": "#/$defs/setting_name" },
         "query": { "type": "string", "pattern": "^SHOW [a-z_][a-z0-9_.]*$" },
         "operator": { "enum": ["equals", "not_equals", "in"] },

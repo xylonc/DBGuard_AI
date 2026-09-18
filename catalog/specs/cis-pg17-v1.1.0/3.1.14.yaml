@@ -1,0 +1,12 @@
+spec_id: "cis-pg17-v1.1.0:3.1.14"
+schema_version: 1
+authored_by: human
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.14"
+  title: "Ensure the correct messages are written to the server log"
+  source_sha256: "243fc1fda911d45a3786584dd77eba34c6037dde3568b38b441203e02771baca"
+tier: needs_capability
+reason: "ordered_enum_comparison: pass condition is 'at least warning', which requires log severity ordering"

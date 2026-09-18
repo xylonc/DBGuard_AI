@@ -1,5 +1,9 @@
 # Twin image catalog
 
+> **Status (Sept 2026)**: This catalog is deferred to **Phase 2**. The examples
+> directory preserves the expected shape for that future phase without presenting
+> it as implemented.
+
 The twin-runner source is retained for a later phase, but this repository does
 not currently contain an approved runnable image. `examples/` shows the expected
 shape only; its registries, digests, scans, and approvals are illustrative.

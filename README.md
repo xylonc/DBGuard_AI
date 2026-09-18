@@ -162,7 +162,10 @@ for HERMES packaging, installation and troubleshooting.
 
 ## Deferred work
 
-- twin-runner HTTP boundary and verified PostgreSQL image catalog; (**IMPLEMENTED**)
-- proposal review-package reporting and approval workflow;
-- production identity, authorization, audit logging and secret management;
-- production network isolation and deployment hardening.
+> **Status (Sept 2026)**: These items are part of future phases. Phase 0 (contracts)
+> is the current priority. See [pcss.md](../local%20docs/pcss.md) for the phased plan.
+
+- twin-runner HTTP boundary and verified PostgreSQL image catalog (**Phase 2**);
+- proposal review-package reporting and approval workflow (**Phase 3**);
+- production identity, authorization, audit logging and secret management (**Phase 3**);
+- production network isolation and deployment hardening (**Phase 3**).

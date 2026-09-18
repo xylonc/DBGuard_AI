@@ -179,7 +179,13 @@ class TestTraceability:
         """spec_id must be version-qualified; a pg16 prefix is rejected."""
         spec = copy.deepcopy(VALID_3120_SPEC)
         spec["spec_id"] = "cis-pg16-v1.1.0:3.1.20"
-        assert_only_error(validate_spec(spec, load_records()), "spec_id")
+        assert_only_error(validate_spec(spec, load_records()), "spec_id prefix mismatch")
+
+    def test_spec_id_wrong_recommendation_rejected(self):
+        """spec_id recommendation number must match ref.recommendation."""
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["spec_id"] = "cis-pg17-v1.1.0:3.1.21"  # wrong recommendation
+        assert_only_error(validate_spec(spec, load_records()), "spec_id mismatch")
 
     def test_wrong_title(self):
         spec = copy.deepcopy(VALID_3120_SPEC)
@@ -245,6 +251,36 @@ class TestAutomatedCheck:
         assert_only_error(validate_spec(spec, load_records()), "proof.fix.setting_name")
 
 
+    def test_not_equals_spec_valid_and_its_rules_enforced(self):
+        """3.1.25 uses not_equals. The old validator rejected the valid spec,
+        accepted a fix value that fails, and never checked the expected token."""
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["spec_id"] = "cis-pg17-v1.1.0:3.1.25"
+        spec["ref"]["recommendation"] = "3.1.25"
+        spec["ref"]["title"] = "Ensure 'log_statement' is set correctly"
+        spec["ref"]["source_sha256"] = "b856a2cee96bad6507bf469ab6c2de9ba2e44cf1e2114b1a070d2e62a3cb125f"
+        spec["check"].update(
+            setting_name="log_statement",
+            query="SHOW log_statement",
+            operator="not_equals",
+            expected="none",
+            pass_condition_quote="If `log_statement` is set to `none` then this is a fail.",
+        )
+        spec["proof"] = {
+            "break": {"setting_name": "log_statement", "value": "none"},
+            "fix": {"setting_name": "log_statement", "value": "ddl"},
+        }
+        assert validate_spec(spec, load_records()) == []
+
+        bad_fix = copy.deepcopy(spec)
+        bad_fix["proof"]["fix"]["value"] = "none"
+        assert_only_error(validate_spec(bad_fix, load_records()), "does not satisfy check")
+
+        invented = copy.deepcopy(spec)
+        invented["check"]["expected"] = "all"
+        invented["proof"]["break"]["value"] = "all"
+        assert_only_error(validate_spec(invented, load_records()), "whole token")
+
 # ---------------------------------------------------------------------------
 # Non-automated tiers
 # ---------------------------------------------------------------------------
@@ -265,6 +301,21 @@ class TestNonAutomatedTier:
         del spec["check"]
         del spec["proof"]
         assert_only_error(validate_spec(spec, load_records()), "reason")
+
+    def test_records_index_benchmark_id(self):
+        """Loading the real records.json gives benchmark_id 'cis-pg17-v1.1.0'."""
+        records = load_records()
+        assert records.benchmark_id == "cis-pg17-v1.1.0"
+
+    def test_automated_check_kind_manual_checklist_rejected(self):
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["check"]["kind"] = "manual_checklist"
+        assert_only_error(validate_spec(spec, load_records()), "check.kind")
+
+    def test_automated_check_kind_needs_capability_rejected(self):
+        spec = copy.deepcopy(VALID_3120_SPEC)
+        spec["check"]["kind"] = "needs_capability"
+        assert_only_error(validate_spec(spec, load_records()), "check.kind")
 
 
 # ---------------------------------------------------------------------------
@@ -363,32 +414,14 @@ class TestValidateSpecsScript:
         result = self.run_cli(tmp_path)
         assert result.returncode != 0, result.stdout + result.stderr
 
-    def test_not_equals_spec_valid_and_its_rules_enforced(self):
-        """3.1.25 uses not_equals. The old validator rejected the valid spec,
-        accepted a fix value that fails, and never checked the expected token."""
-        spec = copy.deepcopy(VALID_3120_SPEC)
-        spec["spec_id"] = "cis-pg17-v1.1.0:3.1.25"
-        spec["ref"]["recommendation"] = "3.1.25"
-        spec["ref"]["title"] = "Ensure 'log_statement' is set correctly"
-        spec["ref"]["source_sha256"] = "b856a2cee96bad6507bf469ab6c2de9ba2e44cf1e2114b1a070d2e62a3cb125f"
-        spec["check"].update(
-            setting_name="log_statement",
-            query="SHOW log_statement",
-            operator="not_equals",
-            expected="none",
-            pass_condition_quote="If `log_statement` is set to `none` then this is a fail.",
-        )
-        spec["proof"] = {
-            "break": {"setting_name": "log_statement", "value": "none"},
-            "fix": {"setting_name": "log_statement", "value": "ddl"},
-        }
-        assert validate_spec(spec, load_records()) == []
+    def test_cli_reports_ok_for_every_committed_spec(self):
+        result = self.run_cli(SPEC_DIR)
+        spec_files = sorted(SPEC_DIR.glob("*.yaml"))
+        assert len(spec_files) == 6, [p.name for p in spec_files]
+        ok_lines = [line for line in result.stdout.splitlines() if line.startswith("OK ")]
+        assert len(ok_lines) == 6, result.stdout
+        assert result.returncode == 0, result.stdout
 
-        bad_fix = copy.deepcopy(spec)
-        bad_fix["proof"]["fix"]["value"] = "none"
-        assert_only_error(validate_spec(bad_fix, load_records()), "does not satisfy check")
-
-        invented = copy.deepcopy(spec)
-        invented["check"]["expected"] = "all"
-        invented["proof"]["break"]["value"] = "all"
-        assert_only_error(validate_spec(invented, load_records()), "whole token")
+    def test_cli_fails_on_empty_directory(self, tmp_path):
+        result = self.run_cli(tmp_path)
+        assert result.returncode != 0, result.stdout

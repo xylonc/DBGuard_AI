@@ -1,0 +1,22 @@
+spec_id: "cis-pg17-v1.1.0:3.1.21"
+schema_version: 1
+authored_by: human
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.21"
+  title: "Ensure 'log_disconnections' is enabled"
+  source_sha256: "46b786e9e010cb492516423dbf5bf3b8c2f19d690990c6c28afc4fd6fa9d94bd"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: log_disconnections
+  query: "SHOW log_disconnections"
+  operator: equals
+  expected: "on"
+  pass_condition_quote: "If not configured to `on`, this is a fail."
+proof:
+  break: { setting_name: log_disconnections, value: "off" }
+  fix:   { setting_name: log_disconnections, value: "on" }

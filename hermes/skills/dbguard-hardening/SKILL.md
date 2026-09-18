@@ -19,18 +19,29 @@ or related database security requirements.
 1. Obtain the collector `snapshot_id` and deployment environment.
 2. Use `get_snapshot_context` to establish the database version and available
    evidence. Report every item in `unavailable_sections`.
-3. Use `search_approved_knowledge` with the request, PostgreSQL version, and
+3. Use `get_snapshot_assessment` before proposing anything. Its `findings`
+   are the source of truth:
+   - propose remediation only for findings whose `status` is `FAIL`;
+   - never propose changes for `PASS` findings;
+   - report every `GAPPED` or `MANUAL_REVIEW` finding as requiring DBA review,
+     and never describe it as passing;
+   - use each finding's `control_id` exactly; never invent one.
+4. Use `search_approved_knowledge` with the request, PostgreSQL version, and
    environment. Only returned active documents may be cited.
-4. Use `search_approved_templates`. Never invent a template name.
-5. Choose the smallest relevant set of returned templates and prepare their
-   required identifier parameters.
-6. Use `validate_and_render_proposal` with a `proposal` object containing:
-   - `control_id`: CIS control identifier (e.g., 'CIS-3.1.2')
+5. Use `search_approved_templates`. Never invent a template name. If a FAIL
+   finding has `control_metadata.template_id`, use that template only if it
+   appears in the search results.
+6. For each FAIL finding, choose the smallest relevant returned template and
+   prepare its required parameters.
+7. Use `validate_and_render_proposal` with a `proposal` object containing:
+   - `control_id`: the finding's `control_id`
    - `template_id`: approved template ID from search_approved_templates
    - `parameters`: template parameters matching the template schema
-   - `reasoning`: agent reasoning for why this template applies
+   - `reasoning`: why this template fixes this finding
    - `evidence_refs`: list of approved RAG document IDs
-7. Explain the result in plain language and preserve the returned citations.
+8. If no approved template fits a FAIL finding, report `MANUAL_REVIEW_REQUIRED`
+   for that finding and continue with the others.
+9. Explain the result in plain language and preserve the returned citations.
 
 ## Output expectations
 

@@ -1,0 +1,28 @@
+{
+  "fix_id": "fix-log_connections",
+  "spec_id": "cis-pg17-v1.1.0:3.1.20",
+  "template_id": "SET_CONFIG_log_connections",
+  "template_version": 1,
+  "params": {
+    "param_name": "log_connections",
+    "param_value": "on"
+  },
+  "prior_state": {
+    "value": "off",
+    "source": "configuration file",
+    "context": "user",
+    "sourcefile": "/var/lib/postgresql/data/postgresql.conf"
+  },
+  "precheck": {
+    "expected_value": "off",
+    "query": "SHOW log_connections"
+  },
+  "apply": "ALTER SYSTEM SET log_connections = 'on'; SELECT pg_reload_conf();",
+  "verify": {
+    "spec_check_ref": "cis-pg17-v1.1.0:3.1.20",
+    "expected_value": "on",
+    "query": "SHOW log_connections"
+  },
+  "rollback": "ALTER SYSTEM RESET log_connections; SELECT pg_reload_conf();",
+  "requires": "reload"
+}

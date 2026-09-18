@@ -1,0 +1,26 @@
+{
+  "envelope": {
+    "schema_version": "0.2.0",
+    "database": "postgres",
+    "target_id": "fixture-insecure",
+    "collected_at": "2026-09-16T09:27:22Z",
+    "collected_by": "postgres",
+    "is_superuser": true,
+    "has_pg_monitor": true,
+    "deployment_type": "self-managed",
+    "collector_version": "2.0.0-sql",
+    "can_read_pg_authid": true,
+    "has_read_all_settings": true
+  },
+  "baseline": {
+    "gaps": [],
+    "settings": []
+  },
+  "checks": {
+    "cis-pg17-v1.1.0:3.1.20": {
+      "spec_hash": "4180999090635516d57fa3bf591f9943640049253d86af6483739316718089c1",
+      "query": "SHOW log_connections",
+      "status": "error"
+    }
+  }
+}

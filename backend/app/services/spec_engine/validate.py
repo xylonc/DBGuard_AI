@@ -11,6 +11,7 @@ from .records import RecordsIndex
 
 TIERS = ("automated", "parameterised", "manual_checklist", "needs_capability")
 OPERATORS = {"equals": equals, "not_equals": not_equals, "in": in_}
+CHECK_KINDS = ("setting",)
 
 TOP_REQUIRED = ("spec_id", "schema_version", "authored_by", "ref", "tier", "reason")
 AUTOMATED_ONLY = ("check", "proof")  # required when tier == automated, forbidden otherwise
@@ -84,10 +85,16 @@ def validate_spec(spec: Any, records: RecordsIndex) -> list[str]:
             errors.append("ref.pg_major must be an integer")
 
         # spec_id is derived from ref, so it is version-qualified and never hardcoded.
+        # The prefix must match the RecordsIndex.benchmark_id (from the records.json directory).
         if "spec_id" in spec and all(k in ref for k in ("pg_major", "benchmark_version", "recommendation")):
-            expected_id = f"cis-pg{ref['pg_major']}-v{ref['benchmark_version']}:{ref['recommendation']}"
+            actual_prefix = spec["spec_id"].split(":")[0]
+            expected_prefix = records.benchmark_id
+            expected_id = f"{expected_prefix}:{ref['recommendation']}"
             if spec["spec_id"] != expected_id:
-                errors.append(f"spec_id mismatch: expected {expected_id!r}, got {spec['spec_id']!r}")
+                if actual_prefix != expected_prefix:
+                    errors.append(f"spec_id prefix mismatch: expected {expected_prefix!r}, got {actual_prefix!r}")
+                else:
+                    errors.append(f"spec_id mismatch: expected {expected_id!r}, got {spec['spec_id']!r}")
 
         if _is_str(ref.get("benchmark")) and ref["benchmark"] != records.benchmark:
             errors.append(f"ref.benchmark mismatch: expected {records.benchmark!r}, got {ref['benchmark']!r}")
@@ -139,8 +146,8 @@ def validate_spec(spec: Any, records: RecordsIndex) -> list[str]:
     if isinstance(check, dict):
         _check_keys(check, CHECK_KEYS, CHECK_KEYS, "check", errors)
 
-        if "kind" in check and check["kind"] != "setting":
-            errors.append(f"check.kind must be 'setting', got {check['kind']!r}")
+        if "kind" in check and check["kind"] not in CHECK_KINDS:
+            errors.append(f"check.kind must be one of {CHECK_KINDS}, got {check['kind']!r}")
 
         setting_name = check.get("setting_name")
         name_ok = _is_str(setting_name) and SETTING_NAME_RE.fullmatch(setting_name) is not None

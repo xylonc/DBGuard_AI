@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dbguardai.local/schemas/fix-unit-v1.json",
+  "title": "DBGuardAI fix unit contract (version 1)",
+  "description": "Contract for a single fix unit: one remediation action on one control, including precheck, apply, verify, and rollback steps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fix_id", "spec_id", "template_id", "template_version", "params", "prior_state", "precheck", "apply", "verify", "rollback", "requires"],
+  "properties": {
+    "fix_id": {
+      "description": "Unique identifier for this fix unit.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "spec_id": {
+      "description": "The spec_id that this fix addresses. Must match a spec in the spec set.",
+      "type": "string"
+    },
+    "template_id": {
+      "description": "The approved template to use. Must match template registry format: SET_CONFIG_<setting_name> or REVOKE_<privilege>.",
+      "type": "string",
+      "pattern": "^(SET_CONFIG|REVOKE)_[a-z_]+$"
+    },
+    "template_version": {
+      "description": "The version of the template. Must match the version in the template registry.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "params": {
+      "description": "Parameters to pass to the template during rendering.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "prior_state": {
+      "description": "The current state before applying the fix, extracted from the snapshot's pg_settings.",
+      "$ref": "#/$defs/prior_state"
+    },
+    "precheck": {
+      "description": "Validation step: confirms the current state matches prior_state and fails the check.",
+      "$ref": "#/$defs/precheck"
+    },
+    "apply": {
+      "description": "The SQL to apply the fix.",
+      "type": "string",
+      "minLength": 1
+    },
+    "verify": {
+      "description": "Verification step: confirms the control now passes after the fix.",
+      "$ref": "#/$defs/verify"
+    },
+    "rollback": {
+      "description": "SQL to restore prior_state. Depends on where the value was set (postgresql.conf vs postgresql.auto.conf).",
+      "type": "string",
+      "minLength": 1
+    },
+    "requires": {
+      "description": "Required action after apply: none (instant), reload, or restart.",
+      "$ref": "#/$defs/requires"
+    }
+  },
+  "$defs": {
+    "prior_state": {
+      "description": "Current value and source location before fix.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "context", "sourcefile"],
+      "properties": {
+        "value": {
+          "description": "Current setting value.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Source of the setting (file, command line, default, environment, etc.).",
+          "enum": ["file", "command line", "default", "environment", "configuration file", "unknown"]
+        },
+        "context": {
+          "description": "pg_settings.context value: 'user', 'superuser', 'backend', 'superuser-backend', 'sighup', 'suicide'. Used to derive requires.",
+          "enum": ["user", "superuser", "backend", "superuser-backend", "sighup", "suicide"]
+        },
+        "sourcefile": {
+          "description": "Full path to the configuration file (postgresql.conf, postgresql.auto.conf, or NULL for non-file sources).",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "precheck": {
+      "description": "Validation step: confirms the current state matches prior_state and fails the check.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_value", "query"],
+      "properties": {
+        "expected_value": {
+          "description": "Must equal prior_state.value.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The SHOW query for the setting.",
+          "type": "string",
+          "pattern": "^SHOW [a-z_][a-z0-9_.]*$"
+        }
+      }
+    },
+    "verify": {
+      "description": "Verification step: confirms the control now passes after the fix.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec_check_ref", "expected_value", "query"],
+      "properties": {
+        "spec_check_ref": {
+          "description": "Reference to the spec_id and setting_name this verifies.",
+          "type": "string"
+        },
+        "expected_value": {
+          "description": "Value that should make the check pass.",
+          "type": "string"
+        },
+        "query": {
+          "description": "The SHOW query for the setting.",
+          "type": "string",
+          "pattern": "^SHOW [a-z_][a-z0-9_.]*$"
+        }
+      }
+    },
+    "requires": {
+      "description": "Action required after apply. Derived from pg_settings.context.",
+      "enum": ["none", "reload", "restart"]
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "envelope": {
+    "schema_version": "0.2.0",
+    "database": "postgres",
+    "target_id": "fixture-insecure",
+    "collected_at": "2026-09-16T09:27:22Z",
+    "collected_by": "postgres",
+    "is_superuser": true,
+    "has_pg_monitor": true,
+    "deployment_type": "self-managed",
+    "collector_version": "2.0.0-sql",
+    "can_read_pg_authid": true,
+    "has_read_all_settings": true
+  },
+  "baseline": {
+    "gaps": [],
+    "roles": [],
+    "uptime": {
+      "version": "16.4",
+      "server_start": "2026-09-16T09:25:00Z"
+    },
+    "schemas": [],
+    "settings": [
+      {
+        "name": "log_connections",
+        "setting": "off",
+        "unit": null,
+        "category": "Reporting and Logging",
+        "short_desc": "Logs each connection.",
+        "extra_desc": "",
+        "context": "user",
+        "vartype": "bool",
+        "source": "configuration file",
+        "min_val": null,
+        "max_val": null,
+        "enumvals": null,
+        "boot_val": "off",
+        "reset_val": "off",
+        "sourcefile": "/var/lib/postgresql/data/postgresql.conf",
+        "sourceline": 42,
+        "pending_restart": false,
+        "is_changed": "f",
+        "category_idx": 21,
+        "setting_idx": 48
+      }
+    ],
+    "databases": [],
+    "hba_rules": [],
+    "extensions": [],
+    "redactions": [],
+    "connections": [],
+    "object_acls": [],
+    "replication": {},
+    "tablespaces": [],
+    "default_acls": [],
+    "rls_policies": [],
+    "file_settings": [],
+    "role_settings": [],
+    "event_triggers": [],
+    "ident_mappings": [],
+    "password_types": [],
+    "foreign_servers": [],
+    "role_memberships": [],
+    "host_not_collected": []
+  },
+  "checks": {
+    "cis-pg17-v1.1.0:3.1.20": {
+      "spec_hash": "4180999090635516d57fa3bf591f9943640049253d86af6483739316718089c1",
+      "query": "SHOW log_connections",
+      "status": "ok",
+      "result": "off"
+    }
+  }
+}

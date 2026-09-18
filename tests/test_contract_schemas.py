@@ -220,6 +220,49 @@ class TestFixUnitSchema:
         assert "rollback" in errors[0]
         assert "off" in errors[0]
 
+    def test_validate_fix_unit_bad_rollback_substring_bug(self, valid_fix_unit):
+        """Rollback SET value 'false' does not match prior_state.value 'off' (substring bug test).
+
+        This test verifies the fix for the substring matching bug where rollback
+        "ALTER SYSTEM SET log_connections = off" would incorrectly pass because
+        the substring "on" appears inside "off". With the correct parse-based
+        comparison, 'false' != 'off' correctly fails validation.
+        """
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["rollback"] = "ALTER SYSTEM SET log_connections = 'false'; SELECT pg_reload_conf();"
+
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "SET value" in errors[0]
+        assert "false" in errors[0]
+        assert "off" in errors[0]
+
+    def test_validate_fix_unit_good_rollback_value_match(self, valid_fix_unit):
+        """Rollback SET value 'off' matches prior_state.value 'off'."""
+        good = copy.deepcopy(valid_fix_unit)
+        good["rollback"] = "ALTER SYSTEM SET log_connections = 'off'; SELECT pg_reload_conf();"
+
+        errors = validate_fix_unit(good)
+        assert errors == [], errors
+
+    def test_validate_fix_unit_rollback_different_param(self, valid_fix_unit):
+        """Rollback targets different parameter than apply."""
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["rollback"] = "ALTER SYSTEM SET log_checkpoints = 'off'; SELECT pg_reload_conf();"
+
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "rollback targets parameter 'log_checkpoints' but apply uses 'log_connections'" in errors[0]
+
+    def test_validate_fix_unit_unparseable_rollback(self, valid_fix_unit):
+        """Rollback is unparseable text."""
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["rollback"] = "some random text that is not valid SQL"
+
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "rollback must be ALTER SYSTEM SET param = value or ALTER SYSTEM RESET" in errors[0]
+
 
 # ---------------------------------------------------------------------------#
 # schema.json - bind to spec YAML files

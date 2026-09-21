@@ -7,10 +7,20 @@ AI permission to connect to the target database or execute a command.
 
 ## Current implemented scope
 
-The runnable POC covers the VALIDATE phase with one clean workflow:
-stored snapshot → failed assessment finding → validated/rendered remediation proposal →
-isolated PostgreSQL sandbox reproduction → fail verification → apply proposal →
-pass verification → rollback → original state restored → destroyed sandbox → evidence.
+A standalone [local sandbox POC](services/sandbox_poc/README.md) implements
+the first spec-driven milestone: PostgreSQL 17 `log_connections`, a bounded
+LangGraph test loop, full supplied-spec reassessment, source-aware rollback and
+verified cleanup. It uses disposable databases and does not require the Compose
+stack for its demo. Run `python scripts/sandbox_poc.py demo --output data/sandbox-demo.json`
+after the dependency/image setup in that guide.
+
+The new `POST /api/v1/sandbox/runs` accepts a [pinned upstream handoff](services/sandbox_poc/API.md)
+and reads approved templates/evidence from the registry before testing. It is
+disabled by default and can run through a standalone API on the local Docker host.
+
+The existing HTTP sandbox endpoint and the following diagram describe the legacy
+path. That path has not been migrated to this loop and must not be treated as
+proof of exact rollback or regression verification.
 
 ```mermaid
 flowchart LR
@@ -118,7 +128,8 @@ execute SQL, use the host shell, or operate Docker.
 | `GET` | `/api/v1/templates/search` | Search approved templates by semantic similarity |
 | `POST` | `/api/v1/templates/{name}/approve` | Record human approval of an exact template version |
 | `POST` | `/api/v1/proposals/validate-and-render` | Validate HERMES's choices and deterministically render approved templates from PostgreSQL |
-| `POST` | `/api/v1/sandbox/validate` | Validate proposal in ephemeral PostgreSQL sandbox with flip verification |
+| `POST` | `/api/v1/sandbox/validate` | Legacy sandbox path; not migrated |
+| `POST` | `/api/v1/sandbox/runs` | Test a pinned spec/assessment handoff with approved registry content; local opt-in |
 
 The trusted backend still reruns retrieval, rejects template
 IDs outside the active result set, applies safe parameter handling, and

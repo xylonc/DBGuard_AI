@@ -74,8 +74,8 @@
           "enum": ["file", "command line", "default", "environment", "configuration file", "unknown"]
         },
         "context": {
-          "description": "pg_settings.context value: 'user', 'superuser', 'backend', 'superuser-backend', 'sighup', 'suicide'. Used to derive requires.",
-          "enum": ["user", "superuser", "backend", "superuser-backend", "sighup", "suicide"]
+          "description": "pg_settings.context. Apply method and pending_restart also determine activation requirements.",
+          "enum": ["internal", "postmaster", "sighup", "superuser-backend", "backend", "superuser", "user"]
         },
         "sourcefile": {
           "description": "Full path to the configuration file (postgresql.conf, postgresql.auto.conf, or NULL for non-file sources).",
@@ -122,7 +122,7 @@
       }
     },
     "requires": {
-      "description": "Action required after apply. Derived from pg_settings.context.",
+      "description": "Action required after apply, considering context, application method and pending_restart.",
       "enum": ["none", "reload", "restart"]
     }
   }

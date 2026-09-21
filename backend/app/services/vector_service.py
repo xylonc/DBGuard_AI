@@ -56,8 +56,8 @@ def ingest_template(
     conn = psycopg2.connect(settings.database_url)
     try:
         cur = conn.cursor()
-        # Insert or update - if template exists, increment version
-        # New content always creates a new draft version
+        # Re-ingesting an existing version invalidates its previous approval.
+        # Callers must explicitly choose a new version to retain the old one.
         cur.execute("""
             INSERT INTO templates
                 (template_name, version, description, sql_template, template_hash,
@@ -71,6 +71,9 @@ def ingest_template(
                 risk_level = EXCLUDED.risk_level,
                 pg_version = EXCLUDED.pg_version,
                 embedding = EXCLUDED.embedding,
+                status = 'draft',
+                approved_by = NULL,
+                approved_at = NULL,
                 updated_at = NOW()
             RETURNING id, template_name, version, status
         """, (

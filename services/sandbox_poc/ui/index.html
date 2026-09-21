@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI · Live demo</title><style>
+
+    #dbguard-workflow{--db-bg:light-dark(#f4f6f8,#101720);--db-panel:light-dark(#ffffff,#18212c);--db-ink:light-dark(#182c37,#e2ebf1);--db-sub:light-dark(#586b76,#a8b7c4);--db-line:light-dark(#dce4e9,#31404d);--db-accent:light-dark(#0b716b,#78d9c8);--db-soft:light-dark(#e9f4f1,#203c3a);--db-good:light-dark(#196a4d,#84dab1);--db-warn:light-dark(#88500d,#f5c77d);--db-warm:light-dark(#fff5e5,#3b3020);--db-bad:light-dark(#aa3a3a,#ffaaaa);--db-bad-bg:light-dark(#fff0ef,#41292f);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--db-ink);background:var(--db-bg);border:1px solid var(--db-line);border-radius:16px;overflow:clip;--db-pad:24px;--db-gap:18px}
+    #dbguard-workflow[data-accent="blue"]{--db-accent:light-dark(#265fc0,#9fc1ff);--db-soft:light-dark(#ecf2ff,#26354c)}
+    #dbguard-workflow[data-density="compact"]{--db-pad:18px;--db-gap:12px}
+    #dbguard-workflow *{box-sizing:border-box}
+    #dbguard-workflow button,#dbguard-workflow select{font:inherit;color:inherit}
+    #dbguard-workflow button{border:0;background:none}
+    #dbguard-workflow .db-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px;background:var(--db-panel);border-bottom:1px solid var(--db-line);flex-wrap:wrap}
+    #dbguard-workflow .db-logo{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:500;letter-spacing:-.5px}
+    #dbguard-workflow .db-mark{display:grid;place-items:center;width:32px;height:34px;background:var(--db-soft);color:var(--db-accent);border-radius:10px}
+    #dbguard-workflow .db-meta{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--db-sub);flex-wrap:wrap}
+    #dbguard-workflow .db-avatar{width:28px;height:28px;display:grid;place-items:center;border-radius:50%;background:var(--db-bg);color:var(--db-ink);font-weight:500}
+    #dbguard-workflow .db-shell{display:grid;grid-template-columns:176px minmax(0,1fr)}
+    #dbguard-workflow .db-nav{padding:24px 12px;background:var(--db-panel);border-right:1px solid var(--db-line)}
+    #dbguard-workflow .db-nav-label{margin:0 12px 14px;color:var(--db-sub);font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
+    #dbguard-workflow .db-nav button{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;padding:12px 10px;border-radius:8px;margin-bottom:5px}
+    #dbguard-workflow .db-nav button[aria-current="step"]{background:var(--db-soft);color:var(--db-accent)}
+    #dbguard-workflow .db-num{display:grid;place-items:center;flex:0 0 23px;height:23px;border:1px solid var(--db-line);border-radius:50%;font-size:12px}
+    #dbguard-workflow .db-nav button[aria-current="step"] .db-num{background:var(--db-accent);color:var(--db-panel);border-color:var(--db-accent)}
+    #dbguard-workflow .db-nav small{display:block;color:var(--db-sub);font-size:11px;margin-top:3px}
+    #dbguard-workflow .db-nav-note{margin:28px 12px 0;padding-top:16px;border-top:1px solid var(--db-line);font-size:12px;color:var(--db-sub)}
+    #dbguard-workflow .db-main{padding:var(--db-pad);min-width:0}
+    #dbguard-workflow .db-eyebrow{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--db-sub);margin-bottom:8px}
+    #dbguard-workflow h2{font-size:25px;font-weight:500;letter-spacing:-.7px;line-height:1.2;margin:0 0 9px;color:var(--db-ink)}
+    #dbguard-workflow h3{font-size:15px;font-weight:500;margin:0;color:var(--db-ink)}
+    #dbguard-workflow p{margin:0}
+    #dbguard-workflow .db-sub{color:var(--db-sub);font-size:13px}
+    #dbguard-workflow .db-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:22px 0 16px}
+    #dbguard-workflow .db-pill{display:inline-flex;align-items:center;gap:5px;border-radius:5px;padding:3px 7px;font-size:11px;font-weight:500;white-space:nowrap;background:var(--db-bg);color:var(--db-sub)}
+    #dbguard-workflow .db-good{color:var(--db-good);background:var(--db-soft)}
+    #dbguard-workflow .db-warn{color:var(--db-warn);background:var(--db-warm)}
+    #dbguard-workflow .db-bad{color:var(--db-bad);background:var(--db-bad-bg)}
+    #dbguard-workflow .db-section{background:var(--db-panel);border:1px solid var(--db-line);border-radius:10px;margin-bottom:var(--db-gap);overflow:clip}
+    #dbguard-workflow .db-section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--db-line);flex-wrap:wrap}
+    #dbguard-workflow .db-content{padding:18px}
+    #dbguard-workflow .db-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:var(--db-gap)}
+    #dbguard-workflow .db-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    #dbguard-workflow .db-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:10px 14px;border:1px solid var(--db-line);border-radius:7px;background:var(--db-panel);font-size:13px;font-weight:500;min-height:40px;text-align:center}
+    #dbguard-workflow .db-btn-primary{background:var(--db-accent);color:var(--db-panel);border-color:var(--db-accent)}
+    #dbguard-workflow .db-btn:disabled{opacity:.5;cursor:not-allowed}
+    #dbguard-workflow .db-link{color:var(--db-accent);text-align:left;padding:4px 0;text-decoration:underline;text-underline-offset:3px}
+    #dbguard-workflow .db-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:22px}
+    #dbguard-workflow .db-context{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid var(--db-line);padding:12px 24px;color:var(--db-sub);font-size:11px;background:var(--db-panel)}
+    #dbguard-workflow .db-table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:12px}
+    #dbguard-workflow .db-table th{text-align:left;color:var(--db-sub);font-weight:400;background:var(--db-bg)}
+    #dbguard-workflow .db-table th,#dbguard-workflow .db-table td{padding:12px 16px;border-bottom:1px solid var(--db-line);overflow-wrap:anywhere;vertical-align:middle}
+    #dbguard-workflow .db-table tr:last-child td{border-bottom:0}
+    #dbguard-workflow .db-table .db-selected{background:var(--db-soft)}
+    #dbguard-workflow .db-control{display:block;font-weight:500;color:var(--db-ink)}
+    #dbguard-workflow .db-id{font-size:11px;color:var(--db-sub)}
+    #dbguard-workflow .db-summary{display:flex;gap:20px;flex-wrap:wrap;font-size:13px}
+    #dbguard-workflow .db-summary b{font-weight:500;color:var(--db-ink)}
+    #dbguard-workflow .db-pair{display:grid;grid-template-columns:1fr 24px 1fr;align-items:center;gap:10px;margin:16px 0}
+    #dbguard-workflow .db-value{background:var(--db-bg);padding:16px;border-radius:8px;font-size:12px;color:var(--db-sub)}
+    #dbguard-workflow .db-value strong{display:block;font-size:27px;color:var(--db-ink);font-weight:500;letter-spacing:-.6px;margin:3px 0}
+    #dbguard-workflow .db-kv{display:grid;grid-template-columns:1fr 1.1fr;gap:10px;font-size:12px;margin:15px 0 0}
+    #dbguard-workflow .db-kv dt{color:var(--db-sub)}
+    #dbguard-workflow .db-kv dd{margin:0;overflow-wrap:anywhere}
+    #dbguard-workflow .db-banner{border-left:3px solid var(--db-accent);padding:13px 15px;background:var(--db-soft);border-radius:0 7px 7px 0;font-size:12px;margin-bottom:18px}
+    #dbguard-workflow .db-banner.db-alert{background:var(--db-warm);border-color:var(--db-warn)}
+    #dbguard-workflow .db-drop{padding:30px 20px;text-align:center;border:1px dashed var(--db-line);border-radius:9px;background:var(--db-bg)}
+    #dbguard-workflow .db-drop h3{margin:12px 0 6px}
+    #dbguard-workflow .db-drop .db-btn{margin-top:18px}
+    #dbguard-workflow .db-file{display:flex;gap:12px;padding:14px 0;align-items:center}
+    #dbguard-workflow .db-file + .db-file{border-top:1px solid var(--db-line)}
+    #dbguard-workflow .db-file small{display:block;color:var(--db-sub);font-size:12px}
+    #dbguard-workflow .db-trace{margin:0;padding:0;list-style:none}
+    #dbguard-workflow .db-trace li{display:flex;gap:12px;align-items:flex-start;padding:13px 18px;border-bottom:1px solid var(--db-line)}
+    #dbguard-workflow .db-trace li:last-child{border:0}
+    #dbguard-workflow .db-dot{width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:var(--db-bg);color:var(--db-sub);flex-shrink:0;font-size:12px}
+    #dbguard-workflow .db-trace .done .db-dot{color:var(--db-good);background:var(--db-soft)}
+    #dbguard-workflow .db-trace .running{background:var(--db-soft)}
+    #dbguard-workflow .db-trace .running .db-dot{background:var(--db-accent);color:var(--db-panel)}
+    #dbguard-workflow .db-trace .failed .db-dot{background:var(--db-bad-bg);color:var(--db-bad)}
+    #dbguard-workflow .db-trace small{display:block;color:var(--db-sub);font-size:12px;margin-top:2px}
+    #dbguard-workflow .db-trace .db-trailing{margin-left:auto;font-size:11px;color:var(--db-sub);padding-top:3px}
+    #dbguard-workflow .db-select{padding:8px;border:1px solid var(--db-line);border-radius:6px;background:var(--db-panel);max-width:100%;font-size:13px}
+    #dbguard-workflow label{font-size:12px;color:var(--db-sub)}
+    #dbguard-workflow .db-empty{padding:25px 18px;color:var(--db-sub);text-align:center;font-size:13px}
+    #dbguard-workflow details{font-size:12px;margin-top:16px}
+    #dbguard-workflow summary{color:var(--db-accent);padding:6px 0}
+    #dbguard-workflow pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--db-bg);padding:12px;border-radius:6px;color:var(--db-ink);font-size:12px}
+    #dbguard-workflow .db-checklist{list-style:none;margin:0;padding:0}
+    #dbguard-workflow .db-checklist li{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--db-line);font-size:13px}
+    #dbguard-workflow .db-checklist li:last-child{border:0}
+    #dbguard-workflow .db-checklist span:first-child{color:var(--db-good)}
+    #dbguard-workflow[data-layout="top"] .db-shell{grid-template-columns:1fr}
+    #dbguard-workflow[data-layout="top"] .db-nav{display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--db-line);padding:12px}
+    #dbguard-workflow[data-layout="top"] .db-nav button{width:auto;flex:1 1 120px;margin:0;font-size:12px;padding:8px}
+    #dbguard-workflow[data-layout="top"] .db-nav-note,#dbguard-workflow[data-layout="top"] .db-nav-label{display:none}
+    @media(max-width:760px){#dbguard-workflow .db-shell{grid-template-columns:1fr}#dbguard-workflow .db-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-right:0;border-bottom:1px solid var(--db-line);padding:10px}#dbguard-workflow .db-nav-label,#dbguard-workflow .db-nav-note{display:none}#dbguard-workflow .db-nav button{font-size:12px;padding:8px;gap:7px}#dbguard-workflow .db-nav small{font-size:11px}#dbguard-workflow .db-main{padding:18px}#dbguard-workflow .db-grid{grid-template-columns:1fr}#dbguard-workflow .db-table th,#dbguard-workflow .db-table td{padding:10px}#dbguard-workflow h2{font-size:23px}}
+    @media(max-width:430px){#dbguard-workflow .db-header{padding:14px}#dbguard-workflow .db-nav{grid-template-columns:repeat(2,minmax(0,1fr))}#dbguard-workflow .db-main{padding:14px}#dbguard-workflow .db-table{font-size:11px}#dbguard-workflow .db-table th,#dbguard-workflow .db-table td{padding:9px 7px}#dbguard-workflow .db-pill{font-size:11px;padding:3px 5px}#dbguard-workflow .db-btn{min-height:44px}#dbguard-workflow .db-context{padding:12px 14px}#dbguard-workflow .db-trailing{display:none}#dbguard-workflow select{font-size:16px}}
+
+:root{color-scheme:light dark}body{margin:0;padding:24px;background:light-dark(#e7edf0,#0d131a)}#dbguard-workflow{max-width:1280px;margin:auto}button,summary{cursor:pointer}button:disabled{cursor:not-allowed}#dbguard-workflow .db-table .db-pill{white-space:normal;overflow-wrap:anywhere}a{color:inherit}.db-main{min-width:0}.db-section{overflow-wrap:anywhere}#notice{padding:12px 24px}progress{width:100%;accent-color:var(--db-accent)}
+</style></head>
+<body><div id="dbguard-workflow">
+<header class="db-header"><div class="db-logo"><span class="db-mark">D</span>DBGuardAI</div><div class="db-meta"><span class="db-pill db-good">Live local demo</span><a href="/docs" target="_blank" rel="noopener">API docs ↗</a></div></header>
+<div id="notice" class="db-banner db-alert">Real database execution · Disposable fixtures only · Approval records are DEMO_FIXTURE_ONLY, not human approval</div>
+<div class="db-shell"><nav id="nav" class="db-nav" aria-label="Workflow"></nav><main id="main" class="db-main" aria-live="polite"></main></div>
+<footer class="db-context"><span>PostgreSQL 17 · One supported fix · Maximum three attempts</span><span>Production is not connected</span></footer>
+</div>
+<script>
+'use strict';
+const root=document.getElementById('dbguard-workflow'),main=document.getElementById('main'),nav=document.getElementById('nav');
+const stages=['Benchmark','Assessment','Proposed fix','Sandbox test','DBA handoff','Reassessment'];
+const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let context=null,step=0,result=null,error='',busy=false,source=null,started=0,elapsed=0,interval=null,lastRequest=null;
+const control='cis-pg17-v1.1.0:3.1.20';
+const button=(text,action,primary=false,disabled=false)=>`<button class="db-btn ${primary?'db-btn-primary':''}" data-action="${action}" ${disabled?'disabled':''}>${text}</button>`;
+const badge=s=>`<span class="db-pill ${['PASS','VERIFIED'].includes(s)?'db-good':['FAIL','FAILED','CLEANUP_FAILED'].includes(s)?'db-bad':'db-warn'}">${esc(s)}</span>`;
+const head=(title,description)=>`<div class="db-eyebrow">0${step+1} / ${stages[step]}</div><h2>${title}</h2><p class="db-sub">${description}</p>`;
+const panel=(title,body)=>`<section class="db-section"><div class="db-section-head"><h3>${title}</h3></div><div class="db-content">${body}</div></section>`;
+const details=(label,obj)=>`<details><summary>${label}</summary><pre>${esc(typeof obj==='string'?obj:JSON.stringify(obj,null,2))}</pre></details>`;
+function findingsTable(after){const h=context.handoff;return `<table class="db-table"><thead><tr><th style="width:54%">Control</th><th>Before</th>${after?'<th>After fix</th>':''}</tr></thead><tbody>${h.specs.map(s=>`<tr class="${s.spec_id===control?'db-selected':''}"><td>${esc(s.ref.title)}<small class="db-id"> · ${esc(s.ref.recommendation)}</small></td><td>${badge(h.assessment.findings[s.spec_id]?.status||'UNKNOWN')}</td>${after?`<td>${badge(after.findings?.[s.spec_id]?.status||'NOT_COLLECTED')}</td>`:''}</tr>`).join('')}</tbody></table>`;}
+function checks(a){const rows=[['Target passes',a.after_assessment?.findings?.[control]?.status==='PASS'],['No other controls regress',Array.isArray(a.regressions)&&a.regressions.length===0],['Database responds after fix',a.health_after_apply===true],['Exact value and source restored',a.rollback_verified===true],['Database responds after rollback',a.health_after_rollback===true],['Attempt resources removed',a.cleanup?.verified===true]];return `<ul class="db-checklist">${rows.map(([label,ok])=>`<li>${badge(ok?'PASS':'NOT VERIFIED')}<span>${label}</span></li>`).join('')}</ul>`;}
+function render(){
+ nav.innerHTML='<div class="db-nav-label">Hardening workflow</div>'+stages.map((s,i)=>`<button data-step="${i}" ${step===i?'aria-current="step"':''}><span class="db-num">${i+1}</span><span>${s}<small>${['Installed specs','Live collected source','Pinned template','Real API execution','Evidence download','Check unchanged source'][i]}</small></span></button>`).join('');
+ if(!context){main.innerHTML=head('Connecting to the demo', 'Loading the handoff collected from the disposable source database.')+(error?`<div role="alert" class="db-banner db-alert">${esc(error)}</div>${button('Reconnect','load',true)}`:'<progress aria-label="Connecting"></progress>');return;}
+ const h=context.handoff;let html='';
+ if(step===0)html=head('From benchmark to testable rules','This demo starts with the installed PostgreSQL benchmark specs. XLSX upload is not connected yet.')+panel('Ready for the live demonstration',`<dl class="db-kv"><dt>Benchmark</dt><dd>${esc(h.benchmark_id)}</dd><dt>Scoped controls</dt><dd>${h.specs.length}</dd><dt>Source</dt><dd>Fresh disposable PostgreSQL database</dd><dt>Spec-set hash</dt><dd>${esc(h.spec_set_hash)}</dd></dl>${details('Inspect exact specs',h.specs)}`)+button('View actual assessment','assessment',true);
+ if(step===1)html=head('See the actual findings','The source was collected at demo startup and assessed with these exact specs.')+`<section class="db-section">${findingsTable()}</section>`+button('Review connection-logging fix','proposal',true)+details('Inspect upstream handoff',h);
+ if(step===2)html=head('Enable connection logging','The backend resolves the pinned template and evidence from the isolated demo registry before execution.')+panel('One supported configuration fix',`<div class="db-pair"><div class="db-value">Current<strong>off</strong>Source: postgresql.auto.conf</div><span>→</span><div class="db-value">Expected<strong>on</strong>Reload required</div></div><p class="db-sub">The sandbox must reproduce the failure, apply the template, reassess all supplied controls, restore the exact prior value and source, and remove its resources.</p>${details('Inspect template and evidence references',h.template_ref)}`)+button('Open live sandbox test','sandbox',true);
+ if(step===3){html=head('Test the fix in a real sandbox','This calls POST /api/v1/sandbox/runs. Results below come from the backend response.')+`<div class="db-row">${button('Run sandbox test','run',true,busy)}${button('Test evidence mismatch rejection','reject',false,busy)}</div><p class="db-sub">The rejection test sends an incorrect evidence hash to the same API. It should be rejected before a sandbox is created.</p>`;
+ if(busy)html+=panel('Sandbox request is running',`<progress aria-label="Sandbox request running"></progress><p id="elapsed">${elapsed} seconds elapsed</p><p class="db-sub">The API returns a completed result, not live stage updates. It may take several minutes. Keep this page open; closing it does not cancel execution.</p>`);
+ if(error)html+=`<div role="alert" class="db-banner db-alert">${esc(error)}</div>`;
+ if(result)html+=`<div class="db-toolbar">${badge(result.status)}<span class="db-sub">${esc(result.run_id)} · ${result.attempts.length} attempt(s)</span></div>`+result.attempts.map(a=>panel(`Attempt ${a.attempt} · ${esc(a.status)}`,checks(a)+details('Inspect attempt evidence',a))).join('')+button('Review result and download evidence','handoff',true);
+ }
+ if(step===4){html=head('Evidence for DBA review','Downloads contain the actual request and response. Script bundle and HTML report generation remain planned.');if(result){const a=result.attempts.find(x=>x.status==='VERIFIED')||result.attempts.at(-1);html+=`<div class="db-toolbar">${badge(result.status)}<span>DBA review required</span></div>`+(a?.after_assessment?`<section class="db-section">${findingsTable(a.after_assessment)}</section>`:'')+panel('Returned fix and rollback',details('Apply SQL',result.fix_unit?.apply||'Not returned')+details('Rollback SQL',result.fix_unit?.rollback||'Not returned')+details('Prior state',result.fix_unit?.prior_state||{}))+`<div class="db-row">${button('Download evidence JSON','download',true)}${button('Generate harden.sh · planned','none',false,true)}</div><p class="db-sub">A returned fix is accepted only when status is VERIFIED. Failed attempts remain in the evidence.</p>`+button('Verify source remains unchanged','reassessment');}else html+=panel('No result yet','Run the sandbox test before reviewing evidence.')+button('Go to sandbox','sandbox',true);}
+ if(step===5){const evidence=busy||error?null:(source||result?.demo_evidence);html=head('Keep test results separate from the target','Recollect the disposable source and compare it with the starting state. No fix is applied to this source.')+button('Recollect demo source','recollect',true,busy);if(busy)html+='<p>Collecting fresh source evidence…</p>';if(error)html+=`<div role="alert" class="db-banner db-alert">${esc(error)}</div>`;if(evidence)html+=panel('Source and registry checks',`<ul class="db-checklist"><li>${badge(evidence.source_unchanged?'PASS':'FAIL')} Source settings and configuration sources unchanged</li><li>${badge(evidence.registry_unchanged?'PASS':'FAIL')} Demo registry unchanged</li><li>${badge(evidence.assessment.findings[control].status)} Connection logging on the source</li></ul>`)+details('Inspect fresh source assessment',evidence);html+='<div class="db-banner">Production reassessment is not connected. A DBA must separately review and apply a fix, then collect the real target again.</div>';}
+ main.innerHTML=html;
+}
+async function api(path,options){const response=await fetch(path,options);let body;try{body=await response.json();}catch{throw new Error(`HTTP ${response.status}: response was not JSON`);}if(!response.ok){const detail=typeof body.detail==='string'?body.detail:JSON.stringify(body.detail||body);throw new Error(`HTTP ${response.status}: ${detail}`);}return body;}
+async function load(){error='';render();try{context=await api('/demo/context');}catch(e){error=e.message;}render();}
+async function run(reject){if(busy)return;busy=true;result=null;source=null;error='';lastRequest=structuredClone(context.handoff);if(reject)lastRequest.template_ref.evidence[0].sha256='0'.repeat(64);started=Date.now();elapsed=0;render();interval=setInterval(()=>{elapsed=Math.floor((Date.now()-started)/1000);const node=document.getElementById('elapsed');if(node)node.textContent=`${elapsed} seconds elapsed`;},1000);try{result=await api('/api/v1/sandbox/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lastRequest)});}catch(e){error=e.message+' No accepted fix was returned. If the connection was lost, the backend may still be running; do not assume cancellation.';}finally{clearInterval(interval);busy=false;render();}}
+root.addEventListener('click',async event=>{const b=event.target.closest('button');if(!b||b.disabled)return;if(b.dataset.step!==undefined){step=Number(b.dataset.step);render();return;}const a=b.dataset.action,mapping={assessment:1,proposal:2,sandbox:3,handoff:4,reassessment:5};if(a in mapping){step=mapping[a];render();return;}if(a==='load')await load();if(a==='run'||a==='reject')await run(a==='reject');if(a==='recollect'&&!busy){busy=true;error='';source=null;render();try{source=await api('/demo/source');}catch(e){error=e.message;}finally{busy=false;render();}}if(a==='download'&&result){const blob=new Blob([JSON.stringify({demo_fixture_approval:true,handoff:lastRequest,result},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`dbguard-demo-${result.run_id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}});
+window.addEventListener('beforeunload',event=>{if(busy){event.preventDefault();event.returnValue='';}});
+load();
+</script></body></html>

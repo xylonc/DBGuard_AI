@@ -47,6 +47,7 @@ from app.services.vector_service import (
 )
 from app.config import settings
 from services.rag.rag_service import KnowledgeDocument, RAGService
+from services.sandbox_poc.router import router as sandbox_poc_router
 
 app = FastAPI(
     title="DBGuardAI",
@@ -54,6 +55,9 @@ app = FastAPI(
     description="Collector snapshot intake, approved knowledge retrieval, and human-reviewed hardening proposals.",
 )
 snapshot_store = SnapshotStore(settings.snapshot_storage_dir)
+
+# The new spec-driven local endpoint is separate from legacy /sandbox/validate.
+app.include_router(sandbox_poc_router)
 
 
 @app.get("/api/v1/health")
@@ -64,6 +68,7 @@ def health_check():
         "scope": "proposal",
         "assessment_enabled": False,
         "twin_runner_enabled": False,
+        "sandbox_poc_enabled": settings.sandbox_poc_enabled,
     }
 
 
@@ -515,4 +520,3 @@ def validate_in_sandbox(request: SandboxValidationRequest):
         logs=result.execution_log,
         errors=[result.error] if result.error else [],
     )
-

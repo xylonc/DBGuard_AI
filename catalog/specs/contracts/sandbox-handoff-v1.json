@@ -1,0 +1,133 @@
+{
+  "$defs": {
+    "EvidenceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Document Id",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "version",
+        "sha256"
+      ],
+      "title": "EvidenceReference",
+      "type": "object"
+    },
+    "TemplateReference": {
+      "additionalProperties": false,
+      "properties": {
+        "registry_name": {
+          "const": "set_config_parameter",
+          "default": "set_config_parameter",
+          "title": "Registry Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceReference"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "environment": {
+          "default": "dev",
+          "enum": [
+            "dev",
+            "test",
+            "prod"
+          ],
+          "title": "Environment",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "sha256",
+        "evidence"
+      ],
+      "title": "TemplateReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "sandbox-handoff-v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "benchmark_id": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "spec_set_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Spec Set Hash",
+      "type": "string"
+    },
+    "specs": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "maxItems": 1000,
+      "minItems": 1,
+      "title": "Specs",
+      "type": "array"
+    },
+    "snapshot": {
+      "additionalProperties": true,
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "assessment": {
+      "additionalProperties": true,
+      "title": "Assessment",
+      "type": "object"
+    },
+    "template_ref": {
+      "$ref": "#/$defs/TemplateReference"
+    }
+  },
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "spec_set_hash",
+    "specs",
+    "snapshot",
+    "assessment",
+    "template_ref"
+  ],
+  "title": "SandboxHandoff",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

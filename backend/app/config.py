@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # Database
     database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "postgresql://dbguard:dbguard@localhost:5432/dbguard"))
     snapshot_storage_dir: str = "./data/snapshots"
+    sandbox_poc_enabled: bool = False
+    sandbox_poc_image: str = "postgres:17-bookworm"
 
     # Embedding
     embedding_model: str = "nomic-embed-text"

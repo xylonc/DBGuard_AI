@@ -264,6 +264,83 @@ class TestFixUnitSchema:
         assert len(errors) == 1, errors
         assert "rollback must be ALTER SYSTEM SET param = value or ALTER SYSTEM RESET" in errors[0]
 
+    def test_validate_fix_unit_substring_bug_on_in_log_connections(self, valid_fix_unit):
+        """Substring bug: prior 'on' appears in 'log_connections', would incorrectly pass.
+        
+        The bug was: `if prior_state_value not in rollback:` would match because
+        'on' is a substring of 'log_connections'. The correct parser extracts
+        the SET value 'off' which does NOT match prior_state.value 'on'.
+        
+        Test case: prior_state.value='on', rollback sets log_connections='off'
+        - Substring bug: 'on' in "ALTER SYSTEM SET log_connections = 'off'" -> True (bug! passes)
+        - Parser: 'off' != 'on' -> reject (correct)
+        """
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["prior_state"]["value"] = "on"
+        bad["precheck"]["expected_value"] = "on"  # Must match prior_state
+        bad["rollback"] = "ALTER SYSTEM SET log_connections = 'off'; SELECT pg_reload_conf();"
+        
+        errors = validate_fix_unit(bad)
+        # With correct parser, this should be rejected: 'off' != 'on'
+        assert len(errors) == 1, errors
+        assert "rollback SET value 'off' does not match prior_state.value 'on'" in errors[0]
+
+    def test_validate_fix_unit_substring_bug_wrong_parameter(self, valid_fix_unit):
+        """Substring bug: prior 'off' matches 'log_disconnections' substring.
+        
+        prior 'off' + rollback for log_disconnections = 'off' should be REJECTED
+        because we're resetting a different parameter (log_connections vs log_disconnections).
+        
+        The parser correctly identifies log_disconnections != log_connections.
+        The substring check 'off' in rollback would incorrectly pass.
+        """
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["rollback"] = "ALTER SYSTEM SET log_disconnections = 'off'; SELECT pg_reload_conf();"
+        # With correct parser: param 'log_disconnections' != 'log_connections' -> reject
+        # With substring bug: 'off' in rollback -> True (bug! passes)
+        
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "rollback targets parameter 'log_disconnections' but apply uses 'log_connections'" in errors[0]
+
+    def test_validate_fix_unit_substring_bug_with_comment(self, valid_fix_unit):
+        """Substring bug: comment '-- was off' causes false match.
+        
+        prior 'off' + rollback with comment containing '-- was off' should be REJECTED
+        because the actual SET value is 'on', not 'off'.
+        
+        The parser extracts 'on' from ALTER SYSTEM SET and compares.
+        The substring check 'off' in rollback would match the comment!
+        """
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["rollback"] = "-- was off\nALTER SYSTEM SET log_connections = 'on'; SELECT pg_reload_conf();"
+        # With correct parser: 'on' != 'off' -> reject (correct)
+        # With substring bug: 'off' in comment -> True (bug! passes)
+        
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "rollback SET value 'on' does not match prior_state.value 'off'" in errors[0]
+
+    def test_validate_fix_unit_rollback_forms_accepted(self, valid_fix_unit):
+        """Various acceptable rollback forms should be accepted."""
+        # Test = 'off' (quoted)
+        good1 = copy.deepcopy(valid_fix_unit)
+        good1["rollback"] = "ALTER SYSTEM SET log_connections = 'off'; SELECT pg_reload_conf();"
+        errors1 = validate_fix_unit(good1)
+        assert errors1 == [], errors1
+        
+        # Test = off (unquoted)
+        good2 = copy.deepcopy(valid_fix_unit)
+        good2["rollback"] = "ALTER SYSTEM SET log_connections = off; SELECT pg_reload_conf();"
+        errors2 = validate_fix_unit(good2)
+        assert errors2 == [], errors2
+        
+        # Test lowercase keywords
+        good3 = copy.deepcopy(valid_fix_unit)
+        good3["rollback"] = "alter system set log_connections = 'off'; select pg_reload_conf();"
+        errors3 = validate_fix_unit(good3)
+        assert errors3 == [], errors3
+
 
 # ---------------------------------------------------------------------------#
 # schema.json - bind to spec YAML files

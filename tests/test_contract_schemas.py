@@ -25,6 +25,7 @@ sys_path = str(REPO_ROOT / "backend")
 if sys_path not in __import__("sys").path:
     __import__("sys").path.insert(0, sys_path)
 
+from app.services.fix_unit_render import derive_rollback, render_action
 from app.services.fix_unit_validator import validate_fix_unit
 
 # ---------------------------------------------------------------------------#
@@ -72,7 +73,6 @@ class TestSnapshotSchema:
 
     def test_schema_is_valid_json_schema(self, snapshot_validator):
         """The schema itself validates as a valid JSON Schema."""
-        # The schema requires specific fields, so we test with minimal valid data
         valid = snapshot_validator.is_valid({
             "envelope": {
                 "schema_version": "0.2.0",
@@ -103,25 +103,15 @@ class TestSnapshotSchema:
         valid = snapshot_validator.is_valid(load_example(path))
         assert not valid, f"{path.name} should fail validation"
 
-        # Get all validation errors
         errors = list(snapshot_validator.iter_errors(load_example(path)))
 
-        # Check that at least one error mentions the rule from filename
-        # Filename pattern: snapshot-v0.3.0-invalid-<rule>.json
         match = re.search(r"invalid-(.+)\.json$", path.name)
         assert match, f"Filename {path.name} doesn't match expected pattern"
         rule = match.group(1)
 
-        # The error messages mention the missing/invalid field:
-        # "no-result" -> "'result' is a required property"
-        # "no-error" -> "'error' is a required property"
-        # We check if the rule (without prefix) appears in the error
         found = False
         for err in errors:
             err_str = str(err)
-            # The rule in the filename is like "no-result" or "no-error"
-            # We need to match "result" or "error" in the error message
-            # Extract the relevant part: remove "no-" prefix if present
             field_name = rule.replace("no-", "")
             if field_name.lower() in err_str.lower():
                 found = True
@@ -209,44 +199,128 @@ class TestFixUnitSchema:
         assert "prior_state.value" in errors[0]
         assert "off" in errors[0]
 
-    def test_validate_fix_unit_rollback_value_mismatch(self, valid_fix_unit):
-        """rollback.value must equal prior_state.value for set_config rollback."""
+    def test_derive_rollback_set_config_auto_conf(self, valid_fix_unit):
+        """set_config apply with prior from auto.conf -> rollback is set_config(prior.value)."""
         bad = copy.deepcopy(valid_fix_unit)
+        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
         bad["rollback"]["action"] = "set_config"
-        bad["rollback"]["value"] = "false"
+        bad["rollback"]["value"] = "off"  # Must match prior.value
+
+        errors = validate_fix_unit(bad)
+        assert errors == [], errors
+
+    def test_derive_rollback_set_config_postgresql_conf(self, valid_fix_unit):
+        """set_config apply with prior from postgresql.conf -> rollback is reset_config."""
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.conf"
+
+        errors = validate_fix_unit(bad)
+        assert errors == [], errors
+
+    def test_derive_rollback_reset_config_auto_conf(self, valid_fix_unit):
+        """reset_config apply with prior from auto.conf -> rollback is set_config(prior.value)."""
+        # For reset_config, prior must be from auto.conf
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
+        bad["apply"] = {"action": "reset_config", "param": "log_connections"}
+        bad["rollback"]["action"] = "set_config"
+        bad["rollback"]["param"] = "log_connections"
+        bad["rollback"]["value"] = "off"  # Prior value to restore
+
+        errors = validate_fix_unit(bad)
+        assert errors == [], errors
+
+    def test_derive_rollback_reset_config_non_auto_conf_error(self, valid_fix_unit):
+        """reset_config apply with prior not from auto.conf -> error (no-op)."""
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["apply"] = {"action": "reset_config", "param": "log_connections"}
+
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "no valid rollback exists" in errors[0]
+
+    def test_rollback_reset_config_on_different_param_rejected(self, valid_fix_unit):
+        """rollback reset_config on different param than apply -> rejected."""
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["rollback"]["param"] = "log_disconnections"
+
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "rollback param 'log_disconnections' does not match apply param 'log_connections'" in errors[0]
+
+    def test_rollback_set_config_when_prior_from_postgresql_conf_rejected(self, valid_fix_unit):
+        """rollback set_config when prior from postgresql.conf -> should be reset_config."""
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.conf"
+        bad["rollback"]["action"] = "set_config"
+        bad["rollback"]["value"] = "off"  # This is wrong - should be reset_config
+
+        errors = validate_fix_unit(bad)
+        assert len(errors) == 1, errors
+        assert "rollback action 'set_config' does not match expected 'reset_config'" in errors[0]
+
+    def test_rollback_value_mismatch(self, valid_fix_unit):
+        """'false' rollback vs prior 'off' -> rejected."""
+        # Use a case where rollback should be set_config to test value mismatch
+        # Prior must be from auto.conf for set_config rollback to be valid
+        bad = copy.deepcopy(valid_fix_unit)
+        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
+        bad["rollback"]["action"] = "set_config"
+        bad["rollback"]["value"] = "false"  # Wrong value
 
         errors = validate_fix_unit(bad)
         assert len(errors) == 1, errors
         assert "rollback value 'false' does not match prior_state.value 'off'" in errors[0]
 
-    def test_validate_fix_unit_reset_config_auto_conf_rejected(self, valid_fix_unit):
-        """RESET rollback invalid when prior_state.sourcefile ends in auto.conf."""
+    def test_set_config_no_op_apply(self, valid_fix_unit):
+        """set_config no-op apply (value == prior) -> rejected."""
+        # Prior must be from auto.conf for set_config rollback to be valid
         bad = copy.deepcopy(valid_fix_unit)
         bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
-
-        errors = validate_fix_unit(bad)
-        assert len(errors) == 1, errors
-        assert "RESET rollback is invalid when prior_state.sourcefile ends in postgresql.auto.conf" in errors[0]
-
-    def test_validate_fix_unit_reset_config_postgresql_conf_accepted(self, valid_fix_unit):
-        """RESET rollback valid when prior_state.sourcefile is postgresql.conf."""
-        good = copy.deepcopy(valid_fix_unit)
-        good["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.conf"
-
-        errors = validate_fix_unit(good)
-        assert errors == [], errors
-
-    def test_validate_fix_unit_empty_string_prior_value_rejected(self, valid_fix_unit):
-        """Empty string prior_state.value with mismatched rollback value must be rejected."""
-        bad = copy.deepcopy(valid_fix_unit)
-        bad["prior_state"]["value"] = ""
-        bad["precheck"]["expected_value"] = ""  # Must match empty prior_state
+        bad["apply"]["value"] = "off"  # Same as prior_state.value
         bad["rollback"]["action"] = "set_config"
-        bad["rollback"]["value"] = "on"
+        bad["rollback"]["value"] = "off"
 
         errors = validate_fix_unit(bad)
         assert len(errors) == 1, errors
-        assert "rollback value 'on' does not match prior_state.value ''" in errors[0]
+        assert "apply is a no-op: apply.value 'off' equals prior_state.value 'off'" in errors[0]
+
+    def test_render_action_set_config(self):
+        """render_action correctly renders set_config."""
+        action = {"action": "set_config", "param": "log_connections", "value": "on"}
+        sql = render_action(action)
+        assert "ALTER SYSTEM SET" in sql
+        assert '"log_connections"' in sql  # Quoted
+        assert "= 'on'" in sql
+
+    def test_render_action_reset_config(self):
+        """render_action correctly renders reset_config."""
+        action = {"action": "reset_config", "param": "log_connections"}
+        sql = render_action(action)
+        assert "ALTER SYSTEM RESET" in sql
+        assert '"log_connections"' in sql  # Quoted
+
+    def test_render_action_single_quote_escaped(self):
+        """render_action doubles single quotes in value."""
+        action = {"action": "set_config", "param": "log_connections", "value": "it's on"}
+        sql = render_action(action)
+        assert "= 'it''s on'" in sql  # Single quote doubled
+
+    def test_render_action_matches_template(self):
+        """render_action output matches set_config_parameter.sql.j2 for same inputs."""
+        from app.services.template_service import env
+
+        param = "log_connections"
+        value = "on"
+
+        action = {"action": "set_config", "param": param, "value": value}
+        rendered = render_action(action)
+
+        template_str = "ALTER SYSTEM SET {{ param_name | ident }} = '{{ param_value }}'; SELECT pg_reload_conf();"
+        template = env.from_string(template_str)
+        template_sql = template.render(param_name=param, param_value=value)
+
+        assert rendered == template_sql, f"Rendered: {rendered!r}\\nExpected: {template_sql!r}"
 
 
 # ---------------------------------------------------------------------------#

@@ -5,14 +5,16 @@ validate_fix_unit() returns ALL errors it can find. An empty list means the fix 
 Rules:
 1. JSON Schema validation of fix_unit against catalog/specs/contracts/fix-unit-v1.json
 2. precheck.expected_value must equal prior_state.value (compare-and-swap safety)
-3. rollback must restore prior_state.value:
-   - rollback.action must be compatible with apply.action:
-     * set_config + reset_config is valid (revert to default)
-     * reset_config + set_config is NOT valid (can't set a default value from reset)
-     * set_config + set_config is valid (revert to prior value)
-   - rollback.param must match apply.param
-   - set_config: rollback.value == prior_state.value (exact string compare)
-   - reset_config: invalid when prior_state.sourcefile ends in postgresql.auto.conf
+3. rollback must equal derive_rollback(prior_state, apply):
+   - derive_rollback computes the appropriate rollback action based on prior state and apply
+   - set_config apply on auto.conf -> rollback is set_config(param, prior.value)
+   - set_config apply on non-auto.conf -> rollback is reset_config(param)
+   - reset_config apply on auto.conf -> rollback is set_config(param, prior.value)
+   - reset_config apply on non-auto.conf -> raises ValueError (no-op, no valid rollback)
+   - rollback param must match apply param
+   - rollback value must equal prior_state.value (for set_config rollback)
+   - set_config apply with apply.value == prior_state.value is an error (no-op)
+   - reset_config apply on non-auto.conf is an error (no-op)
 """
 import json
 from pathlib import Path
@@ -53,57 +55,62 @@ def validate_fix_unit(fix_unit: dict) -> list[str]:
                 f"prior_state.value ({prior_state_value!r})"
             )
 
-    # Rule 3: rollback must restore prior_state.value
-    # apply and rollback are now typed actions, not SQL strings
+    # Rule 3: rollback must equal derive_rollback(prior_state, apply)
     apply_action = fix_unit.get("apply")
     rollback_action = fix_unit.get("rollback")
 
     if apply_action and rollback_action:
         apply_type = apply_action.get("action")
-        rollback_type = rollback_action.get("action")
         apply_param = apply_action.get("param")
+        apply_value = apply_action.get("value", "")
+
+        rollback_type = rollback_action.get("action")
         rollback_param = rollback_action.get("param")
+        rollback_value = rollback_action.get("value", "")
 
-        # Action type compatibility:
-        # - set_config + set_config: valid (revert to prior value)
-        # - set_config + reset_config: valid (revert to default)
-        # - reset_config + set_config: invalid (can't set from reset)
-        # - reset_config + reset_config: invalid (already reset)
-        if apply_type == "set_config":
-            if rollback_type not in ("set_config", "reset_config"):
-                errors.append(
-                    f"rollback action {rollback_type!r} is not compatible with apply action {apply_type!r}"
-                )
-        elif apply_type == "reset_config":
-            if rollback_type != "set_config":
-                errors.append(
-                    f"rollback action {rollback_type!r} is not compatible with apply action {apply_type!r}"
-                )
+        # Check that rollback matches what derive_rollback would compute
+        # Import after REPO_ROOT is defined
+        from app.services.fix_unit_render import derive_rollback
 
-        # Check parameter names match (when rollback is set_config)
-        if rollback_type == "set_config" and apply_param != rollback_param:
+        try:
+            expected_rollback = derive_rollback(prior_state, apply_action)
+        except ValueError as e:
+            errors.append(str(e))
+            # If derive_rollback raises, we can't continue validation
+            return errors
+
+        # Rollback action must match exactly
+        if rollback_type != expected_rollback["action"]:
+            errors.append(
+                f"rollback action {rollback_type!r} does not match expected {expected_rollback['action']!r}"
+            )
+
+        # Rollback param must match apply param
+        if rollback_param != apply_param:
             errors.append(
                 f"rollback param {rollback_param!r} does not match apply param {apply_param!r}"
             )
 
-        # Value check for set_config rollback (only when rollback is set_config)
+        # For set_config rollback, value must equal prior_state.value
         if rollback_type == "set_config":
-            rollback_value = rollback_action.get("value", "")
-            # Use is not None check, not truthiness: empty string prior value must be checked
-            if prior_state_value is not None:
-                if rollback_value != prior_state_value:
-                    errors.append(
-                        f"rollback value {rollback_value!r} does not match prior_state.value {prior_state_value!r}"
-                    )
-
-        # Check sourcefile for reset_config rollback (only valid when not in auto.conf)
-        elif rollback_type == "reset_config":
-            sourcefile = prior_state.get("sourcefile")
-            # Use is not None check, not truthiness: empty string sourcefile means None
-            if sourcefile is not None and sourcefile.endswith("postgresql.auto.conf"):
+            if rollback_value != prior_state_value:
                 errors.append(
-                    f"RESET rollback is invalid when prior_state.sourcefile ends in postgresql.auto.conf "
-                    f"({sourcefile!r}): RESET would drop the value instead of restoring it"
+                    f"rollback value {rollback_value!r} does not match prior_state.value {prior_state_value!r}"
+                )
+
+        # Check for no-op cases
+        # set_config with apply.value == prior_state.value is a no-op
+        if apply_type == "set_config" and apply_value == prior_state_value:
+            errors.append(
+                f"apply is a no-op: apply.value {apply_value!r} equals prior_state.value {prior_state_value!r}"
+            )
+
+        # reset_config on non-auto.conf is a no-op
+        if apply_type == "reset_config":
+            sourcefile = prior_state.get("sourcefile")
+            if sourcefile is None or not sourcefile.endswith("postgresql.auto.conf"):
+                errors.append(
+                    f"apply is a no-op: RESET on non-auto.conf ({sourcefile!r}) does nothing"
                 )
 
     return errors

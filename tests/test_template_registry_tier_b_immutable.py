@@ -209,5 +209,120 @@ class TestTemplateImmutability:
         assert row[1] == "draft"  # Draft status
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-m", "tier_b"])
+@pytest.fixture(scope="function")
+def test_active_name():
+    """Generate a unique template name starting with test_active_ for testing."""
+    import uuid
+    return f"test_active_{uuid.uuid4().hex[:12]}"
+
+
+@pytest.fixture(scope="function")
+def cleanup_active_template(test_active_name):
+    """Cleanup template after test."""
+    yield
+    try:
+        import psycopg2
+        db_url = _get_db_url()
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM templates WHERE template_name = %s", (test_active_name,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def mock_embedding():
+    """Mock embedding generation to avoid Ollama dependency."""
+    from unittest.mock import patch
+    with patch("app.services.vector_service.get_embedding") as mock:
+        mock.return_value = [0.0] * 768
+        yield mock
+
+
+@pytest.mark.tier_b
+class TestTemplateActiveVersion:
+    """Tests for active version management."""
+
+    def test_approve_v1_then_v2_archives_v1(self, test_active_name, cleanup_active_template):
+        """approve v1, ingest changed content, approve v2 -> exactly one active row (v2); v1 archived."""
+        # Ingest and approve v1
+        ingest_template(
+            template_name=test_active_name,
+            description="Version 1",
+            sql_template="SELECT 1;",
+        )
+        approve_template(test_active_name, 1, "test_approver")
+
+        # Ingest v2 with different content
+        ingest_template(
+            template_name=test_active_name,
+            description="Version 2",
+            sql_template="SELECT 2;",
+        )
+
+        # Approve v2
+        approve_template(test_active_name, 2, "test_approver")
+
+        # Verify v1 is archived and v2 is active
+        db_url = _get_db_url()
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("SELECT version, status FROM templates WHERE template_name = %s", (test_active_name,))
+        rows = cur.fetchall()
+        conn.close()
+
+        assert len(rows) == 2
+        status = {r[0]: r[1] for r in rows}
+        assert status[1] == "archived"
+        assert status[2] == "active"
+
+    def test_get_active_template_version_returns_v2_after_re_approval(self, test_active_name, cleanup_active_template):
+        """get_active_template_version returns v2 after approving it."""
+        # Ingest and approve v1
+        ingest_template(
+            template_name=test_active_name,
+            description="Version 1",
+            sql_template="SELECT 1;",
+        )
+        approve_template(test_active_name, 1, "test_approver")
+
+        # Ingest and approve v2
+        ingest_template(
+            template_name=test_active_name,
+            description="Version 2",
+            sql_template="SELECT 2;",
+        )
+        approve_template(test_active_name, 2, "test_approver")
+
+        # get_active_template_version should return v2
+        active = get_active_template_version(test_active_name)
+        assert active is not None
+        assert active["version"] == 2
+        assert active["sql_template"] == "SELECT 2;"
+
+    def test_approve_non_draft_changes_nothing(self, test_active_name, cleanup_active_template):
+        """Approving a non-draft version changes nothing."""
+        # Ingest and approve v1
+        ingest_template(
+            template_name=test_active_name,
+            description="Original",
+            sql_template="SELECT 1;",
+        )
+        approve_template(test_active_name, 1, "test_approver")
+
+        # Try to approve again (non-draft)
+        result = approve_template(test_active_name, 1, "test_approver")
+
+        # Should return False (no rows updated)
+        assert result is False
+
+        # Template should still be active
+        db_url = _get_db_url()
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM templates WHERE template_name = %s AND version = 1", (test_active_name,))
+        row = cur.fetchone()
+        conn.close()
+        assert row[0] == "active"

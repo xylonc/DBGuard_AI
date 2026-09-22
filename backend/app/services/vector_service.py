@@ -149,26 +149,35 @@ def search_templates(query: str, top_k: int = 5) -> list[dict]:
 
 
 def approve_template(template_name: str, version: int, approved_by: str) -> bool:
-    """Activate a human-reviewed SQL template version for proposal retrieval.
-    
+    """Approve one draft version and archive the previously active version, atomically.
+
     Approval applies to the exact template_name + version combination.
-    The sql_template and template_hash must match the stored values.
+    If the requested version is not a draft, nothing is changed and False is returned.
     """
     conn = psycopg2.connect(settings.database_url)
     try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE templates
-            SET status = 'active', approved_by = %s,
-                approved_at = NOW(), updated_at = NOW()
-            WHERE template_name = %s AND version = %s AND status = 'draft'
-        """, (approved_by, template_name, version))
-        success = cur.rowcount == 1
-        conn.commit()
-        return success
-    except Exception:
-        conn.rollback()
-        raise
+        with conn:  # one transaction: commit on success, rollback on any exception
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM templates WHERE template_name = %s AND version = %s "
+                    "AND status = 'draft' FOR UPDATE",
+                    (template_name, version),
+                )
+                if cur.fetchone() is None:
+                    return False
+                # Archive first: the unique index is checked per statement.
+                cur.execute(
+                    "UPDATE templates SET status = 'archived', updated_at = NOW() "
+                    "WHERE template_name = %s AND status = 'active'",
+                    (template_name,),
+                )
+                cur.execute(
+                    "UPDATE templates SET status = 'active', approved_by = %s, "
+                    "approved_at = NOW(), updated_at = NOW() "
+                    "WHERE template_name = %s AND version = %s",
+                    (approved_by, template_name, version),
+                )
+                return True
     finally:
         conn.close()
 

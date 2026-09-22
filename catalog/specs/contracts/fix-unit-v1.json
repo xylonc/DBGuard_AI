@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbguardai.local/schemas/fix-unit-v1.json",
   "title": "DBGuardAI fix unit contract (version 1)",
-  "description": "Contract for a single fix unit: one remediation action on one control, including precheck, apply, verify, and rollback steps.",
+  "description": "Contract for a single fix unit: one remediation action on one control, including precheck, apply, verify, and rollback steps. apply and rollback are typed actions rendered deterministically to SQL.",
   "type": "object",
   "additionalProperties": false,
   "required": ["fix_id", "spec_id", "template_id", "template_version", "params", "prior_state", "precheck", "apply", "verify", "rollback", "requires"],
@@ -40,18 +40,16 @@
       "$ref": "#/$defs/precheck"
     },
     "apply": {
-      "description": "The SQL to apply the fix.",
-      "type": "string",
-      "minLength": 1
+      "description": "The typed action to apply the fix (set_config or reset_config).",
+      "$ref": "#/$defs/action"
     },
     "verify": {
       "description": "Verification step: confirms the control now passes after the fix.",
       "$ref": "#/$defs/verify"
     },
     "rollback": {
-      "description": "SQL to restore prior_state. Depends on where the value was set (postgresql.conf vs postgresql.auto.conf).",
-      "type": "string",
-      "minLength": 1
+      "description": "Typed action to restore prior_state. Depends on where the value was set (postgresql.conf vs postgresql.auto.conf).",
+      "$ref": "#/$defs/action"
     },
     "requires": {
       "description": "Required action after apply: none (instant), reload, or restart.",
@@ -124,6 +122,47 @@
     "requires": {
       "description": "Action required after apply. Derived from pg_settings.context.",
       "enum": ["none", "reload", "restart"]
+    },
+    "action": {
+      "description": "Typed action for apply or rollback. Deterministic SQL renderer converts to ALTER SYSTEM statements.",
+      "oneOf": [
+        {
+          "description": "Set a configuration parameter to a specific value.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "param", "value"],
+          "properties": {
+            "action": {
+              "const": "set_config"
+            },
+            "param": {
+              "description": "PostgreSQL GUC parameter name.",
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_.]*$"
+            },
+            "value": {
+              "description": "Target value (string, may be empty).",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Reset a configuration parameter to its default.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "param"],
+          "properties": {
+            "action": {
+              "const": "reset_config"
+            },
+            "param": {
+              "description": "PostgreSQL GUC parameter name.",
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_.]*$"
+            }
+          }
+        }
+      ]
     }
   }
 }

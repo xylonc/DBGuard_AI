@@ -17,12 +17,19 @@
     "expected_value": "different_value",
     "query": "SHOW log_connections"
   },
-  "apply": "ALTER SYSTEM SET log_connections = 'on'; SELECT pg_reload_conf();",
+  "apply": {
+    "action": "set_config",
+    "param": "log_connections",
+    "value": "on"
+  },
   "verify": {
     "spec_check_ref": "cis-pg17-v1.1.0:3.1.20",
     "expected_value": "on",
     "query": "SHOW log_connections"
   },
-  "rollback": "ALTER SYSTEM RESET log_connections; SELECT pg_reload_conf();",
+  "rollback": {
+    "action": "reset_config",
+    "param": "log_connections"
+  },
   "requires": "reload"
 }

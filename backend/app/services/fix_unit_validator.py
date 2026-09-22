@@ -105,12 +105,5 @@ def validate_fix_unit(fix_unit: dict) -> list[str]:
                 f"apply is a no-op: apply.value {apply_value!r} equals prior_state.value {prior_state_value!r}"
             )
 
-        # reset_config on non-auto.conf is a no-op
-        if apply_type == "reset_config":
-            sourcefile = prior_state.get("sourcefile")
-            if sourcefile is None or not sourcefile.endswith("postgresql.auto.conf"):
-                errors.append(
-                    f"apply is a no-op: RESET on non-auto.conf ({sourcefile!r}) does nothing"
-                )
 
     return errors

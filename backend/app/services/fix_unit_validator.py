@@ -13,12 +13,13 @@ Rules:
 """
 import json
 import re
+from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-REPO_ROOT = __file__.rsplit("/", 4)[0]
-CONTRACTS_DIR = f"{REPO_ROOT}/catalog/specs/contracts"
-FIX_UNIT_SCHEMA = json.load(open(f"{CONTRACTS_DIR}/fix-unit-v1.json"))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CONTRACTS_DIR = REPO_ROOT / "catalog" / "specs" / "contracts"
+FIX_UNIT_SCHEMA = json.load(open(CONTRACTS_DIR / "fix-unit-v1.json", encoding="utf-8"))
 FIX_UNIT_VALIDATOR = Draft202012Validator(FIX_UNIT_SCHEMA)
 
 # Pattern to parse ALTER SYSTEM SET param_name = 'value'

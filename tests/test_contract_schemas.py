@@ -221,22 +221,21 @@ class TestFixUnitSchema:
         assert "off" in errors[0]
 
     def test_validate_fix_unit_bad_rollback_substring_bug(self, valid_fix_unit):
-        """Rollback SET value 'off' does not match prior_state.value 'off' (substring bug test).
+        """Rollback SET value 'false' does not match prior_state.value 'off' (substring bug test).
 
         This test verifies the fix for the substring matching bug where rollback
         "ALTER SYSTEM SET log_connections = off" would incorrectly pass because
         the substring "on" appears inside "off". With the correct parse-based
-        comparison, 'off' != 'off' correctly fails validation.
-
-        The bug was that substring "on" in "off" would incorrectly match.
+        comparison, 'false' != 'off' correctly fails validation.
         """
         bad = copy.deepcopy(valid_fix_unit)
-        # The valid_fix_unit has prior_state.value = 'off'
-        # The rollback value 'off' equals prior_state.value, so this should pass
-        bad["rollback"] = "ALTER SYSTEM SET log_connections = 'off'; SELECT pg_reload_conf();"
+        bad["rollback"] = "ALTER SYSTEM SET log_connections = 'false'; SELECT pg_reload_conf();"
 
         errors = validate_fix_unit(bad)
-        assert errors == [], errors
+        assert len(errors) == 1, errors
+        assert "SET value" in errors[0]
+        assert "false" in errors[0]
+        assert "off" in errors[0]
 
     def test_validate_fix_unit_good_rollback_value_match(self, valid_fix_unit):
         """Rollback SET value 'off' matches prior_state.value 'off'."""

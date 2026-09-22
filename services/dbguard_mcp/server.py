@@ -5,12 +5,20 @@ from typing import Any
 from urllib.parse import quote
 import requests
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 DBGUARD_API_URL = os.getenv("DBGUARD_API_URL", "http://api:8000").rstrip("/")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("DBGUARD_MCP_TIMEOUT_SECONDS", "60"))
 SANDBOX_TIMEOUT_SECONDS = float(os.getenv("DBGUARD_MCP_SANDBOX_TIMEOUT_SECONDS", "600"))
+
+MCP_PORT = int(os.getenv("DBGUARD_MCP_PORT", "8001"))
+TRANSPORT_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", f"mcp:{MCP_PORT}"],
+    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+)
 
 mcp = MCPServer(
     "DBGuardAI",
@@ -179,8 +187,9 @@ async def health(_: Request) -> JSONResponse:
 if __name__ == "__main__":
     mcp.run(
         transport="streamable-http",
-        host="0.0.0.0",
-        port=int(os.getenv("DBGUARD_MCP_PORT", "8001")),
+        host=os.getenv("DBGUARD_MCP_HOST", "0.0.0.0"),
+        port=MCP_PORT,
+        transport_security=TRANSPORT_SECURITY,
         streamable_http_path="/mcp",
         stateless_http=True,
         json_response=True,

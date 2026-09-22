@@ -12,7 +12,7 @@ by immutable SHA-256 digest. It adds:
 - `config/config.yaml`: model, MCP allowlist and disabled toolsets;
 - `context/HERMES.md`: non-negotiable DBGuard operating rules;
 - `context/SOUL.md`: plain-language assistant identity;
-- `skills/dbguard-hardening/SKILL.md`: the complete proposal workflow;
+- `skills/dbguard-hardening/SKILL.md`: proposal and disposable sandbox workflows;
 - `configure.py`: creates runtime config and hashes the dashboard password;
 - `docker-entrypoint.sh`: seeds the persistent HERMES home, then delegates to
   the official image entrypoint.
@@ -87,7 +87,11 @@ it does not expand the agent's authority.
    rollback considerations.
 6. A DBA or engineer decides whether to approve and apply it outside DBGuardAI.
 
-HERMES never claims that proposed SQL was tested or executed.
+For disposable sandbox testing, HERMES uses the exact-spec assessment and
+prepare/run/status tools. It reports a test outcome only from returned evidence,
+including rollback/cleanup and the bundle link. It never implies that a sandbox
+success changed the real target. See the [sandbox integration guide](../services/sandbox_poc/HERMES_INTEGRATION.md)
+for host API setup, live verification and remaining approval/RAG requirements.
 
 ## Local endpoints
 

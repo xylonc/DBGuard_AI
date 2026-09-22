@@ -113,3 +113,21 @@ def test_mcp_tool_surface_parity():
 
 if __name__ == "__main__":
     test_mcp_tool_surface_parity()
+
+
+def test_container_host_is_accepted_without_allowing_arbitrary_hosts():
+    from starlette.testclient import TestClient
+    from services.dbguard_mcp.server import mcp, MCP_PORT, TRANSPORT_SECURITY
+
+    app = mcp.streamable_http_app(
+        transport_security=TRANSPORT_SECURITY, stateless_http=True, json_response=True)
+    request = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-03-26", "capabilities": {},
+        "clientInfo": {"name": "host-regression", "version": "1"}}}
+    with TestClient(app) as client:
+        for host, expected in [(f"mcp:{MCP_PORT}", 200),
+                               (f"127.0.0.1:{MCP_PORT}", 200),
+                               ("untrusted.example", 421)]:
+            response = client.post("/mcp", json=request, headers={
+                "Host": host, "Accept": "application/json, text/event-stream"})
+            assert response.status_code == expected

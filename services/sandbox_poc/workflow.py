@@ -85,7 +85,7 @@ class RemediationLoop:
                 choices = [{'candidate_id': key, 'template': value.identity(),
                             'rendered_sql': value.render()} for key, value in available.items()]
                 decision = RevisionDecision.model_validate(self.reviser(
-                    feedback_for(state['attempts'], choices, current_id)))
+                    feedback_for(state['attempts'], choices, current_id, fix['apply'])))
                 revision = decision.model_dump()
                 if decision.action == 'manual_review':
                     return {'done': True, 'status': 'NEEDS_REVIEW',

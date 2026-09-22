@@ -30,8 +30,10 @@ failure. Each test still starts from a fresh disposable baseline and performs
 rollback/cleanup before the model sees the failure. Maximum three tests and two
 revision calls per run. Contract or cleanup failures terminate immediately.
 
-The LLM receives scoped findings, failed phase, rollback/health results and a list
-of approved alternatives. It does not receive the raw snapshot, registry DSN,
+The LLM receives the tested template SQL, scoped setting values/context, findings,
+failed phase, rollback/health results and a list of approved alternatives. Missing
+post-apply measurements remain unknown. Model explanations are advisory; only the
+measured acceptance gates establish success. It does not receive the raw snapshot, registry DSN,
 roles or credentials. It returns a diagnosis, proposed improvement, and either an
 approved candidate ID or `manual_review`. The latter is reported as `NEEDS_REVIEW`.
 The suggestion is untested text, not executable SQL. The model has no tools.
@@ -77,10 +79,20 @@ can reach that binding in your environment. If a different binding is necessary,
 choose it explicitly; this local API does not add authentication.
 
 ```sh
-docker compose -f deploy/compose.yaml -f deploy/compose.local-sandbox.yaml up -d --build mcp hermes
+docker compose --env-file .env -f deploy/compose.yaml -f deploy/compose.local-sandbox.yaml up -d --build api mcp hermes
 ```
 
-HERMES still needs its own model/dashboard configuration from `.env.example`.
+For a host-run MCP bridge, use:
+
+```sh
+DBGUARD_MCP_HOST=127.0.0.1 DBGUARD_API_URL=http://127.0.0.1:8011 python -m services.dbguard_mcp.server
+```
+
+A HERMES container using that host bridge needs `mcp:host-gateway` in its extra
+hosts. The bridge permits `mcp:8001` as well as localhost while retaining DNS
+rebinding protection. The Compose network already resolves the `mcp` service.
+
+HERMES needs its model/dashboard configuration from `.env.example`.
 The registry used by the host API must contain the same approved records used
 by its search endpoints. HERMES and MCP receive no Docker socket.
 
@@ -131,5 +143,25 @@ Automated tests exercise actual MCP tool functions against the existing API,
 and real disposable PostgreSQL tests exercise failed candidate -> revised candidate
 -> reassessment -> exact rollback -> cleanup. Model responses in those tests are
 scripted. These tests do not prove a live HERMES conversation or model quality.
-At implementation time, no local HERMES container or project model settings file
-was available, so a genuine chat/model run still requires configuration.
+Live verification on 2026-09-22 used Ollama Cloud `gpt-oss:20b` with the pinned
+HERMES image, a host API on port 8011, and a host MCP bridge on port 8001:
+
+- HERMES chat called the real spec-assessment endpoint for an uploaded collector
+  snapshot and correctly reported failing controls 3.1.20 / 3.1.25 and manual
+  control 3.1.14. All nine MCP tools were discoverable. This exercised chat over
+  the HERMES API; dashboard health/login routing was checked, not a browser chat.
+- A deliberately faulty synthetic candidate kept `log_connections` off. The live
+  reviewer selected a different fixture candidate, and the second PostgreSQL
+  attempt became VERIFIED: target PASS, no supplied-spec regressions, healthy
+  database, exact scoped rollback and cleanup. Source and registry were unchanged.
+- The first review's restart explanation was incorrect. Adding the actual tested
+  SQL and scoped setting context produced the correct diagnosis on a fresh live
+  run. This is one observed scenario, not proof of general model reliability.
+- Fixture approval records were labelled DEMO_FIXTURE_ONLY. This does not prove
+  team-approved RAG retrieval or a complete HERMES-driven prepare/run/bundle chat.
+  Those still need a reviewed registry and embedding configuration.
+
+Private provider/dashboard settings stay in the ignored local `.env`. Live
+responses and database evidence are local artifacts, not committed credentials.
+The dashboard is at `http://127.0.0.1:9119`; use the local dashboard credentials.
+The local host API/MCP processes must remain running for chat tools to work.

@@ -34,6 +34,10 @@ class LLMReviser:
             "candidate plausibly addresses the failure. Never repeat the same SQL. "
             "If no candidate fits, explain the needed correction for human approval "
             "and return manual_review. Never claim the proposed correction was tested. "
+            "Use tested_sql and setting_metadata as evidence. A reload timeout alone "
+            "does not prove a restart requirement. Distinguish observations from hypotheses; "
+            "if the after value is absent it is unknown. Describe the selected candidate's "
+            "actual change, not an extra action it does not perform. "
             "Do not return SQL to execute or invent candidate IDs."
         )
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -52,13 +56,25 @@ class LLMReviser:
             raise ContractError('LLM revision unavailable or malformed; no further fix was executed') from exc
 
 
-def feedback_for(attempts, candidates, current_id):
+def feedback_for(attempts, candidates, current_id, tested_sql):
     latest = attempts[-1]
+    # Only expose this control's operational metadata, not the raw settings rows.
+    def scoped_setting(snapshot):
+        row = next((row for row in snapshot.get('baseline', {}).get('settings', [])
+                    if row.get('name') == 'log_connections'), {})
+        return {key: row[key] for key in ('setting', 'context', 'pending_restart') if key in row}
+
     # Exclude raw SQL errors, source identities, role data and configuration paths.
     return {
         'control': 'log_connections', 'required_value': 'on',
         'attempt_number': len(attempts), 'maximum_attempts': 3,
         'current_candidate_id': current_id,
+        'tested_sql': tested_sql,
+        'setting_metadata': {
+            'before_apply': scoped_setting(latest.get('before', {})),
+            'after_apply': scoped_setting(latest.get('after', {})),
+            'activation_used': 'reload followed by new-connection checks',
+        },
         'failure_phase': latest.get('phase_before_rollback', latest.get('phase')),
         'rollback_verified': latest.get('rollback_verified', False),
         'health_after_apply': latest.get('health_after_apply'),

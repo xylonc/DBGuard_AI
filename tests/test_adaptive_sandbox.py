@@ -52,6 +52,11 @@ def test_failed_attempt_routes_through_llm_to_changed_approved_fix(engine, snaps
     assert reviewer.call_count == 1
     feedback = reviewer.call_args.args[0]
     assert feedback['failure_phase'] == 'apply'
+    assert feedback['tested_sql'] == BAD
+    assert feedback['setting_metadata']['before_apply'] == {
+        'setting': 'off', 'context': 'superuser-backend', 'pending_restart': False}
+    assert feedback['setting_metadata']['after_apply'] == {}  # Never fabricate a measurement.
+    assert 'sourcefile' not in str(feedback) and 'source' not in feedback['setting_metadata']
     assert 'baseline' not in feedback and 'snapshot' not in feedback
 
 

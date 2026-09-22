@@ -38,15 +38,19 @@ def ingest_template(
     template_name: str,
     description: str,
     sql_template: str,
-    version: int = 1,
+    version: int | None = None,  # None = auto-increment, otherwise explicit version
     tags: list[str] = None,
     risk_level: str = None,
     pg_version: str = None,
 ) -> dict:
     """Ingest a single template into the templates table with embedding.
     
-    New templates are always created as 'draft' status. Approval must happen
-    separately through the template approval flow.
+    Templates are immutable: once stored, their content cannot be changed.
+    - If the latest version for template_name has identical sql_template -> return it (no-op).
+    - If it differs -> INSERT new version (max + 1) with status 'draft'.
+    - Explicit version can be provided for first version of new template.
+    
+    Approval must happen separately through the template approval flow.
     """
     tags = tags or []
     embedding = get_embedding(description)
@@ -56,25 +60,48 @@ def ingest_template(
     conn = psycopg2.connect(settings.database_url)
     try:
         cur = conn.cursor()
-        # Insert or update - if template exists, increment version
-        # New content always creates a new draft version
+        
+        # Find the latest version for this template_name
+        cur.execute("""
+            SELECT id, version, sql_template, template_hash, status
+            FROM templates
+            WHERE template_name = %s
+            ORDER BY version DESC
+            LIMIT 1
+        """, (template_name,))
+        latest = cur.fetchone()
+        
+        if latest:
+            latest_id, latest_version, latest_sql, latest_hash, latest_status = latest
+            
+            # If content hash matches, this is a no-op - return the existing row
+            if latest_hash == template_hash:
+                conn.commit()
+                result = {
+                    "id": latest_id,
+                    "template_name": template_name,
+                    "version": latest_version,
+                    "status": latest_status,
+                    "created": False,  # No new row created
+                }
+                print(f"   ⏭️  {template_name} v{latest_version} unchanged (hash match)")
+                return result
+            
+            # Content differs -> create new version (latest + 1)
+            new_version = latest_version + 1
+        else:
+            # No existing template -> create version 1
+            new_version = version if version is not None else 1
+        
+        # INSERT new version (never UPDATE)
         cur.execute("""
             INSERT INTO templates
                 (template_name, version, description, sql_template, template_hash,
                  tags, risk_level, pg_version, embedding, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (template_name, version) DO UPDATE SET
-                description = EXCLUDED.description,
-                sql_template = EXCLUDED.sql_template,
-                template_hash = EXCLUDED.template_hash,
-                tags = EXCLUDED.tags,
-                risk_level = EXCLUDED.risk_level,
-                pg_version = EXCLUDED.pg_version,
-                embedding = EXCLUDED.embedding,
-                updated_at = NOW()
             RETURNING id, template_name, version, status
         """, (
-            template_name, version, description, sql_template, template_hash,
+            template_name, new_version, description, sql_template, template_hash,
             tags, risk_level, pg_version, embedding_array, "draft",
         ))
 
@@ -82,11 +109,12 @@ def ingest_template(
         conn.commit()
         result = {
             "id": row[0],
-            "template_name": row[1],
+            "template_name": template_name,
             "version": row[2],
             "status": row[3],
+            "created": True,  # New row was created
         }
-        print(f"   ✅ {template_name} v{version} ingested (id={row[0]})")
+        print(f"   ✅ {template_name} v{row[2]} ingested (id={row[0]})")
         return result
     finally:
         conn.close()
@@ -262,13 +290,12 @@ def ingest_all_templates(templates_dir: str = None):
         risk_level = "medium"
         pg_version = "12+"
 
-        # Ingest as draft with default version 1
-        # (If run again, will create version 2, etc.)
+        # Ingest as draft - version is auto-determined by ingest_template
+        # (version 1 for new templates, or N+1 for changed content)
         result = ingest_template(
             template_name=template_name,
             description=description,
             sql_template=sql_template,
-            version=1,  # Start with version 1 for each file
             tags=tags,
             risk_level=risk_level,
             pg_version=pg_version

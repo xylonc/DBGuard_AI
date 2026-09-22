@@ -54,7 +54,9 @@ class TestTemplateRegistryPure:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
-            mock_cursor.fetchone.return_value = [1, "test_template", 1, "draft"]
+            # First call to fetchone (SELECT latest version) returns None (no existing template)
+            # Second call to fetchone (INSERT RETURNING) returns the new row
+            mock_cursor.fetchone.side_effect = [None, [1, "test_template", 1, "draft"]]
             mock_connect.return_value = mock_conn
             mock_embedding.return_value = [0.1] * 768
 
@@ -69,10 +71,14 @@ class TestTemplateRegistryPure:
             assert result["template_name"] == "test_template"
             assert result["version"] == 1
 
-            mock_cursor.execute.assert_called_once()
-            call_args = mock_cursor.execute.call_args[0][0]
-            assert "INSERT INTO templates" in call_args
-            assert "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s" in call_args
+            mock_cursor.execute.assert_called()
+            # Verify INSERT was called (not ON CONFLICT UPDATE)
+            calls = [call[0][0] for call in mock_cursor.execute.call_args_list]
+            insert_calls = [c for c in calls if "INSERT INTO templates" in c]
+            assert len(insert_calls) >= 1
+            # Verify no UPDATE calls
+            update_calls = [c for c in calls if "UPDATE templates" in c]
+            assert len(update_calls) == 0
 
     def test_template_search_filters_draft_templates_with_mock(self):
         """Test that search returns only active templates (mocked DB)."""

@@ -57,5 +57,9 @@ mcp_servers:
         - search_approved_knowledge
         - search_approved_templates
         - validate_and_render_proposal
+        - get_snapshot_spec_assessment
+        - prepare_sandbox_handoff
+        - run_sandbox_handoff
+        - get_sandbox_handoff_status
       prompts: false
       resources: false

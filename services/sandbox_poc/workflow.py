@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -10,6 +11,7 @@ from .provenance import reconstruct, reconstruction_plan, rollback_sql, setting_
 from .runtime import DisposablePostgres
 from .shared import ContractError, SpecEngine, digest, validate_contract
 from .templates import ApprovedTemplate
+from .adaptive import RevisionDecision, feedback_for
 
 CONTROL = "cis-pg17-v1.1.0:3.1.20"
 
@@ -18,17 +20,22 @@ class LoopState(TypedDict):
     attempts: list[dict]
     done: bool
     status: str
+    revisions: list[dict]
 
 
 class RemediationLoop:
     def __init__(self, engine: SpecEngine, template: ApprovedTemplate,
-                 runtime_factory=DisposablePostgres, max_attempts: int = 3):
+                 runtime_factory=DisposablePostgres, max_attempts: int = 3,
+                 reviser=None, alternatives=(), refresh_template=None):
         if type(max_attempts) is not int or not 1 <= max_attempts <= 3:
             raise ContractError("Attempt limit must be 1, 2 or 3")
         self.engine = engine
         self.template = template
         self.runtime_factory = runtime_factory
         self.max_attempts = max_attempts
+        self.reviser = reviser
+        self.alternatives = tuple(alternatives)
+        self.refresh_template = refresh_template
 
     def run(self, snapshot: dict, assessment: dict) -> dict:
         snapshot = copy.deepcopy(snapshot)
@@ -60,11 +67,54 @@ class RemediationLoop:
             "rollback": rollback_sql(snapshot), "requires": "reload",
         }
         validate_contract(fix, "fix-unit-v1.json")
+        current_template = self.template
+        current_id = 'initial'
+        used_sql = set()
+
+        def sql_identity(sql):
+            # Whitespace/comment-only changes are not improved fixes.
+            return re.sub(r'\s+', ' ', re.sub(r'--[^\n]*', '', sql)).strip()
+
+        def revise(state: LoopState):
+            nonlocal fix, current_template, current_id
+            available = {}
+            try:
+                for index, candidate in enumerate(self.alternatives):
+                    if sql_identity(candidate.render()) not in used_sql:
+                        available[f'alternative-{index + 1}'] = candidate
+                choices = [{'candidate_id': key, 'template': value.identity(),
+                            'rendered_sql': value.render()} for key, value in available.items()]
+                decision = RevisionDecision.model_validate(self.reviser(
+                    feedback_for(state['attempts'], choices, current_id)))
+                revision = decision.model_dump()
+                if decision.action == 'manual_review':
+                    return {'done': True, 'status': 'NEEDS_REVIEW',
+                            'revisions': state['revisions'] + [revision]}
+                if decision.candidate_id not in available:
+                    raise ContractError('LLM did not select a different approved candidate')
+                candidate = available[decision.candidate_id]
+                if self.refresh_template:
+                    candidate = self.refresh_template(candidate)
+                if sql_identity(candidate.render()) in used_sql:
+                    raise ContractError('Revised candidate repeats previously tested SQL')
+                current_template, current_id = candidate, decision.candidate_id
+                fix = {**fix, 'apply': candidate.render(), 'template_version': candidate.version}
+                validate_contract(fix, 'fix-unit-v1.json')
+                return {'done': False, 'revisions': state['revisions'] + [revision]}
+            except Exception:
+                return {'done': True, 'status': 'NEEDS_REVIEW',
+                        'revisions': state['revisions'] + [{
+                            'action': 'manual_review',
+                            'diagnosis': 'Revision failed model, approval or candidate validation',
+                            'proposed_improvement': 'Review the failed gates and approved alternatives before another run'}]}
 
         def attempt(state: LoopState):
             runtime = self.runtime_factory()
             record = {"attempt": len(state["attempts"]) + 1, "run_id": runtime.run_id,
-                      "status": "FAILED", "phase": "create", "rollback_verified": False}
+                      "status": "FAILED", "phase": "create", "rollback_verified": False,
+                      "candidate_id": current_id, "template": current_template.identity(),
+                      "fix_unit_hash": digest(fix)}
+            used_sql.add(sql_identity(fix['apply']))
             terminal = False
             try:
                 runtime.start()
@@ -142,16 +192,24 @@ class RemediationLoop:
         graph = StateGraph(LoopState)
         graph.add_node("test_fix", attempt)
         graph.add_edge(START, "test_fix")
-        graph.add_conditional_edges("test_fix", lambda state: "end" if state["done"] else "retry",
-                                    {"end": END, "retry": "test_fix"})
-        state = graph.compile().invoke({"attempts": [], "done": False, "status": "PENDING"},
-                                       config={"recursion_limit": 10})
+        if self.reviser:
+            graph.add_node('revise_fix', revise)
+            graph.add_conditional_edges('test_fix', lambda state: 'end' if state['done'] else 'revise',
+                                        {'end': END, 'revise': 'revise_fix'})
+            graph.add_conditional_edges('revise_fix', lambda state: 'end' if state['done'] else 'retry',
+                                        {'end': END, 'retry': 'test_fix'})
+        else:
+            graph.add_conditional_edges("test_fix", lambda state: "end" if state["done"] else "retry",
+                                        {"end": END, "retry": "test_fix"})
+        state = graph.compile().invoke({"attempts": [], "done": False, "status": "PENDING", 'revisions': []},
+                                       config={"recursion_limit": 12})
         return {"schema_version": "sandbox-run-v1", "status": state["status"],
                 "snapshot_hash": digest(snapshot), "spec_set_hash": self.engine.spec_set_hash,
                 "spec_hashes": self.engine.hashes, "collector_hash": self.engine.collector_hash,
-                "template": self.template.identity(), "fix_unit": fix,
+                "template": current_template.identity(), "fix_unit": fix,
+                "retry_mode": 'adaptive' if self.reviser else 'repeat', 'revisions': state['revisions'],
                 "fix_unit_hash": digest(fix), "attempts": state["attempts"],
                 "regression_scope": list(self.engine.hashes),
                 "limitations": ["PostgreSQL 17; log_connections only; reload only",
                                 "Reconstructs settings in supplied specs, not the full database",
-                                "No bundle generation or real-target execution"]}
+                                "No real-target execution by the sandbox"]}

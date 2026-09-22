@@ -2,8 +2,8 @@
 
 DBGuardAI lets a database analyst describe a PostgreSQL hardening requirement
 in ordinary language and receive an evidence-backed SQL proposal for an
-engineer to verify. It lowers the knowledge and coding barrier without giving
-AI permission to connect to the target database or execute a command.
+engineer to verify. It lowers the knowledge and coding barrier while keeping real-target application under DBA control. Approved candidates
+can be tested through the isolated sandbox service.
 
 ## Current implemented scope
 
@@ -18,6 +18,20 @@ The new `POST /api/v1/sandbox/runs` accepts a [pinned upstream handoff](services
 and reads approved templates/evidence from the registry before testing. It is
 disabled by default and can run through a standalone API on the local Docker host.
 
+The [collector-to-review integration](services/sandbox_poc/INTEGRATION.md) reuses
+`collector/dbguard-collect.sh` output and exports verified runs as a DBA review ZIP
+with per-fix apply/rollback, HTML report and evidence. Run `scripts/review_handoff.py`
+with an exact handoff, or `scripts/demo_ui.py` with labelled disposable fixtures.
+For a reproducible collector-to-bundle run that cleans up before exiting, use
+`python scripts/demo_collector_handoff.py --output-dir data/collector-demo-run-1`.
+This uses Xylon's actual collector on a disposable PG17 source and clearly labels
+its approval records as demo fixtures. See the [demo guide](services/sandbox_poc/DEMO.md).
+
+The [HERMES integration](services/sandbox_poc/HERMES_INTEGRATION.md) connects
+uploaded snapshots to exact-spec assessment, prepared sandbox runs and reports.
+Adaptive mode adds an LLM failure-review node; changed candidates must come from
+approved templates. Live chat/model verification still requires local configuration.
+
 The existing HTTP sandbox endpoint and the following diagram describe the legacy
 path. That path has not been migrated to this loop and must not be treated as
 proof of exact rollback or regression verification.
@@ -27,7 +41,7 @@ flowchart LR
     A[Target PostgreSQL] -->|read-only metadata| B[Collector]
     B -->|JSON bundle 0.2.0| C[DBGuard snapshot API]
     U[Analyst in HERMES dashboard] -->|natural-language requirement| H[HERMES agent]
-    H -->|four allowed tools only| M[DBGuard MCP bridge]
+    H -->|legacy proposal tools| M[DBGuard MCP bridge]
     M --> C
     C --> S[Normalized snapshot]
     C --> R[(Approved guidance + SQL templates in pgvector)]
@@ -51,7 +65,7 @@ flowchart LR
 
 - `postgres`: PostgreSQL 16 with pgvector for knowledge and templates;
 - `api`: trusted FastAPI boundary for snapshots, retrieval and proposals;
-- `mcp`: a read-only HTTP MCP adapter exposing four DBGuard operations;
+- `mcp`: a restricted HTTP MCP adapter exposing nine DBGuard operations;
 - `hermes`: the official HERMES Agent v0.21.0 image, pinned by digest, with
   DBGuard instructions, its built-in ChatGPT-style dashboard, authentication,
   and persistent conversation state.
@@ -107,9 +121,14 @@ MCP allowlist contains only:
 | `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |
 | `search_approved_templates` | Finds only active, human-reviewed SQL templates |
 | `validate_and_render_proposal` | Validates proposal and renders review-only SQL from approved templates |
+| `get_snapshot_spec_assessment` | Assesses uploaded evidence with the exact installed sandbox specs |
+| `prepare_sandbox_handoff` | Pins uploaded evidence and approved template versions for testing |
+| `run_sandbox_handoff` | Requests isolated tests with bounded adaptive retries |
+| `get_sandbox_handoff_status` | Retrieves testing status and the review-bundle link |
 
-HERMES cannot use this bridge to ingest or approve content, access PostgreSQL,
-execute SQL, use the host shell, or operate Docker.
+HERMES can request isolated sandbox tests through the trusted API. It cannot
+ingest or approve content, connect directly to PostgreSQL, use the host shell,
+or operate Docker. Real-target application remains a separate DBA action.
 
 ## API endpoints
 

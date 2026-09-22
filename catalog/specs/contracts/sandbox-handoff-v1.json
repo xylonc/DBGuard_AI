@@ -116,6 +116,23 @@
     },
     "template_ref": {
       "$ref": "#/$defs/TemplateReference"
+    },
+    "retry_mode": {
+      "default": "repeat",
+      "enum": [
+        "repeat",
+        "adaptive"
+      ],
+      "title": "Retry Mode",
+      "type": "string"
+    },
+    "retry_template_refs": {
+      "items": {
+        "$ref": "#/$defs/TemplateReference"
+      },
+      "maxItems": 2,
+      "title": "Retry Template Refs",
+      "type": "array"
     }
   },
   "required": [

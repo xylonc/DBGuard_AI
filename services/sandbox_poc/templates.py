@@ -21,7 +21,7 @@ class ApprovedTemplate:
     def render(self) -> str:
         if self.registry_name != "set_config_parameter" or self.version < 1:
             raise ContractError("Unsupported template identity")
-        if not self.approved_by or not self.evidence:
+        if not self.approved_by.strip() or not self.evidence:
             raise ContractError("Approved template and evidence are required")
         if hashlib.sha256(self.sql.encode()).hexdigest() != self.sha256:
             raise ContractError("Template content does not match the pinned hash")
@@ -75,7 +75,7 @@ def from_registry(database_url: str, version: int, sha256: str,
                     AND (%s = ANY(environment_applicability) OR 'all' = ANY(environment_applicability))""",
                             (ref, environment))
                 doc = cur.fetchone()
-                if doc is None or not doc[2]:
+                if doc is None or not doc[2] or not doc[3].strip():
                     raise ContractError(f"Exact approved applicable evidence unavailable: {ref}")
                 if ref in pins and (doc[1] != pins[ref]["version"] or doc[2] != pins[ref]["sha256"]):
                     raise ContractError(f"Approved evidence version/hash mismatch: {ref}")
@@ -86,3 +86,47 @@ def from_registry(database_url: str, version: int, sha256: str,
         return template
     finally:
         conn.close()
+
+
+def export_reference(database_url: str, version: int, evidence_refs: list[str],
+                     environment: str = "dev"):
+    """Read exact identities, then verify their active approvals and applicability.
+
+    Does not choose a latest version or approve content. A second pinned read
+    rejects content changed between discovery and verification. Execution reads
+    the registry again, so this reference is not an execution authorization.
+    """
+    import psycopg2
+    from .handoff import TemplateReference
+
+    if type(version) is not int or version < 1:
+        raise ContractError("An explicit positive template version is required")
+    if not evidence_refs or len(set(evidence_refs)) != len(evidence_refs):
+        raise ContractError("Explicit unique evidence document IDs are required")
+    conn = psycopg2.connect(database_url, connect_timeout=10)
+    try:
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '10s'")
+            cur.execute("""SELECT template_hash FROM templates
+                WHERE template_name = %s AND version = %s AND status = 'active'
+                AND approved_by IS NOT NULL""", ("set_config_parameter", version))
+            row = cur.fetchone()
+            if row is None:
+                raise ContractError("Requested approved template version is unavailable")
+            pins = []
+            for ref in evidence_refs:
+                cur.execute("""SELECT document_id, version, document_hash
+                    FROM knowledge_documents WHERE document_id = %s
+                    AND status = 'active' AND approved_by IS NOT NULL""", (ref,))
+                doc = cur.fetchone()
+                if doc is None:
+                    raise ContractError(f"Requested approved evidence is unavailable: {ref}")
+                pins.append(dict(zip(("document_id", "version", "sha256"), doc)))
+            reference = TemplateReference(version=version, sha256=row[0],
+                                          evidence=pins, environment=environment)
+    finally:
+        conn.close()
+    template = from_registry(database_url, version, reference.sha256, evidence_refs,
+                             environment, evidence_pins=pins)
+    return reference, template

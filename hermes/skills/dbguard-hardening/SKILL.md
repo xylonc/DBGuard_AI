@@ -1,7 +1,7 @@
 ---
 name: dbguard-hardening
 description: Create an evidence-backed PostgreSQL hardening proposal from a DBGuard collector snapshot and approved RAG sources.
-version: 1.0.0
+version: 1.1.0
 author: DBGuardAI
 metadata:
   hermes:
@@ -42,6 +42,35 @@ or related database security requirements.
 8. If no approved template fits a FAIL finding, report `MANUAL_REVIEW_REQUIRED`
    for that finding and continue with the others.
 9. Explain the result in plain language and preserve the returned citations.
+
+## Local sandbox testing
+
+When the user asks to test a fix, use the newer isolated sandbox workflow:
+
+1. Obtain the uploaded `snapshot_id`. Upload remains through DBGuard's existing
+   `POST /api/v1/snapshots` endpoint; never fabricate a snapshot or its ID.
+2. Call `get_snapshot_spec_assessment`. Its exact spec IDs, findings and scope
+   govern sandbox testing. Do not substitute the legacy assessment's control IDs.
+3. Use approved knowledge/template searches to obtain actual document IDs and
+   template versions. The current sandbox supports PG17 `log_connections=on`
+   only. Explain unsupported controls and collection gaps.
+4. Call `prepare_sandbox_handoff` with those identities, environment and benchmark.
+   Only supply alternative versions that appeared in approved results and could
+   address a failure. The service resolves hashes and checks approvals itself.
+5. Call `run_sandbox_handoff` once for the returned handle. The LangGraph loop
+   gives a failed attempt's scoped feedback to the configured LLM reviewer.
+   It can select a different approved candidate or return a correction requiring
+   human review. It cannot execute arbitrary generated SQL. Maximum three tests.
+6. If the tool times out, use `get_sandbox_handoff_status` for the same handle.
+   Do not create a fresh handoff to bypass the attempt limit or restart a run.
+7. Report returned status, attempt count, regression/health checks, rollback and
+   cleanup. `NEEDS_REVIEW` is not success; describe the LLM suggestion as untested.
+   If a review bundle is READY, show its URL using the user's DBGuard API address
+   (local setup: http://127.0.0.1:8011), not the internal container hostname.
+
+No sandbox tool modifies the source target. DBA application is separate. Do not
+claim complete benchmark coverage, human approval from model reasoning, or a
+live HERMES connection merely because these tools are configured.
 
 ## Output expectations
 

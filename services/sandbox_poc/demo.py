@@ -20,6 +20,8 @@ from .router import get_service, router
 from .runtime import DATA, DisposablePostgres, docker
 from .service import SandboxService
 from .shared import ROOT, SpecEngine, digest
+from .collector_runner import collect_owned_target
+from .collector_intake import from_collector_bundle
 
 DEMO_LABEL = "dbguard.live-demo.run"
 
@@ -84,7 +86,8 @@ class DemoResources:
         self.target.write_config("postgresql.conf", "\nlog_connections='on'\nlog_disconnections='on'\n")
         self.target.sql("ALTER SYSTEM SET log_connections='off';")
         self.target.activate({"log_connections": "off", "log_disconnections": "on"})
-        self.snapshot = self.engine.collect(self.target)
+        self.collector_bundle = collect_owned_target(self.target)
+        self.snapshot = from_collector_bundle(self.collector_bundle, self.engine)
         self.handoff = build_handoff(self.engine, self.snapshot, TemplateReference(
             version=1, sha256=template_hash, environment="test",
             evidence=[dict(document_id="demo-evidence", version="1", sha256=document_hash)]))
@@ -179,7 +182,8 @@ def create_app(resource_factory=DemoResources):
     def index():
         return FileResponse(Path(__file__).parent / "ui/index.html")
 
-    @app.get("/demo/context")
+    @app.get("/review/context")
+    @app.get("/demo/context", include_in_schema=False)
     def context():
         return {"mode": "live-disposable-demo", "fixture_approval": True,
                 "handoff": app.state.resources.handoff.model_dump(),

@@ -1,7 +1,8 @@
-"""Expose the proposal-phase DBGuard API as four narrowly scoped MCP tools."""
+"""Restricted proposal and local sandbox operations for HERMES."""
 
 import os
 from typing import Any
+from urllib.parse import quote
 import requests
 from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
@@ -9,22 +10,24 @@ from starlette.responses import JSONResponse
 
 DBGUARD_API_URL = os.getenv("DBGUARD_API_URL", "http://api:8000").rstrip("/")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("DBGUARD_MCP_TIMEOUT_SECONDS", "60"))
+SANDBOX_TIMEOUT_SECONDS = float(os.getenv("DBGUARD_MCP_SANDBOX_TIMEOUT_SECONDS", "600"))
 
 mcp = MCPServer(
     "DBGuardAI",
     instructions=(
-        "Use these tools only to create review-only PostgreSQL hardening "
-        "proposals. Never claim SQL was executed or approved."
+        "Use the proposal tools for review-only plans. Use sandbox handoff tools "
+        "only for disposable PostgreSQL tests. Report execution and acceptance "
+        "only from returned evidence. Never claim the real target was changed."
     ),
 )
 
 
-def _request_json(method: str, path: str, **kwargs: Any) -> Any:
+def _request_json(method: str, path: str, *, timeout=REQUEST_TIMEOUT_SECONDS, **kwargs: Any) -> Any:
     try:
         response = requests.request(
             method,
             f"{DBGUARD_API_URL}{path}",
-            timeout=REQUEST_TIMEOUT_SECONDS,
+            timeout=timeout,
             **kwargs,
         )
     except requests.RequestException as exc:
@@ -37,6 +40,51 @@ def _request_json(method: str, path: str, **kwargs: Any) -> Any:
             detail = "Request rejected"
         raise RuntimeError(f"DBGuard API rejected the request: {detail}")
     return response.json()
+
+
+@mcp.tool()
+def get_snapshot_spec_assessment(snapshot_id: str, benchmark_id: str = 'cis-pg17-v1.1.0') -> dict[str, Any]:
+    """Get the exact pinned specs and their assessment for the local sandbox.
+
+    This scope differs from the legacy assessment. Use these findings when
+    preparing a sandbox handoff; do not translate legacy control IDs yourself.
+    """
+    return _request_json('GET', f'/api/v1/snapshots/{quote(snapshot_id, safe="")}/spec-assessment',
+                         params={'benchmark_id': benchmark_id})
+
+
+@mcp.tool()
+def prepare_sandbox_handoff(snapshot_id: str, template_version: int,
+                             evidence_ids: list[str], environment: str = 'dev',
+                             benchmark_id: str = 'cis-pg17-v1.1.0',
+                             retry_template_versions: list[int] | None = None) -> dict[str, Any]:
+    """Pin existing approved references to an uploaded snapshot, using exact specs.
+
+    Select version/IDs from approved search results. No SQL or approvals are
+    accepted from the agent. Adaptive testing is enabled for this handoff.
+    """
+    return _request_json('POST', '/api/v1/sandbox/handoffs', json={
+        'snapshot_id': snapshot_id, 'template_version': template_version,
+        'evidence_ids': evidence_ids, 'environment': environment, 'benchmark_id': benchmark_id,
+        'retry_mode': 'adaptive', 'retry_template_versions': retry_template_versions or []})
+
+
+@mcp.tool()
+def run_sandbox_handoff(handoff_id: str) -> dict[str, Any]:
+    """Run up to three isolated attempts with LLM failure review and exact rollback.
+
+    Reusing this handle returns its saved result; it does not restart testing.
+    On a timeout, inspect this handle's status before taking another action.
+    Returned bundle URLs are relative to the user-facing DBGuard API host.
+    """
+    return _request_json('POST', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}/run',
+                         timeout=SANDBOX_TIMEOUT_SECONDS)
+
+
+@mcp.tool()
+def get_sandbox_handoff_status(handoff_id: str) -> dict[str, Any]:
+    """Retrieve pending/completed testing status and the bundle link, if available."""
+    return _request_json('GET', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}')
 
 
 @mcp.tool()

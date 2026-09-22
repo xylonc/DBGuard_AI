@@ -54,13 +54,17 @@ rows can still be retrieved once query embeddings are available.
 
 ## Controlled tool surface
 
-HERMES connects to `http://mcp:8001/mcp` and is restricted to five operations:
+HERMES connects to `http://mcp:8001/mcp` and is restricted to nine operations:
 
 1. read one normalized snapshot;
 2. evaluate snapshot against control rules;
 3. search approved knowledge;
 4. search approved SQL templates;
 5. validate and render a proposal through the trusted API.
+6. assess an uploaded snapshot using exact installed specs;
+7. prepare an approved sandbox handoff;
+8. run the handoff in disposable PostgreSQL with bounded adaptive retries;
+9. retrieve its status and review-bundle link.
 
 The MCP server publishes no resources and no prompts. General browser, shell,
 file, process, code-execution, delegation, memory, scheduled-job and web
@@ -68,8 +72,8 @@ toolsets are disabled. The terminal backend is set to Docker as a second safety
 layer, and no Docker socket is mounted.
 
 The model may see HERMES's three deferred-tool facade functions
-(`tool_search`, `tool_describe`, `tool_call`) instead of five raw schemas. The
-facade's underlying registry contains only the five allowlisted DBGuard tools;
+(`tool_search`, `tool_describe`, `tool_call`) instead of nine raw schemas. The
+facade's underlying registry contains only the nine allowlisted DBGuard tools;
 it does not expand the agent's authority.
 
 ## User workflow

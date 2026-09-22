@@ -154,3 +154,21 @@ creates approvals in an existing DBGuard registry. A run using the team's real
 approved template and RAG evidence remains necessary before claiming the full
 approved-content milestone is accepted. Approval status is checked at lookup
 time; downstream DBA review must revalidate freshness before eventual use.
+
+## DBA review export
+
+Verified runs may include a `review_bundle` link to a server-generated ZIP. See
+[INTEGRATION.md](INTEGRATION.md) for acceptance gates, download lifetime, the
+existing collector bridge and the per-fix DBA runner. No script is applied by the API.
+# HERMES and adaptive handoffs
+
+`SandboxHandoff` now optionally includes `retry_mode` (`repeat`, the compatibility
+default, or `adaptive`) and up to two `retry_template_refs`, each with the same
+exact approval pins as `template_ref`. Adaptive mode requires a configured LLM
+reviewer and may return `NEEDS_REVIEW`. Responses include `revisions` and per-attempt
+candidate identities/hashes. A verified result can select an alternative pinned
+template; downstream bundle checks bind to that selected identity.
+
+The existing snapshot upload API connects through the new spec-assessment and
+handoff-handle endpoints. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md) for
+routes, MCP tools, setup and the distinction between legacy and exact-spec assessments.

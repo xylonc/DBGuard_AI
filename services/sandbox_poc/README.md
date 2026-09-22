@@ -108,8 +108,11 @@ A LangGraph conditional cycle runs one full attempt at a time. Each attempt:
    file entries and assessment findings must match the reconstructed baseline.
 6. Removes and verifies absence of run-labelled resources in `finally`.
 
-At most three attempts execute. Runtime/acceptance failures may retry the same
-deterministic approved candidate against a new baseline; no LLM changes SQL.
+At most three attempts execute. Compatibility mode retries the same approved
+candidate. Adaptive mode inserts an LLM revision node after an eligible failure:
+it selects a different pinned approved candidate or stops with `NEEDS_REVIEW`.
+The model's own SQL is never executed. See [HERMES_INTEGRATION.md](HERMES_INTEGRATION.md)
+for model setup, the connected upstream endpoints, and remaining inputs from Xylon.
 Invalid contracts/provenance terminate, as does cleanup failure. Input failures
 raise before creating a sandbox. SIGINT/SIGTERM unwind cleanup; an uncatchable
 process kill or an unavailable Docker daemon cannot guarantee immediate removal.
@@ -138,7 +141,9 @@ the presence of `fix_unit` alone does not mean the fix is accepted.
   This is not a full clone of data, roles, extensions or the operating system.
 - Restart/internal settings are explicitly unsupported in this milestone.
   Restart handling, new fix candidates, full spec coverage, legacy endpoint migration,
-  `harden.sh`, HTML reporting and production hardening remain future work.
+  and production hardening remain future work. The local review bundle now
+  provides `harden.sh` and HTML reporting for the supported fix; see
+  [INTEGRATION.md](INTEGRATION.md) for the collector handoff and approval checks.
 - The fix-unit context enum now uses actual PostgreSQL contexts, replacing the
   invalid `suicide` entry and adding `postmaster`/`internal`. This does not enable
   automatic remediation for those contexts.

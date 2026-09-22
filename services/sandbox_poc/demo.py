@@ -7,6 +7,14 @@ import secrets
 import threading
 import time
 import uuid
+from tempfile import TemporaryDirectory
+
+from app.collector_models import CollectorBundleV020
+from app.services.snapshot_service import SnapshotStore, SnapshotNotFoundError
+from app.config import settings
+from .adaptive import LLMReviser
+from .router import get_snapshot_store
+from .shared import ContractError
 
 import psycopg2
 from fastapi import FastAPI, HTTPException
@@ -129,9 +137,23 @@ class DemoResources:
 
 
 class DemoService(SandboxService):
-    def __init__(self, resources):
-        super().__init__(resources.registry_url)
+    demo_fixture_mode = True  # Server-owned mode; never accepted from a request.
+
+    def __init__(self, resources, reviser=None):
+        super().__init__(resources.registry_url, reviser=reviser)
         self.resources = resources
+        self.latest = None
+        self.running = False
+
+    def validate_handoff(self, request):
+        if request.snapshot != self.resources.snapshot:
+            raise ContractError("This demo only tests its own disposable source snapshot")
+        return super().validate_handoff(request)
+
+    def record_result(self, request, result):
+        # Publish only after the router has attached the final bundle outcome.
+        self.latest = (request.model_dump(), result)
+
 
     def run(self, request):
         if not self.resources.lock.acquire(blocking=False):
@@ -140,25 +162,39 @@ class DemoService(SandboxService):
             # The demo API only accepts the source snapshot created by this session.
             if request.snapshot != self.resources.snapshot:
                 raise HTTPException(422, "This demo only tests its own disposable source snapshot")
+            self.running = True
             result = super().run(request)
             result["demo_evidence"] = self.resources.source_evidence()
             result["demo_fixture_approval"] = True
             return result
         finally:
+            self.running = False
             self.resources.lock.release()
 
 
-def create_app(resource_factory=DemoResources):
+def create_app(resource_factory=DemoResources, *, reviser=None, public_url="http://127.0.0.1:8010"):
+    public_url = public_url.rstrip("/")
     @asynccontextmanager
     async def lifespan(app):
         resources = resource_factory()
-        try:
-            await run_in_threadpool(resources.start)
-            app.state.resources = resources
-            app.state.service = DemoService(resources)
-            yield
-        finally:
-            await run_in_threadpool(resources.close)
+        with TemporaryDirectory(prefix="dbguard-demo-snapshots-") as directory:
+            try:
+                await run_in_threadpool(resources.start)
+                store = SnapshotStore(directory)
+                receipt = store.save(CollectorBundleV020.model_validate(resources.collector_bundle))
+                app.state.snapshot_id = receipt.snapshot_id
+                app.state.store = store
+                app.state.resources = resources
+                reviewer = reviser
+                if reviewer is None and settings.sandbox_llm_enabled:
+                    reviewer = LLMReviser(settings.sandbox_llm_base_url,
+                        settings.sandbox_llm_model, settings.sandbox_llm_api_key)
+                app.state.service = DemoService(resources, reviewer)
+                if reviewer:
+                    resources.handoff.retry_mode = 'adaptive'
+                yield
+            finally:
+                await run_in_threadpool(resources.close)
 
     app = FastAPI(title="DBGuardAI live local demo", lifespan=lifespan)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
@@ -177,6 +213,41 @@ def create_app(resource_factory=DemoResources):
 
     app.include_router(router)
     app.dependency_overrides[get_service] = lambda: app.state.service
+    app.dependency_overrides[get_snapshot_store] = lambda: app.state.store
+
+    @app.get("/api/v1/snapshots/{snapshot_id}")
+    def snapshot_context(snapshot_id: str):
+        try:
+            return app.state.store.context(snapshot_id)
+        except SnapshotNotFoundError as exc:
+            raise HTTPException(404, "Snapshot not found") from exc
+
+    @app.get("/api/v1/demo/workflow")
+    def demo_workflow():
+        # Explicit demo discovery; no raw snapshot or connection details reach the agent.
+        resources, service = app.state.resources, app.state.service
+        ref = resources.handoff.template_ref
+        latest = service.latest
+        return {
+            "mode": "live-disposable-demo", "demo_fixture_approval": True,
+            "approval_notice": "DEMO_FIXTURE_ONLY; not human approval or approved RAG retrieval",
+            "snapshot_id": app.state.snapshot_id,
+            "benchmark_id": resources.handoff.benchmark_id,
+            "template_version": ref.version,
+            "evidence_ids": [e.document_id for e in ref.evidence],
+            "environment": ref.environment,
+            "retry_mode": resources.handoff.retry_mode,
+            "reviewer_configured": service.reviser is not None,
+            "status": "RUNNING" if service.running else "COMPLETE" if latest else "READY",
+            "latest_run_id": latest[1]["run_id"] if latest else None,
+            "ui_url": public_url,
+            "bundle_url": public_url + latest[1]["review_bundle"]["url"]
+                if latest and latest[1].get("review_bundle", {}).get("status") == "READY" else None,
+            "limitations": ["Disposable demo source only; log_connections fix only",
+                            "No production changes; DBA review required",
+                            "RAG search is not exercised by fixture discovery"],
+        }
+
 
     @app.get("/", include_in_schema=False)
     def index():
@@ -187,7 +258,10 @@ def create_app(resource_factory=DemoResources):
     def context():
         return {"mode": "live-disposable-demo", "fixture_approval": True,
                 "handoff": app.state.resources.handoff.model_dump(),
-                "session_id": app.state.resources.run_id}
+                "session_id": app.state.resources.run_id,
+                "workflow": demo_workflow(),
+                "last_handoff": app.state.service.latest[0] if app.state.service.latest else None,
+                "last_result": app.state.service.latest[1] if app.state.service.latest else None}
 
     @app.get("/demo/source")
     def source():

@@ -11,6 +11,7 @@ from .collector_intake import from_collector_bundle
 from .handoff import StrictModel, SandboxHandoff, build_handoff
 from .shared import ROOT, SpecEngine, ContractError
 from .templates import export_reference
+from .review_bundle import is_fixture
 
 
 class PrepareRequest(StrictModel):
@@ -50,11 +51,39 @@ def prepare_uploaded(store, service, request):
 
 
 def result_summary(result):
+    attempts = result.get('attempts', [])
+    latest = attempts[-1] if attempts else {}
+    spec_id = result.get('fix_unit', {}).get('spec_id')
+    def control_status(assessment):
+        return assessment.get('findings', {}).get(spec_id, {}).get('status', 'UNKNOWN')
+    before = control_status(latest.get('before_assessment', {}))
+    after = control_status(latest.get('after_assessment', {}))
+    demo = result.get('demo_evidence', {})
+    source_status = control_status(demo.get('assessment', {}))
+    fixture = is_fixture(result) or result.get('demo_fixture_approval', False)
+    report = (f"Sandbox control {spec_id}: {before} -> {after}. "
+              f"Overall sandbox test status: {result.get('status', 'UNKNOWN')}. "
+              f"Rollback verified: {latest.get('rollback_verified', False)}. "
+              f"Attempt cleanup verified: {latest.get('cleanup', {}).get('verified', False)}.")
+    if demo:
+        report += (f" Separately, source control status: {source_status}; "
+                   f"source unchanged: {demo.get('source_unchanged')}. "
+                   "The source assessment is not the sandbox after-fix assessment.")
+    if fixture:
+        report += " Approval: DEMO_FIXTURE_ONLY; no human approval or approved RAG validation."
     return {**{key: result.get(key) for key in ('run_id', 'status', 'retry_mode', 'revisions',
                  'review_bundle', 'requires_dba_review', 'limitations')},
+            'demo_fixture_approval': bool(fixture),
+            'verification_report': report,
+            'sandbox_control': {'spec_id': spec_id, 'before_status': before, 'after_status': after},
+            'sandbox_after_findings': {sid: finding['status'] for sid, finding in
+                latest.get('after_assessment', {}).get('findings', {}).items()},
+            'demo_evidence': {**{key: demo.get(key) for key in
+                ('source_unchanged', 'registry_unchanged', 'scope')},
+                'source_control_status': source_status} if demo else None,
             'attempts': [{key: attempt.get(key) for key in ('attempt', 'candidate_id', 'status',
-                         'phase', 'rollback_verified', 'health_after_apply', 'regressions', 'cleanup')}
-                         for attempt in result.get('attempts', [])]}
+                         'phase', 'rollback_verified', 'health_after_apply', 'health_after_rollback',
+                         'regressions', 'cleanup')} for attempt in attempts]}
 
 
 class HandoffStore:

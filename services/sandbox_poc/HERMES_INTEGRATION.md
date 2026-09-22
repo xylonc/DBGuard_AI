@@ -165,3 +165,79 @@ Private provider/dashboard settings stay in the ignored local `.env`. Live
 responses and database evidence are local artifacts, not committed credentials.
 The dashboard is at `http://127.0.0.1:9119`; use the local dashboard credentials.
 The local host API/MCP processes must remain running for chat tools to work.
+
+## Connected disposable demo
+
+The disposable demo is now one chat-to-sandbox-to-UI workflow. This mode deliberately
+uses fixture references, not semantic search or genuine team approvals. It does not
+change the genuine-registry readiness checks in the normal API.
+
+1. Start the demo using private model settings (same SANDBOX_LLM settings above):
+   `python scripts/demo_ui.py --env-file .env --port 8010`.
+2. Point the MCP bridge at the same backend:
+   `DBGUARD_MCP_HOST=127.0.0.1 DBGUARD_API_URL=http://127.0.0.1:8010 python -m services.dbguard_mcp.server`.
+3. Set `HERMES_WORKFLOW_MODE=demo` in HERMES runtime settings, then rebuild/recreate
+   HERMES with the updated allowlist and context, retaining its
+   conversation volume. For a host bridge, its `mcp` hostname must resolve to
+   `host-gateway`. The existing HERMES API/dashboard remain on 8642/9119.
+4. Open the workflow UI at `http://127.0.0.1:8010`. It shows the current snapshot
+   and a ready-to-copy HERMES message. Start a fresh chat after a backend switch
+   so earlier snapshot IDs and provider/tool context are not confused with this run.
+
+HERMES calls `get_demo_workflow_context` (`GET /api/v1/demo/workflow`), then
+`get_snapshot_spec_assessment`, `prepare_sandbox_handoff`, and
+`run_sandbox_handoff`. The discovery route only exists on the demo app; it returns
+scoped fixture identities, never the raw snapshot or registry credentials. Only
+this server-owned demo service permits READY_FOR_DEMO with FIXTURE_ONLY readiness.
+The request cannot enable that mode, and the service rejects foreign snapshots.
+References still undergo exact hash/version and SQL-shape checks. The source and
+registry remain distinct from the execution sandbox.
+
+The demo stores the collector output in a temporary SnapshotStore, using the
+same intake/assessment logic as uploaded snapshots. The UI retrieves the last
+completed handoff/result, including the final bundle link, after page reload or
+when a chat run completes. Run IDs match across both surfaces. A failed evidence
+rejection is not overwritten by the previously successful run during polling.
+Only the latest UI result is retained; existing handoff/bundle stores remain
+bounded to eight entries. Restarting replaces demo fixtures, snapshot and results.
+Graceful shutdown removes this demo's source/registry and temporary snapshot files;
+each sandbox attempt independently verifies its own cleanup.
+
+Live verification on 2026-09-22 exercised one real Ollama Cloud HERMES conversation
+through discovery, assessment, preparation, sandbox execution and bundle download.
+The same VERIFIED run ID was displayed in the browser, with target PASS, no scoped
+regressions, database health, exact rollback and cleanup verified. Source and
+registry were unchanged. The run passed on attempt one, so its failure reviewer
+was not called. The separate live adaptive-failure test above remains the evidence
+for LLM-guided retry. Forty targeted automated checks passed for shared results,
+transport, upstream preparation and approval boundaries.
+
+Genuine approved RAG retrieval, full workbook-to-spec generation and post-DBA
+real-target reassessment remain outside this connected demo verification.
+
+### Demo chat routing correction
+
+A user-observed chat selected the legacy assessment tool, received errors, then
+invented a successful run and placeholder bundle URL without calling prepare/run.
+That response is invalid evidence. Demo runtime mode now hides legacy tools, and
+the managed instructions require actual returned run/status data before claiming
+execution. These changes reduce the observed routing failure; model prose is still
+not an independent verifier. The API and UI's recorded run and downloadable bundle
+remain the evidence to inspect. An existing run is not proof of a new execution.
+
+The handoff MCP tool now requires an explicit environment (copy it from discovery
+or reviewed search results); it no longer silently defaults to `dev`. Expected
+API failures are raised as MCP ToolError so the model receives the rejection
+reason, instead of only a generic tool-crash message. The HTTP handoff contract
+itself is unchanged. Focused tests check missing-environment rejection, error
+visibility, demo allowlisting and the shared API/UI flow.
+
+The compact run/status response now includes an explicit sandbox before/after
+control result, sandbox after-findings and a server-generated verification report.
+The separate source evidence contains only clearly named source status/unchanged
+flags, preventing source FAIL from being mistaken for sandbox failure. Missing
+post-apply measurements remain UNKNOWN. On 2026-09-22, the corrected live chat
+reported sandbox FAIL -> PASS, source FAIL/unchanged, exact rollback and cleanup,
+and the actual bundle URL with DEMO_FIXTURE_ONLY disclosure. A separate missing-
+snapshot chat stopped without a sandbox run. Fourteen focused automated checks
+passed. This validates the observed scenarios, not general model infallibility.

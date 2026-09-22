@@ -131,3 +131,30 @@ def test_container_host_is_accepted_without_allowing_arbitrary_hosts():
             response = client.post("/mcp", json=request, headers={
                 "Host": host, "Accept": "application/json, text/event-stream"})
             assert response.status_code == expected
+
+
+def test_missing_environment_cannot_silently_default_to_dev(monkeypatch):
+    import pytest
+    from mcp.server.mcpserver.exceptions import ToolError
+    from services.dbguard_mcp import server
+    from unittest.mock import Mock
+    request = Mock()
+    monkeypatch.setattr(server.requests, "request", request)
+    with pytest.raises(ToolError, match="environment"):
+        asyncio.run(server.mcp.call_tool("prepare_sandbox_handoff", {
+            "snapshot_id": "snap-unit", "template_version": 1,
+            "evidence_ids": ["demo-evidence"]}))
+    request.assert_not_called()
+
+
+def test_expected_api_failure_reaches_model_instead_of_generic_crash(monkeypatch):
+    import pytest
+    from unittest.mock import Mock
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+    from services.dbguard_mcp import server
+    response = Mock(status_code=404)
+    response.json.return_value = {"detail": "Snapshot not found"}
+    monkeypatch.setattr(server.requests, "request", Mock(return_value=response))
+    with pytest.raises(ToolError, match="HTTP 404.*Snapshot not found") as error:
+        asyncio.run(server.mcp.call_tool("get_snapshot_spec_assessment", {"snapshot_id":"snap-missing"}))
+    assert not isinstance(error.value, UnexpectedToolError)

@@ -52,6 +52,7 @@ def run_sandbox(request: SandboxHandoff, service: SandboxService = Depends(get_s
             except ContractError as exc:
                 # Keep the tested outcome; exporting a runnable script is a separate gate.
                 result["review_bundle"] = {"status": "UNAVAILABLE", "reason": str(exc)}
+        service.record_result(request, result)
         return result
     except ContractError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -92,7 +93,8 @@ def prepare_handoff(request: PrepareRequest, service: SandboxService = Depends(g
                     store: SnapshotStore = Depends(get_snapshot_store)):
     try:
         handoff = prepare_uploaded(store, service, request)
-        readiness = check_readiness(service, handoff, check_registry=True)
+        readiness = check_readiness(service, handoff, check_registry=True,
+                                    allow_demo_fixtures=getattr(service, 'demo_fixture_mode', False))
         if not readiness['ready_for_sandbox']:
             raise HTTPException(422, readiness)
         key = handoffs.put(handoff, request.snapshot_id)

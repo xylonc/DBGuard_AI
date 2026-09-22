@@ -94,8 +94,18 @@ def test_hermes_mcp_tools_call_existing_api_flow(integration, recorded, monkeypa
     monkeypatch.setattr(server.requests, 'request', request)
     sid = client.post('/api/v1/snapshots', json=collector(recorded)).json()['snapshot_id']
     assert server.get_snapshot_spec_assessment(sid)['assessment']['findings']
-    prepared = server.prepare_sandbox_handoff(sid, 1, ['test-doc'])
+    prepared = server.prepare_sandbox_handoff(sid, 1, ['test-doc'], 'dev')
     result = server.run_sandbox_handoff(prepared['handoff_id'])
     assert result['status'] == 'VERIFIED'
     assert server.get_sandbox_handoff_status(prepared['handoff_id'])['status'] == 'FINISHED'
     assert len(runtimes) == 1
+
+
+def test_missing_after_measurement_is_unknown_not_success(recorded):
+    result = copy.deepcopy(recorded['result'])
+    result['status'] = 'FAILED'
+    result['attempts'][-1].pop('after_assessment')
+    summary = upstream.result_summary(result)
+    assert summary['sandbox_control']['after_status'] == 'UNKNOWN'
+    assert summary['sandbox_after_findings'] == {}
+    assert 'Overall sandbox test status: FAILED' in summary['verification_report']

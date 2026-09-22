@@ -23,6 +23,9 @@ class SandboxService:
         self.runtime_factory = runtime_factory or (lambda: DisposablePostgres(image))
         self.reviser = reviser
 
+    def record_result(self, request, result):
+        """Optional local UI integration; called after bundle generation finishes."""
+
     def validate_handoff(self, request: SandboxHandoff) -> SpecEngine:
         try:
             records_path = ROOT / "catalog/benchmarks" / request.benchmark_id / "records.json"

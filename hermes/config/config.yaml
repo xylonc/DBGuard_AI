@@ -52,6 +52,7 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - get_demo_workflow_context
         - get_snapshot_context
         - get_snapshot_assessment
         - search_approved_knowledge

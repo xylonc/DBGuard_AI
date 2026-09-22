@@ -3,7 +3,7 @@ from .review_bundle import canonical_apply, is_fixture
 from .shared import ContractError, digest
 
 
-def check_readiness(service, handoff, *, check_registry=False):
+def check_readiness(service, handoff, *, check_registry=False, allow_demo_fixtures=False):
     report = {
         "schema_version": "sandbox-readiness-v1",
         "status": "BLOCKED",
@@ -32,7 +32,7 @@ def check_readiness(service, handoff, *, check_registry=False):
         # Confirm that the approved template fits this narrowly supported fix.
         canonical_apply(template.render())
         alternatives = [service.resolve_template(handoff, ref) for ref in handoff.retry_template_refs]
-        if any(is_fixture({'template': alternative.identity()}) for alternative in alternatives):
+        if not allow_demo_fixtures and any(is_fixture({'template': alternative.identity()}) for alternative in alternatives):
             raise ContractError('Alternative candidates include demo/test approvals')
     except ContractError as exc:
         report["registry"] = "REJECTED"
@@ -46,6 +46,11 @@ def check_readiness(service, handoff, *, check_registry=False):
     report["template"] = template.identity()
     if is_fixture({"template": template.identity()}):
         report["registry"] = "FIXTURE_ONLY"
+        if allow_demo_fixtures:
+            report.update(status="READY_FOR_DEMO", ready_for_sandbox=True,
+                          demo_fixture_approval=True,
+                          approval_notice="DEMO_FIXTURE_ONLY; not human approval")
+            return report
         report["issues"].append("Demo/test approvals cannot establish team-handoff readiness")
         return report
     report.update(status="READY_FOR_SANDBOX", registry="PINS_VERIFIED", ready_for_sandbox=True)

@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import quote
 import requests
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -39,15 +40,27 @@ def _request_json(method: str, path: str, *, timeout=REQUEST_TIMEOUT_SECONDS, **
             **kwargs,
         )
     except requests.RequestException as exc:
-        raise RuntimeError("DBGuard API is unavailable") from exc
+        raise ToolError("DBGuard API is unavailable; no successful result was returned") from exc
 
     if response.status_code >= 400:
         try:
             detail = response.json().get("detail", "Request rejected")
         except ValueError:
             detail = "Request rejected"
-        raise RuntimeError(f"DBGuard API rejected the request: {detail}")
+        raise ToolError(f"DBGuard API rejected the request (HTTP {response.status_code}): {detail}. No successful result was returned.")
     return response.json()
+
+
+@mcp.tool()
+def get_demo_workflow_context() -> dict[str, Any]:
+    """Discover the connected local demo's snapshot and fixture references.
+
+    Only for an explicit demo request. References are DEMO_FIXTURE_ONLY, never
+    human approval or RAG results. Use them with the existing assessment,
+    prepare/run/status tools and use ui_url as the bundle link's public base.
+    A 404 means this backend is not a demo; do not substitute fixture approvals.
+    """
+    return _request_json('GET', '/api/v1/demo/workflow')
 
 
 @mcp.tool()
@@ -63,12 +76,14 @@ def get_snapshot_spec_assessment(snapshot_id: str, benchmark_id: str = 'cis-pg17
 
 @mcp.tool()
 def prepare_sandbox_handoff(snapshot_id: str, template_version: int,
-                             evidence_ids: list[str], environment: str = 'dev',
+                             evidence_ids: list[str], environment: str,
                              benchmark_id: str = 'cis-pg17-v1.1.0',
                              retry_template_versions: list[int] | None = None) -> dict[str, Any]:
     """Pin existing approved references to an uploaded snapshot, using exact specs.
 
-    Select version/IDs from approved search results. No SQL or approvals are
+    Always pass environment explicitly from discovery/search results; never guess
+    or substitute dev for test. Select version/IDs from approved search results
+    (or explicit demo discovery). No SQL or approvals are
     accepted from the agent. Adaptive testing is enabled for this handoff.
     """
     return _request_json('POST', '/api/v1/sandbox/handoffs', json={

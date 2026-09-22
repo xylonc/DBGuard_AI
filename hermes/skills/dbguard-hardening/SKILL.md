@@ -14,7 +14,16 @@ Use this workflow whenever a user asks about PostgreSQL hardening, security
 configuration, access control, authentication, encryption, logging, auditing,
 or related database security requirements.
 
-## Required workflow
+## Evidence first
+
+Never simulate a tool call in the answer. An error is not permission to invent
+assessment findings, handles, run results or bundle URLs. Only an actual returned
+run/status result can support a VERIFIED claim. If required evidence is missing,
+stop and explain the failed step. Do not give production apply instructions for
+fixture results. Use `get_snapshot_spec_assessment` for demo/sandbox requests;
+`get_snapshot_assessment` below is only for the legacy proposal workflow.
+
+## Required legacy proposal workflow
 
 1. Obtain the collector `snapshot_id` and deployment environment.
 2. Use `get_snapshot_context` to establish the database version and available
@@ -42,6 +51,19 @@ or related database security requirements.
 8. If no approved template fits a FAIL finding, report `MANUAL_REVIEW_REQUIRED`
    for that finding and continue with the others.
 9. Explain the result in plain language and preserve the returned citations.
+
+## Explicit local demo
+
+For a user asking to run the connected disposable demo, first call
+`get_demo_workflow_context`. Use its returned snapshot ID, benchmark, template
+version, evidence IDs and environment for steps 2, 4, 5, 6 and 7 below. This
+replaces the search step only in the explicit demo path: the server owns these
+fixtures and validates their hashes. Disclose DEMO_FIXTURE_ONLY and that no
+approved RAG search or human approval has occurred. If discovery is unavailable,
+stop; never invent demo references or use them for a real target. Use `ui_url`
+as the bundle URL base, and show the returned run ID. If a run is already in
+progress, do not start another one. A completed result can be viewed in the UI;
+only start another run if the user asks to test again.
 
 ## Local sandbox testing
 

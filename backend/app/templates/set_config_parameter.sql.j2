@@ -2,5 +2,5 @@
 -- Hardening Action: Set configuration parameter, for example enable log_connections or log_disconnections logging.
 -- Applied with ALTER SYSTEM (written to postgresql.auto.conf) and then reloaded.
 -- Parameters with postmaster context still require a server restart to take effect.
-ALTER SYSTEM SET {{ param_name | ident }} = '{{ param_value }}';
+ALTER SYSTEM SET {{ param_name | ident }} = '{{ param_value | literal }}';
 SELECT pg_reload_conf();

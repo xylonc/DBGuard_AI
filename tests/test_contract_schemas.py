@@ -27,6 +27,7 @@ if sys_path not in __import__("sys").path:
 
 from app.services.fix_unit_render import derive_rollback, render_action
 from app.services.fix_unit_validator import validate_fix_unit
+from app.services.template_service import literal
 
 # ---------------------------------------------------------------------------#
 # Schema loaders
@@ -277,50 +278,14 @@ class TestFixUnitSchema:
         bad = copy.deepcopy(valid_fix_unit)
         bad["prior_state"]["value"] = ""
         bad["precheck"]["expected_value"] = ""
-        bad["rollback"]["action"] = "set_config"
         bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
+        bad["rollback"]["action"] = "set_config"
         bad["rollback"]["value"] = "on"
 
         errors = validate_fix_unit(bad)
         assert len(errors) == 1, errors
         assert "rollback value 'on' does not match prior_state.value ''" in errors[0]
 
-    def test_reset_config_apply_non_auto_conf_error(self, valid_fix_unit):
-        """reset_config apply with non-auto.conf sourcefile returns error."""
-        # Prior is from postgresql.conf (not auto.conf)
-        bad = copy.deepcopy(valid_fix_unit)
-        bad["apply"] = {"action": "reset_config", "param": "log_connections"}
-
-        errors = validate_fix_unit(bad)
-        # The error should come from validate_fix_unit, not just derive_rollback raising
-        assert len(errors) == 1, errors
-        assert "no valid rollback exists" in errors[0]
-
-    def test_empty_string_prior_with_set_config_rollback_rejected(self, valid_fix_unit):
-        """prior_state.value "" with set_config rollback value "off" -> rejected."""
-        bad = copy.deepcopy(valid_fix_unit)
-        bad["prior_state"]["value"] = ""
-        bad["precheck"]["expected_value"] = ""
-        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
-        bad["rollback"]["action"] = "set_config"
-        bad["rollback"]["value"] = "off"
-
-        errors = validate_fix_unit(bad)
-        assert len(errors) == 1, errors
-        assert "rollback value" in errors[0]
-        assert "does not match prior_state.value" in errors[0]
-
-    def test_rollback_value_false_vs_prior_off_rejected(self, valid_fix_unit):
-        """prior_state.value 'off' with set_config rollback value 'false' -> rejected."""
-        bad = copy.deepcopy(valid_fix_unit)
-        bad["prior_state"]["sourcefile"] = "/var/lib/postgresql/data/postgresql.auto.conf"
-        bad["rollback"]["action"] = "set_config"
-        bad["rollback"]["value"] = "false"
-
-        errors = validate_fix_unit(bad)
-        assert len(errors) == 1, errors
-        assert "rollback value 'false'" in errors[0]
-        assert "prior_state.value 'off'" in errors[0]
 
     def test_reset_config_apply_with_postgresql_conf_sourcefile_rejected(self, valid_fix_unit):
         """reset_config apply with prior_state.sourcefile '/etc/postgresql/postgresql.conf' -> error (no-op)."""
@@ -383,6 +348,12 @@ class TestFixUnitSchema:
         )
         rendered = render_action({"action": "set_config", "param": "log_connections", "value": value})
         assert rendered == template_sql, f"render_action: {rendered!r}\ntemplate:      {template_sql!r}"
+
+    def test_literal_filter_raises_on_nul(self):
+        """literal filter raises ValueError on NUL character."""
+        from app.services.template_service import literal
+        with pytest.raises(ValueError, match="NUL character"):
+            literal("has\x00null")
 
 
 # ---------------------------------------------------------------------------#

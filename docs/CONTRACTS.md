@@ -4,7 +4,36 @@ This document describes the contracts enforced by the DBGuardAI codebase as of c
 
 ## snapshot v0.3.0
 
-### Structure
+#
+## check manifest v1
+
+### Enforced by: `app/services/spec_engine/manifest.py:build_manifest()` and `catalog/specs/contracts/check-manifest-v1.json` (JSON Schema)
+
+### Structure:
+
+The check manifest is a plain JSON list of checks the collector must look up, derived from CIS control specs.
+
+- **Envelope**: Contains metadata:
+  - `manifest_version`: Must be `1`
+  - `benchmark_id`: The benchmark identifier (e.g., `'cis-pg17-v1.1.0'`)
+
+- **Checks**: Array of check entries, sorted by `spec_id`:
+  - `spec_id`: The spec identifier that this check corresponds to
+  - `spec_hash`: SHA-256 hash of the spec file (pattern: `^[0-9a-f]{64}$`)
+  - `kind`: One of `"setting"` (current only)
+  - `setting_name`: PostgreSQL GUC parameter name (pattern: `^[a-z_][a-z0-9_.]*$`)
+  - `query`: SQL query to execute (currently always `"SHOW <setting_name>"`)
+
+### Constraints:
+- Only `tier: automated` specs are included
+- `kind` must be `"setting"` (the only supported kind)
+- `setting_name` uses the same pattern as the spec schema
+- No SQL is generated from spec text - only the query field from the spec is used
+- Output is deterministic: same specs always produce byte-identical output (sorted by spec_id)
+
+### Generation:
+Run: `python scripts/build_check_manifest.py --specs <dir> --out <file>`
+## Structure
 
 The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.json`.
 
@@ -140,8 +169,8 @@ Defined in `app/services/fix_unit_render.py:derive_rollback()`:
 
 **File:** `app/services/vector_service.py:approve_template()`
 
-- Approval sets `status = 'approved'` and archives previous versions
-- Only one version can be active (`status = 'approved'`) per `template_name`
+- Approval sets `status = 'active'` and archives previous versions
+- Only one version can be active (`status = 'active'`) per `template_name`
 - Previously approved versions are archived (`status = 'archived'`)
 
 ### literal/ident escaping:

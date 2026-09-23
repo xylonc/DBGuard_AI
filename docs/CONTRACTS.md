@@ -4,6 +4,34 @@ This document describes the contracts enforced by the DBGuardAI codebase as of c
 
 ## snapshot v0.3.0
 
+### Enforced by: `collector/collect.sql:pg_temp.run_checks()` and `catalog/specs/contracts/snapshot-v0.3.0.json` (JSON Schema)
+
+### Structure:
+
+The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.json`.
+
+- **Envelope (v0.3.0)**: Contains collector metadata:
+  - `schema_version`: Must be `'0.3.0'`
+  - `database`: Non-empty string
+  - `target_id`: Non-empty string
+  - Optional fields: `collected_at`, `collected_by`, `is_superuser`, `has_pg_monitor`, `deployment_type`, `collector_version`, `can_read_pg_authid`, `has_read_all_settings`
+
+- **Baseline**: Contains all collector sections (roles, settings, hba_rules, etc.) as a free-form object.
+
+- **Checks**: Assessment results keyed by `spec_id`. Each entry has:
+  - `spec_hash`: SHA-256 hash of the spec (pattern: `^[0-9a-f]{64}$`)
+  - `query`: Non-empty string
+  - `status`: One of `"ok"`, `"error"`, `"not_collected"`
+  - When `status == "ok"`: `result` field is required
+  - When `status == "error"`: `error` field is required
+  - When `status == "not_collected"`: `result` must not be present
+
+### Safety rules:
+
+1. **No EXECUTE of manifest text**: The `pg_temp.run_checks()` function never uses `EXECUTE` on any text derived from the manifest. It only reads known fields (`spec_id`, `kind`, `setting_name`, `query`) and uses them directly in controlled operations.
+
+2. **Secret redaction**: The `pg_temp.sanitise_setting()` function masks credentials in sensitive settings (`archive_command`, `restore_command`, `archive_cleanup_command`, `recovery_end_command`, `primary_conninfo`, `ssl_passphrase_command`, `krb_server_keyfile`) before returning them.
+
 #
 ## check manifest v1
 

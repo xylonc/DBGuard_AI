@@ -137,6 +137,74 @@ WHEN OTHERS THEN
     RETURN 'error: ' || SQLERRM;
 END;
 $$ LANGUAGE plpgsql;
+-- ---------------------------------------------------------------------------
+-- 1b. Check runner - executes checks from manifest without EXECUTE of text
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION pg_temp.run_checks(p_manifest jsonb) RETURNS jsonb AS $$
+DECLARE
+    v_version int;
+    v_checks jsonb := '{}'::jsonb;
+    v_check jsonb;
+    v_spec_id text;
+    v_kind text;
+    v_setting_name text;
+    v_query text;
+    v_result text;
+    v_spec_hash text;
+    v_status text;
+    v_error text;
+BEGIN
+    -- Validate manifest_version
+    v_version := (p_manifest->>'manifest_version')::int;
+    IF v_version IS NULL OR v_version != 1 THEN
+        RAISE EXCEPTION 'manifest_version must be 1, got %', v_version;
+    END IF;
+
+    -- Iterate over checks array
+    FOR v_check IN SELECT jsonb_array_elements(p_manifest->'checks') LOOP
+        v_spec_id := v_check->>'spec_id';
+        v_kind := v_check->>'kind';
+        v_setting_name := v_check->>'setting_name';
+        v_query := v_check->>'query';
+        v_spec_hash := v_check->>'spec_hash';
+
+        -- Handle unsupported kind
+        IF v_kind != 'setting' THEN
+            v_status := 'error';
+            v_error := format('unsupported kind: %s', v_kind);
+        ELSE
+            -- Run the check - note we never EXECUTE manifest-derived text
+            -- We use the known setting_name directly
+            BEGIN
+                v_result := current_setting(v_setting_name);
+                -- Sanitize the result using the existing function
+                v_result := pg_temp.sanitise_setting(v_setting_name, v_result);
+                v_status := 'ok';
+                v_error := NULL;
+            EXCEPTION
+                WHEN OTHERS THEN
+                    v_status := 'error';
+                    v_error := SQLERRM;
+            END;
+        END IF;
+
+        -- Build result object for this check
+        v_checks := v_checks || jsonb_build_object(
+            v_spec_id,
+            jsonb_build_object(
+                'spec_hash', v_spec_hash,
+                'query', v_query,
+                'status', v_status,
+                CASE WHEN v_status = 'ok' THEN 'result' ELSE 'error' END,
+                COALESCE(v_result, v_error)
+            )
+        );
+    END LOOP;
+
+    RETURN v_checks;
+END;
+$$ LANGUAGE plpgsql;
+
 
 -- ---------------------------------------------------------------------------
 -- 2. Version-gated / privilege-gated SQL fragments, as text.
@@ -208,7 +276,7 @@ SELECT jsonb_pretty(jsonb_build_object(
 
 -- ---- envelope -------------------------------------------------------------
 'envelope', jsonb_build_object(
-    'schema_version',      '0.2.0',
+    'schema_version',      '0.3.0',
     'collector_version',   '2.0.0-sql',
     'collected_at',        to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
     'target_id',           :'target_id',
@@ -570,6 +638,8 @@ SELECT jsonb_pretty(jsonb_build_object(
     'password_on_process_command_line','psql_history_state','pg_service.conf_password',
     'package_installation_source','selinux_state','filesystem_mount_options',
     'tls_private_key_file_mode','certificate_contents'
-)
+),
+
+'checks', pg_temp.run_checks(COALESCE(NULLIF(:'manifest', ''), '{"'manifest_version'":1,'checks':[]}')::jsonb)
 
 )) AS bundle;

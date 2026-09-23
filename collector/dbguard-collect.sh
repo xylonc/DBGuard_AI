@@ -23,11 +23,12 @@ DB="${PGDATABASE:-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQL_FILE="$SCRIPT_DIR/collect.sql"
 
-while getopts ":o:t:d:h" opt; do
+while getopts ":o:t:d:m:h" opt; do
     case "$opt" in
         o) OUTFILE="$OPTARG" ;;
         t) TARGET_ID="$OPTARG" ;;
         d) DB="$OPTARG" ;;
+        m) MANIFEST_FILE="$OPTARG" ;;
         h) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "Unknown option. Use -h." >&2; exit 1 ;;
     esac
@@ -38,6 +39,12 @@ command -v psql >/dev/null 2>&1 || { echo "ERROR: psql not found in PATH." >&2; 
 
 if [ -z "$OUTFILE" ]; then
     OUTFILE="dbguard-${TARGET_ID}-$(date -u '+%Y%m%dT%H%M%SZ').json"
+fi
+
+# Validate manifest file if provided
+if [ -n "${MANIFEST_FILE:-}" ]; then
+    [ -f "$MANIFEST_FILE" ] || { echo "ERROR: manifest file does not exist: $MANIFEST_FILE" >&2; exit 1; }
+    [ -r "$MANIFEST_FILE" ] || { echo "ERROR: manifest file not readable: $MANIFEST_FILE" >&2; exit 1; }
 fi
 
 # Fail before doing anything if we cannot connect.
@@ -55,6 +62,7 @@ set +e
 psql -X -q -A -t \
      -v ON_ERROR_STOP=1 \
      -v target_id="$TARGET_ID" \
+     -v manifest="$([ -n "${MANIFEST_FILE:-}" ] && cat "$MANIFEST_FILE" || echo '{"manifest_version":1,"checks":[]}")" \
      -d "$DB" \
      -f "$SQL_FILE" > "$TMP" 2> "$ERR"
 RC=$?

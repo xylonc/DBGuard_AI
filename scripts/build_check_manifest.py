@@ -5,7 +5,7 @@ Usage:
     python scripts/build_check_manifest.py --specs <dir> --out <file>
 
 The manifest is written as UTF-8 JSON with sorted keys, 2-space indent,
-and a trailing newline. Exit code is non-zero on any error.
+and a trailing newline. Exit code is 0 on success, 1 on failure.
 
 Constraints:
 - Only includes tier: automated specs.
@@ -20,7 +20,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from app.services.spec_engine import RecordsIndex, RecordsIntegrityError, build_manifest  # noqa: E402
+# Import directly to avoid circular dependency through app package
+from app.services.spec_engine.records import RecordsIndex
+from app.services.spec_engine.manifest import build_manifest  # noqa: E402
 
 RECORDS_PATH = REPO_ROOT / "catalog" / "benchmarks" / "cis-pg17-v1.1.0" / "records.json"
 
@@ -43,9 +45,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Ensure specs directory exists
+    if not args.specs.exists():
+        print(f"FAIL: --specs directory does not exist: {args.specs}", file=sys.stderr)
+        return 1
+
     try:
         records = RecordsIndex.load(RECORDS_PATH)
-    except (OSError, ValueError, KeyError, RecordsIntegrityError) as exc:
+    except (OSError, ValueError, KeyError) as exc:
         print(f"FAIL: cannot load records from {RECORDS_PATH}: {exc}", file=sys.stderr)
         return 1
 

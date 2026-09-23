@@ -8,6 +8,7 @@ Conventions:
 import copy
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -225,3 +226,60 @@ class TestCheckManifest:
             # Error should mention the invalid kind
             assert "invalid_kind" in str(exc_info.value)
             assert "check.kind" in str(exc_info.value)
+    def test_empty_directory_raises(self):
+        """An empty directory raises ValueError with message about no .yaml files."""
+        import tempfile
+        records = RecordsIndex.load(RECORDS_PATH)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            # Empty directory - no .yaml files
+            with pytest.raises(ValueError) as exc_info:
+                build_manifest(tmp_path, records)
+
+            assert "no .yaml spec files" in str(exc_info.value).lower()
+
+    def test_cli_writes_byte_identical_to_golden_and_exits_zero(self):
+        """The CLI, run as subprocess, writes file byte-identical to golden and exits 0."""
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            out_file = tmp_path / "manifest.json"
+
+            result = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "build_check_manifest.py"),
+                 "--specs", str(SPEC_DIR), "--out", str(out_file)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            assert out_file.exists(), "Output file should exist"
+
+            # Compare bytes
+            golden_bytes = FIXTURE_PATH.read_bytes()
+            new_bytes = out_file.read_bytes()
+            assert golden_bytes == new_bytes, "CLI output should be byte-identical to golden"
+
+    def test_cli_missing_specs_exits_nonzero_with_stderr_message(self):
+        """The CLI given missing --specs directory exits non-zero with message on stderr."""
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            fake_dir = tmp_path / "nonexistent"
+
+            result = subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "build_check_manifest.py"),
+                 "--specs", str(fake_dir), "--out", str(tmp_path / "out.json")],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+            assert result.returncode != 0, "CLI should exit non-zero for missing directory"
+            assert result.stderr, "Error message should be on stderr"
+            assert "does not exist" in result.stderr.lower() or "FAIL" in result.stderr
+

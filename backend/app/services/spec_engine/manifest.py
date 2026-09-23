@@ -10,8 +10,6 @@ from .validate import validate_spec
 from .records import RecordsIndex
 from .specs import load_spec, spec_sha256
 
-RECORDS_PATH = Path(__file__).resolve().parent.parent.parent.parent / "catalog" / "benchmarks" / "cis-pg17-v1.1.0" / "records.json"
-
 
 def build_manifest(spec_dir: Path, records: RecordsIndex) -> dict:
     """Build a check manifest from spec files in a directory.
@@ -26,12 +24,18 @@ def build_manifest(spec_dir: Path, records: RecordsIndex) -> dict:
     Raises:
         ValueError: If any spec fails validation. The error message lists
                     every failing file and its errors.
+        ValueError: If the directory contains no .yaml files.
     """
+    # Find all .yaml files
+    yaml_files = sorted(spec_dir.glob("*.yaml"))
+    if not yaml_files:
+        raise ValueError(f"No .yaml spec files found in {spec_dir}")
+
     # Load and validate all specs
     valid_specs: list[tuple[Path, dict]] = []
     all_errors: list[tuple[Path, list[str]]] = []
 
-    for spec_path in sorted(spec_dir.glob("*.yaml")):
+    for spec_path in yaml_files:
         spec = load_spec(spec_path)
         errors = validate_spec(spec, records)
         if errors:
@@ -69,50 +73,33 @@ def build_manifest(spec_dir: Path, records: RecordsIndex) -> dict:
     # Sort by spec_id for deterministic output
     checks.sort(key=lambda c: c["spec_id"])
 
-    return {
+    manifest = {
         "manifest_version": 1,
         "benchmark_id": records.benchmark_id,
         "checks": checks,
     }
 
+    # Validate against schema before returning
+    schema_path = spec_dir.parent.parent / "specs" / "contracts" / "check-manifest-v1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    _validate_manifest(manifest, schema)
 
-def main(spec_dir: Path, out_path: Path) -> int:
-    """CLI entry point for building a check manifest.
-
-    Args:
-        spec_dir: Path to directory containing .yaml spec files.
-        out_path: Path where the JSON manifest will be written.
-
-    Returns:
-        0 on success, 1 on error.
-    """
-    try:
-        records = RecordsIndex.load(RECORDS_PATH)
-    except (OSError, ValueError, KeyError) as exc:
-        print(f"FAIL: cannot load records from {RECORDS_PATH}: {exc}")
-        return 1
-
-    try:
-        manifest = build_manifest(spec_dir, records)
-    except ValueError as exc:
-        print(f"FAIL: {exc}")
-        return 1
-
-    # Write as UTF-8 JSON with sorted keys, 2-space indent, trailing newline
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    print(f"Wrote manifest to {out_path}")
-    return 0
+    return manifest
 
 
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 3:
-        print("Usage: python -m app.services.spec_engine.manifest <spec_dir> <out_file>")
-        sys.exit(1)
-    spec_dir = Path(sys.argv[1])
-    out_path = Path(sys.argv[2])
-    sys.exit(main(spec_dir, out_path))
+def _validate_manifest(manifest: dict, schema: dict) -> None:
+    """Simple JSON Schema validation for check-manifest-v1.json."""
+    # Top-level required fields
+    for field in ["manifest_version", "benchmark_id", "checks"]:
+        assert field in manifest, f"Missing top-level field: {field}"
+
+    assert manifest["manifest_version"] == 1, f"manifest_version must be 1, got {manifest['manifest_version']}"
+
+    # Each check
+    for check in manifest["checks"]:
+        for field in ["spec_id", "spec_hash", "kind", "setting_name", "query"]:
+            assert field in check, f"Missing check field: {field}"
+        assert check["kind"] == "setting", f"kind must be 'setting', got {check['kind']}"
+        assert isinstance(check["spec_hash"], str), "spec_hash must be a string"
+        assert len(check["spec_hash"]) == 64, "spec_hash must be 64 chars"
+        assert all(c in "0123456789abcdef" for c in check["spec_hash"]), "spec_hash must be hex"

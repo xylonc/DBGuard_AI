@@ -25,7 +25,7 @@ sys_path = str(REPO_ROOT / "backend")
 if sys_path not in __import__("sys").path:
     __import__("sys").path.insert(0, sys_path)
 
-from app.services.fix_unit_render import derive_rollback, render_action
+from app.services.fix_unit_render import derive_rollback, render_action, render_action_script
 from app.services.fix_unit_validator import validate_fix_unit
 from app.services.template_service import literal
 
@@ -311,29 +311,48 @@ class TestFixUnitSchema:
         assert "apply is a no-op: apply.value 'off' equals prior_state.value 'off'" in errors[0]
 
     def test_render_action_set_config(self):
-        """render_action correctly renders set_config."""
+        """render_action correctly renders set_config as a list of 2 statements."""
         action = {"action": "set_config", "param": "log_connections", "value": "on"}
-        sql = render_action(action)
-        assert "ALTER SYSTEM SET" in sql
-        assert '"log_connections"' in sql  # Quoted
-        assert "= 'on'" in sql
+        result = render_action(action)
+        assert isinstance(result, list), "render_action should return a list"
+        assert len(result) == 2, f"Expected 2 statements, got {len(result)}"
+        assert result[0].startswith("ALTER SYSTEM SET"), f"First statement: {result[0]!r}"
+        assert '"log_connections"' in result[0], f"Quoted param: {result[0]!r}"
+        assert result[0].endswith("'on'"), f"Value in first statement: {result[0]!r}"
+        assert result[1] == "SELECT pg_reload_conf()", f"Second statement: {result[1]!r}"
 
     def test_render_action_reset_config(self):
-        """render_action correctly renders reset_config."""
+        """render_action correctly renders reset_config as a list of 2 statements."""
         action = {"action": "reset_config", "param": "log_connections"}
-        sql = render_action(action)
-        assert "ALTER SYSTEM RESET" in sql
-        assert '"log_connections"' in sql  # Quoted
+        result = render_action(action)
+        assert isinstance(result, list), "render_action should return a list"
+        assert len(result) == 2, f"Expected 2 statements, got {len(result)}"
+        assert result[0].startswith("ALTER SYSTEM RESET"), f"First statement: {result[0]!r}"
+        assert '"log_connections"' in result[0], f"Quoted param: {result[0]!r}"
+        assert result[1] == "SELECT pg_reload_conf()", f"Second statement: {result[1]!r}"
 
     def test_render_action_single_quote_escaped(self):
-        """render_action doubles single quotes in value."""
+        """render_action doubles single quotes in value and returns 2 statements."""
         action = {"action": "set_config", "param": "log_connections", "value": "it's on"}
-        sql = render_action(action)
-        assert "= 'it''s on'" in sql  # Single quote doubled
+        result = render_action(action)
+        assert isinstance(result, list), "render_action should return a list"
+        assert len(result) == 2, f"Expected 2 statements, got {len(result)}"
+        assert "= 'it''s on'" in result[0], f"Single quote doubled: {result[0]!r}"
+
+    def test_render_action_value_with_semicolon_and_quote(self):
+        """render_action handles value with semicolon and quote, returns exactly 2 elements."""
+        action = {"action": "set_config", "param": "log_connections", "value": "a;b'c"}
+        result = render_action(action)
+        assert isinstance(result, list), "render_action should return a list"
+        assert len(result) == 2, f"Expected 2 statements, got {len(result)}"
+        # First statement should have the value with escaped quotes
+        assert "a;b''c" in result[0], f"Escaped value: {result[0]!r}"
+        assert result[1] == "SELECT pg_reload_conf()", f"Second statement: {result[1]!r}"
 
     @pytest.mark.parametrize("value", ["on", "", "it's"])
     def test_render_action_matches_template(self, value):
         """render_action output matches the real set_config_parameter.sql.j2 for the same inputs."""
+        import re
         from pathlib import Path
         from app.services.template_service import env
 
@@ -342,12 +361,28 @@ class TestFixUnitSchema:
         template_sql = env.from_string(template_text).render(
             param_name="log_connections", param_value=value
         )
-        template_sql = " ".join(
-            line.strip() for line in template_sql.splitlines()
-            if line.strip() and not line.strip().startswith("--")
-        )
-        rendered = render_action({"action": "set_config", "param": "log_connections", "value": value})
-        assert rendered == template_sql, f"render_action: {rendered!r}\ntemplate:      {template_sql!r}"
+        # Normalize template output: strip comments, then collapse whitespace to single space and strip
+        # First remove comment lines, then normalize whitespace
+        template_lines = [line for line in template_sql.splitlines() if not line.strip().startswith("--")]
+        template_normalized = re.sub(r"\s+", " ", "\n".join(template_lines)).strip()
+        # Call render_action_script to get the SQL string for comparison
+        script = render_action_script({"action": "set_config", "param": "log_connections", "value": value})
+        script_normalized = re.sub(r"\s+", " ", script).strip()
+        assert template_normalized == script_normalized, f"Template:\n{template_normalized!r}\n\nScript:\n{script_normalized!r}"
+
+    def test_render_action_script(self):
+        """render_action_script joins statements with ;\n and adds final ;."""
+        action = {"action": "set_config", "param": "log_connections", "value": "on"}
+        script = render_action_script(action)
+        assert script == "ALTER SYSTEM SET \"log_connections\" = 'on';\nSELECT pg_reload_conf();", f"Got: {script!r}"
+
+    def test_render_action_script_with_semicolon_in_value(self):
+        """render_action_script handles value with semicolon correctly."""
+        action = {"action": "set_config", "param": "log_connections", "value": "a;b"}
+        script = render_action_script(action)
+        # The semicolon in value should NOT become a statement separator
+        # First statement should still be intact
+        assert script.startswith("ALTER SYSTEM SET \"log_connections\" = 'a;b'"), f"Got: {script!r}"
 
     def test_literal_filter_raises_on_nul(self):
         """literal filter raises ValueError on NUL character."""

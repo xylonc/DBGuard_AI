@@ -69,15 +69,17 @@ def derive_rollback(prior_state: dict, apply_action: dict) -> dict:
         raise ValueError(f"Unknown action type: {action_type!r}")
 
 
-def render_action(action: dict) -> str:
-    """Render a typed action to SQL.
+def render_action(action: dict) -> list[str]:
+    """Render a typed action to SQL statements.
 
     Args:
         action: Either {"action": "set_config", "param": <name>, "value": <str>}
                 or {"action": "reset_config", "param": <name>}
 
     Returns:
-        SQL string (ALTER SYSTEM SET or ALTER SYSTEM RESET)
+        List of SQL statements, one per element, for separate execution.
+        Each statement has NO trailing semicolon.
+        Execution order: ALTER SYSTEM statement first, then pg_reload_conf().
     """
     action_type = action.get("action")
     param = action.get("param", "")
@@ -88,12 +90,33 @@ def render_action(action: dict) -> str:
         escaped_value = value.replace("'", "''")
         # Quote param name (ident filter in template)
         quoted_param = _quote_identifier(param)
-        return f"ALTER SYSTEM SET {quoted_param} = '{escaped_value}'; SELECT pg_reload_conf();"
+        # Return two separate statements without trailing semicolons
+        return [
+            f"ALTER SYSTEM SET {quoted_param} = '{escaped_value}'",
+            "SELECT pg_reload_conf()",
+        ]
     elif action_type == "reset_config":
         # Quote param name (ident filter in template)
         quoted_param = _quote_identifier(param)
-        return f"ALTER SYSTEM RESET {quoted_param}; SELECT pg_reload_conf();"
+        # Return two separate statements without trailing semicolons
+        return [
+            f"ALTER SYSTEM RESET {quoted_param}",
+            "SELECT pg_reload_conf()",
+        ]
     else:
         raise ValueError(f"Unknown action type: {action_type!r}")
 
 
+def render_action_script(action: dict) -> str:
+    """Render a typed action to SQL for file/report output.
+
+    Args:
+        action: Either {"action": "set_config", "param": <name>, "value": <str>}
+                or {"action": "reset_config", "param": <name>}
+
+    Returns:
+        SQL string with statements joined by ";\n" and a final ";".
+        Each statement is rendered by render_action() without its trailing semicolon.
+    """
+    statements = render_action(action)
+    return ";\n".join(statements) + ";"

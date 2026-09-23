@@ -54,7 +54,9 @@ class TestTemplateRegistryPure:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
-            mock_cursor.fetchone.return_value = [1, "test_template", 1, "draft"]
+            # First call to fetchone (SELECT latest version) returns None (no existing template)
+            # Second call to fetchone (INSERT RETURNING) returns the new row
+            mock_cursor.fetchone.side_effect = [None, [1, "test_template", 1, "draft"]]
             mock_connect.return_value = mock_conn
             mock_embedding.return_value = [0.1] * 768
 
@@ -69,10 +71,14 @@ class TestTemplateRegistryPure:
             assert result["template_name"] == "test_template"
             assert result["version"] == 1
 
-            mock_cursor.execute.assert_called_once()
-            call_args = mock_cursor.execute.call_args[0][0]
-            assert "INSERT INTO templates" in call_args
-            assert "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s" in call_args
+            mock_cursor.execute.assert_called()
+            # Verify INSERT was called (not ON CONFLICT UPDATE)
+            calls = [call[0][0] for call in mock_cursor.execute.call_args_list]
+            insert_calls = [c for c in calls if "INSERT INTO templates" in c]
+            assert len(insert_calls) >= 1
+            # Verify no UPDATE calls
+            update_calls = [c for c in calls if "UPDATE templates" in c]
+            assert len(update_calls) == 0
 
     def test_template_search_filters_draft_templates_with_mock(self):
         """Test that search returns only active templates (mocked DB)."""
@@ -96,30 +102,39 @@ class TestTemplateRegistryPure:
         """Test that approving a template returns True on success (mocked DB)."""
         with patch("app.services.vector_service.psycopg2.connect") as mock_connect:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_conn.cursor.return_value = mock_cursor
-            mock_cursor.rowcount = 1
+            cur = MagicMock()
+            cur.__enter__.return_value = cur  # with conn.cursor() as cur yields this same mock
+            cur.fetchone.return_value = [1]   # draft row exists
+            mock_conn.cursor.return_value = cur
             mock_connect.return_value = mock_conn
 
             result = approve_template("test_template", 1, "test_approver")
 
             assert result is True
-            call_args = mock_cursor.execute.call_args[0][0]
-            assert "UPDATE templates" in call_args
-            assert "SET status = 'active'" in call_args
+            sql = [c.args[0] for c in cur.execute.call_args_list]
+            assert len(sql) == 3, sql
+            assert "status = 'draft'" in sql[0] and "FOR UPDATE" in sql[0]
+            assert "status = 'archived'" in sql[1]
+            assert "status = 'active'" in sql[2]
 
     def test_template_approval_returns_false_no_rows_with_mock(self):
         """Test that approving a non-existent template returns False."""
         with patch("app.services.vector_service.psycopg2.connect") as mock_connect:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
-            mock_conn.cursor.return_value = mock_cursor
-            mock_cursor.rowcount = 0
+            # The cursor is used in a context manager: with conn.cursor() as cur
+            cursor_context = MagicMock()
+            cursor_context.__enter__ = MagicMock(return_value=cursor_context)
+            cursor_context.__exit__ = MagicMock(return_value=None)
+            cursor_context.execute = MagicMock()
+            cursor_context.fetchone = MagicMock(return_value=None)
+            mock_conn.cursor.return_value = cursor_context
             mock_connect.return_value = mock_conn
 
             result = approve_template("nonexistent_template", 1, "test_approver")
 
             assert result is False
+            assert cursor_context.execute.call_count == 1  # only the draft check ran; nothing was updated
 
     def test_get_active_template_version_returns_none_when_not_active_with_mock(self):
         """Test that getting active version returns None when template is draft."""

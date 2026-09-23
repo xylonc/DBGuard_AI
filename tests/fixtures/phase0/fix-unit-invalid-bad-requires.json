@@ -31,5 +31,5 @@
     "action": "reset_config",
     "param": "log_connections"
   },
-  "requires": "reload"
+  "requires": "maybe"
 }

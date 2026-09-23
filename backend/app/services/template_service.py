@@ -31,7 +31,20 @@ def quote_identifier(value: str) -> str:
     return f'"{value.replace(chr(34), chr(34) * 2)}"'
 
 
+def literal(value: str) -> str:
+    """Escape a string literal for SQL by doubling single quotes.
+
+    Raises ValueError if the value contains a NUL character.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid literal value: {value!r}")
+    if "\x00" in value:
+        raise ValueError("NUL character not allowed in literal value")
+    return value.replace("'", "''")
+
+
 env.filters["ident"] = quote_identifier
+env.filters["literal"] = literal
 
 
 def compile_sql_plan_from_templates(

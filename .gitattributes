@@ -4,3 +4,4 @@
 *.xlsx binary
 *.png binary
 *.ico binary
+*.j2 text eol=lf

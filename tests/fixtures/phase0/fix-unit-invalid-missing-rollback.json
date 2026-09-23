@@ -27,9 +27,5 @@
     "expected_value": "on",
     "query": "SHOW log_connections"
   },
-  "rollback": {
-    "action": "reset_config",
-    "param": "log_connections"
-  },
   "requires": "reload"
 }

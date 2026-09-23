@@ -14,7 +14,7 @@
     "sourcefile": "/var/lib/postgresql/data/postgresql.conf"
   },
   "precheck": {
-    "expected_value": "off",
+    "expected_value": "different_value",
     "query": "SHOW log_connections"
   },
   "apply": {

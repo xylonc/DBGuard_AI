@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS templates (
 );
 
 -- Index for retrieving the single active version of a template
-CREATE INDEX IF NOT EXISTS idx_templates_active_unique
+CREATE UNIQUE INDEX IF NOT EXISTS templates_one_active_per_name
     ON templates (template_name) WHERE status = 'active';
 
 CREATE INDEX IF NOT EXISTS idx_templates_name_version

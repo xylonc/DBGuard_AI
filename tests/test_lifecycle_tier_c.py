@@ -113,7 +113,6 @@ class TestPartialChunkIngestionBug:
                 "Expected errors to be reported for failed chunks"
             )
 
-    @pytest.mark.xfail(reason="Bug: Partial chunk ingestion incorrectly reports status as 'ingested' instead of 'partial' or 'failed'")
     def test_all_chunks_fail_reports_failed_status(self, mock_embedding_provider):
         """Test that when all chunks fail, status is 'failed'.
 

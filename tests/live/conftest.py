@@ -38,6 +38,21 @@ def target_db():
         pytest.fail(f"Failed to connect to pg-target: {e}")
 
 
+@pytest.fixture(scope="module")
+def log_connections_reset(target_db):
+    """Reset log_connections to default state after tests.
+    
+    Uses yield to ensure reset runs even if tests fail.
+    """
+    try:
+        yield
+    finally:
+        # Reset log_connections to default (ALTER SYSTEM RESET + reload)
+        with target_db.cursor() as cur:
+            cur.execute("ALTER SYSTEM RESET log_connections")
+            cur.execute("SELECT pg_reload_conf()")
+
+
 def fresh_setting(param: str) -> Tuple[str, str, str | None]:
     """Read a setting from pg_settings with a fresh connection.
 

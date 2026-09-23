@@ -80,7 +80,7 @@ def set_log_connections_via_alter_system(conn, value: str):
 class TestFixUnitLive:
     """Live apply/rollback tests against pg-target."""
 
-    def test_set_config_live_default_prior(self, target_db):
+    def test_set_config_live_default_prior(self, target_db, log_connections_reset):
         """Test set_config with default prior (sourcefile NULL).
 
         Expected:
@@ -158,17 +158,9 @@ class TestFixUnitLive:
             f"got {final_sourcefile!r}"
         )
 
-        # f. Finally: restore to DEFAULT state (ALTER SYSTEM RESET + reload)
-        # This ensures the server returns to the state before the test
-        run_action(target_db, {"action": "reset_config", "param": "log_connections"})
+        # f. Finally: restore to DEFAULT state (handled by log_connections_reset fixture)
 
-        restored_setting, restored_source, restored_sourcefile = fresh_setting("log_connections")
-        # After reset_config, sourcefile should be NULL (default)
-        assert restored_sourcefile is None, (
-            f"Finally restore: expected sourcefile=None, got {restored_sourcefile!r}"
-        )
-
-    def test_set_config_live_auto_conf_prior(self, target_db):
+    def test_set_config_live_auto_conf_prior(self, target_db, log_connections_reset):
         """Test set_config with ALTER SYSTEM prior (sourcefile ends with postgresql.auto.conf).
 
         Expected:
@@ -256,10 +248,4 @@ class TestFixUnitLive:
             f"got {final_sourcefile!r}"
         )
 
-        # f. Finally: restore to DEFAULT state (ALTER SYSTEM RESET + reload)
-        run_action(target_db, {"action": "reset_config", "param": "log_connections"})
-
-        restored_setting, restored_source, restored_sourcefile = fresh_setting("log_connections")
-        assert restored_sourcefile is None, (
-            f"Finally restore: expected sourcefile=None, got {restored_sourcefile!r}"
-        )
+        # f. Finally: restore to DEFAULT state (handled by log_connections_reset fixture)

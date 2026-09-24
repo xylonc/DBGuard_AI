@@ -1,0 +1,6 @@
+## feature/phase1-e2e
+ M tests/live/conftest.py
+?? task4d.sh
+?? task4d_final.sh
+6e4adc1 Phase 1 task 4c: T3 via whitespace edit, engine-only mutation M1
+d9e7398 Phase 1 task 4: end-to-end break/fix test on pg-target

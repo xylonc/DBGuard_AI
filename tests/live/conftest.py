@@ -19,6 +19,50 @@ def pytest_configure(config):
     )
 
 
+# Track whether the auto.conf guard has already run
+_AUTOCONF_GUARD_RAN = False
+
+
+def _check_autoconf_is_empty():
+    """Check that no auto.conf settings exist. Raises AssertionError if not empty."""
+    pg_target_url = os.environ.get("PG_TARGET_URL")
+    if not pg_target_url:
+        raise RuntimeError("PG_TARGET_URL is not set")
+
+    with psycopg2.connect(pg_target_url) as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE '%postgresql.auto.conf' ORDER BY name"
+            )
+            rows = cur.fetchall()
+            if rows:
+                rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+                raise AssertionError(
+                    f"postgresql.auto.conf is not empty before test run:\n{rows_str}"
+                )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def autoconf_guard():
+    """Session-scoped autouse fixture to check auto.conf state at start/end of live tests.
+    
+    Before the first live test: asserts auto.conf is empty.
+    After the last live test: asserts auto.conf is empty.
+    This fixture DETECTS contamination but NEVER resets or cleans anything.
+    """
+    global _AUTOCONF_GUARD_RAN
+    
+    # Run check before first test
+    _check_autoconf_is_empty()
+    _AUTOCONF_GUARD_RAN = True
+    
+    yield
+    
+    # Run check after last test
+    _check_autoconf_is_empty()
+
+
 @pytest.fixture(scope="module")
 def target_db():
     """Create a psycopg2 connection to pg-target with autocommit=True.

@@ -1,0 +1,816 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 7 items
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 14%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] FAILED [ 28%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] FAILED [ 42%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] FAILED [ 57%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] FAILED [ 71%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] FAILED [ 85%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [100%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass ERROR [100%]
+
+==================================== ERRORS ====================================
+__ ERROR at teardown of TestE2EBreakFix.test_edited_spec_is_stale_never_pass ___
+
+    @pytest.fixture(scope="session", autouse=True)
+    def autoconf_guard():
+        """Session-scoped autouse fixture to check auto.conf state at start/end of live tests.
+    
+        Before the first live test: asserts auto.conf is empty.
+        After the last live test: asserts auto.conf is empty.
+        This fixture DETECTS contamination but NEVER resets or cleans anything.
+        """
+        global _AUTOCONF_GUARD_RAN
+    
+        # Run check before first test
+        _check_autoconf_is_empty()
+        _AUTOCONF_GUARD_RAN = True
+    
+        yield
+    
+        # Run check after last test
+>       _check_autoconf_is_empty()
+
+tests/live/conftest.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check_autoconf_is_empty():
+        """Check that no auto.conf settings exist. Raises AssertionError if not empty."""
+        pg_target_url = os.environ.get("PG_TARGET_URL")
+        if not pg_target_url:
+            raise RuntimeError("PG_TARGET_URL is not set")
+    
+        with psycopg2.connect(pg_target_url) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE '%postgresql.auto.conf' ORDER BY name"
+                )
+                rows = cur.fetchall()
+                if rows:
+                    rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>                   raise AssertionError(
+                        f"postgresql.auto.conf is not empty before test run:\n{rows_str}"
+                    )
+E                   AssertionError: postgresql.auto.conf is not empty before test run:
+E                     debug_print_parse=off
+E                     log_connections=on
+E                     log_disconnections=on
+E                     log_statement=ddl
+E                     ssl_min_protocol_version=TLSv1.2
+
+tests/live/conftest.py:41: AssertionError
+=================================== FAILURES ===================================
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.16] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d4054690>
+target_db = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-217/test_break_then_fix_cis_pg17_v0')
+spec_id = 'cis-pg17-v1.1.0:3.1.16'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Setup precondition: check auto.conf is empty for this setting
+        self._check_autoconf_empty_for_setting(target_db, setting_name)
+    
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        if spec["check"]["operator"] == "equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        prior_state = {
+            "value": prior_setting,
+            "sourcefile": prior_sourcefile,
+        }
+    
+        # a) Baseline
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply break value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert FAIL
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify break value in snapshot
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply fix value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert PASS
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+        assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+    
+        # h) Assert other specs unchanged
+        other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report0["results"] if r["spec_id"] != spec_id}
+        other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report1["results"] if r["spec_id"] != spec_id}
+        other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report2["results"] if r["spec_id"] != spec_id}
+    
+        assert other_specs0 == other_specs1, (
+            f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
+        )
+        assert other_specs0 == other_specs2, (
+            f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
+        )
+    
+        # Teardown: execute rollback statements
+        self._execute_rollback_statements(target_db, prior_state, apply_action)
+    
+        # Verify auto.conf is empty
+>       self._check_autoconf_empty_for_setting(target_db, setting_name)
+
+tests/live/test_e2e_break_fix.py:233: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d4054690>
+conn = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+setting_name = 'debug_print_parse'
+
+    def _check_autoconf_empty_for_setting(self, conn, setting_name: str) -> None:
+        """Check that no auto.conf row exists for the setting. Raise AssertionError if found."""
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                ('%postgresql.auto.conf%', setting_name),
+            )
+            rows = cur.fetchall()
+            # Empty rows means no auto.conf entry - this is expected
+            if rows:
+                rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>               raise AssertionError(
+                    f"pg-target contaminated before test: auto.conf has rows:\n{rows_str}"
+                )
+E               AssertionError: pg-target contaminated before test: auto.conf has rows:
+E                 debug_print_parse=off
+
+tests/live/test_e2e_break_fix.py:101: AssertionError
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.20] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d4098770>
+target_db = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-217/test_break_then_fix_cis_pg17_v1')
+spec_id = 'cis-pg17-v1.1.0:3.1.20'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Setup precondition: check auto.conf is empty for this setting
+        self._check_autoconf_empty_for_setting(target_db, setting_name)
+    
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        if spec["check"]["operator"] == "equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        prior_state = {
+            "value": prior_setting,
+            "sourcefile": prior_sourcefile,
+        }
+    
+        # a) Baseline
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply break value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert FAIL
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify break value in snapshot
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply fix value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert PASS
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+        assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+    
+        # h) Assert other specs unchanged
+        other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report0["results"] if r["spec_id"] != spec_id}
+        other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report1["results"] if r["spec_id"] != spec_id}
+        other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report2["results"] if r["spec_id"] != spec_id}
+    
+        assert other_specs0 == other_specs1, (
+            f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
+        )
+        assert other_specs0 == other_specs2, (
+            f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
+        )
+    
+        # Teardown: execute rollback statements
+        self._execute_rollback_statements(target_db, prior_state, apply_action)
+    
+        # Verify auto.conf is empty
+>       self._check_autoconf_empty_for_setting(target_db, setting_name)
+
+tests/live/test_e2e_break_fix.py:233: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d4098770>
+conn = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+setting_name = 'log_connections'
+
+    def _check_autoconf_empty_for_setting(self, conn, setting_name: str) -> None:
+        """Check that no auto.conf row exists for the setting. Raise AssertionError if found."""
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                ('%postgresql.auto.conf%', setting_name),
+            )
+            rows = cur.fetchall()
+            # Empty rows means no auto.conf entry - this is expected
+            if rows:
+                rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>               raise AssertionError(
+                    f"pg-target contaminated before test: auto.conf has rows:\n{rows_str}"
+                )
+E               AssertionError: pg-target contaminated before test: auto.conf has rows:
+E                 log_connections=on
+
+tests/live/test_e2e_break_fix.py:101: AssertionError
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.21] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d40989d0>
+target_db = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-217/test_break_then_fix_cis_pg17_v2')
+spec_id = 'cis-pg17-v1.1.0:3.1.21'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Setup precondition: check auto.conf is empty for this setting
+        self._check_autoconf_empty_for_setting(target_db, setting_name)
+    
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        if spec["check"]["operator"] == "equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        prior_state = {
+            "value": prior_setting,
+            "sourcefile": prior_sourcefile,
+        }
+    
+        # a) Baseline
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply break value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert FAIL
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify break value in snapshot
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply fix value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert PASS
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+        assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+    
+        # h) Assert other specs unchanged
+        other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report0["results"] if r["spec_id"] != spec_id}
+        other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report1["results"] if r["spec_id"] != spec_id}
+        other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report2["results"] if r["spec_id"] != spec_id}
+    
+        assert other_specs0 == other_specs1, (
+            f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
+        )
+        assert other_specs0 == other_specs2, (
+            f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
+        )
+    
+        # Teardown: execute rollback statements
+        self._execute_rollback_statements(target_db, prior_state, apply_action)
+    
+        # Verify auto.conf is empty
+>       self._check_autoconf_empty_for_setting(target_db, setting_name)
+
+tests/live/test_e2e_break_fix.py:233: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d40989d0>
+conn = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+setting_name = 'log_disconnections'
+
+    def _check_autoconf_empty_for_setting(self, conn, setting_name: str) -> None:
+        """Check that no auto.conf row exists for the setting. Raise AssertionError if found."""
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                ('%postgresql.auto.conf%', setting_name),
+            )
+            rows = cur.fetchall()
+            # Empty rows means no auto.conf entry - this is expected
+            if rows:
+                rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>               raise AssertionError(
+                    f"pg-target contaminated before test: auto.conf has rows:\n{rows_str}"
+                )
+E               AssertionError: pg-target contaminated before test: auto.conf has rows:
+E                 log_disconnections=on
+
+tests/live/test_e2e_break_fix.py:101: AssertionError
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.25] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d45969f0>
+target_db = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-217/test_break_then_fix_cis_pg17_v3')
+spec_id = 'cis-pg17-v1.1.0:3.1.25'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Setup precondition: check auto.conf is empty for this setting
+        self._check_autoconf_empty_for_setting(target_db, setting_name)
+    
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        if spec["check"]["operator"] == "equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        prior_state = {
+            "value": prior_setting,
+            "sourcefile": prior_sourcefile,
+        }
+    
+        # a) Baseline
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply break value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert FAIL
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify break value in snapshot
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply fix value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert PASS
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+        assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+    
+        # h) Assert other specs unchanged
+        other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report0["results"] if r["spec_id"] != spec_id}
+        other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report1["results"] if r["spec_id"] != spec_id}
+        other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report2["results"] if r["spec_id"] != spec_id}
+    
+        assert other_specs0 == other_specs1, (
+            f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
+        )
+        assert other_specs0 == other_specs2, (
+            f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
+        )
+    
+        # Teardown: execute rollback statements
+        self._execute_rollback_statements(target_db, prior_state, apply_action)
+    
+        # Verify auto.conf is empty
+>       self._check_autoconf_empty_for_setting(target_db, setting_name)
+
+tests/live/test_e2e_break_fix.py:233: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d45969f0>
+conn = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+setting_name = 'log_statement'
+
+    def _check_autoconf_empty_for_setting(self, conn, setting_name: str) -> None:
+        """Check that no auto.conf row exists for the setting. Raise AssertionError if found."""
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                ('%postgresql.auto.conf%', setting_name),
+            )
+            rows = cur.fetchall()
+            # Empty rows means no auto.conf entry - this is expected
+            if rows:
+                rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>               raise AssertionError(
+                    f"pg-target contaminated before test: auto.conf has rows:\n{rows_str}"
+                )
+E               AssertionError: pg-target contaminated before test: auto.conf has rows:
+E                 log_statement=ddl
+
+tests/live/test_e2e_break_fix.py:101: AssertionError
+___________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:6.9] ___________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d4088160>
+target_db = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-217/test_break_then_fix_cis_pg17_v4')
+spec_id = 'cis-pg17-v1.1.0:6.9'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Setup precondition: check auto.conf is empty for this setting
+        self._check_autoconf_empty_for_setting(target_db, setting_name)
+    
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        if spec["check"]["operator"] == "equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            apply_action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        prior_state = {
+            "value": prior_setting,
+            "sourcefile": prior_sourcefile,
+        }
+    
+        # a) Baseline
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply break value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert FAIL
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify break value in snapshot
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply fix value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert PASS
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+        assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+    
+        # h) Assert other specs unchanged
+        other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report0["results"] if r["spec_id"] != spec_id}
+        other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report1["results"] if r["spec_id"] != spec_id}
+        other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"])
+                       for r in report2["results"] if r["spec_id"] != spec_id}
+    
+        assert other_specs0 == other_specs1, (
+            f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
+        )
+        assert other_specs0 == other_specs2, (
+            f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
+        )
+    
+        # Teardown: execute rollback statements
+        self._execute_rollback_statements(target_db, prior_state, apply_action)
+    
+        # Verify auto.conf is empty
+>       self._check_autoconf_empty_for_setting(target_db, setting_name)
+
+tests/live/test_e2e_break_fix.py:233: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x78d6d4088160>
+conn = <connection object at 0x78d6d40542c0; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+setting_name = 'ssl_min_protocol_version'
+
+    def _check_autoconf_empty_for_setting(self, conn, setting_name: str) -> None:
+        """Check that no auto.conf row exists for the setting. Raise AssertionError if found."""
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                ('%postgresql.auto.conf%', setting_name),
+            )
+            rows = cur.fetchall()
+            # Empty rows means no auto.conf entry - this is expected
+            if rows:
+                rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>               raise AssertionError(
+                    f"pg-target contaminated before test: auto.conf has rows:\n{rows_str}"
+                )
+E               AssertionError: pg-target contaminated before test: auto.conf has rows:
+E                 ssl_min_protocol_version=TLSv1.2
+
+tests/live/test_e2e_break_fix.py:101: AssertionError
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+ERROR tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+=============== 5 failed, 2 passed, 1 error in 83.89s (0:01:23) ================
+EXIT=0

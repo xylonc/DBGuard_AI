@@ -1,0 +1,248 @@
+=== 00-state.txt ===
+## feature/phase1-e2e
+?? task4d.sh
+?? task4d_final.sh
+6e4adc1 Phase 1 task 4c: T3 via whitespace edit, engine-only mutation M1
+d9e7398 Phase 1 task 4: end-to-end break/fix test on pg-target
+
+=== 00-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 00-cause.txt ===
+VERBATIM quoted lines from tests/live/test_e2e_break_fix.py:
+
+(a) Records the prior state (line 121):
+    prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+
+(b) Executes the fix action (lines 169-180):
+    # e) Apply proof.fix.value
+    if spec["check"]["operator"] == "equals":
+        action = {"action": "set_config", "param": setting_name, "value": fix_value}
+    elif spec["check"]["operator"] == "not_equals":
+        action = {"action": "set_config", "param": setting_name, "value": fix_value}
+    elif spec["check"]["operator"] == "in":
+        action = {"action": "set_config", "param": setting_name, "value": fix_value}
+    else:
+        pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+
+    run_action(target_db, action)
+
+(c) No rollback/restore is performed - there is NO assertion or code that:
+    - Calls derive_rollback() to compute the rollback action
+    - Executes the rollback SQL statements
+    - Asserts the setting has been restored
+
+Explanation (lines backed by the quoted code):
+
+The test records the prior state at line 121 but never uses it to restore the setting
+after the test completes. The test applies a fix action at line 180 via run_action()
+but has no teardown (yield fixture, finally block, or cleanup code) to execute the
+rollback. The run_action() function calls render_action() which returns SQL statements
+for ALTER SYSTEM SET/RESET and pg_reload_conf() - but there's no code to call
+render_action(derive_rollback(prior_state, action)) to restore the original state.
+
+The auto.conf entries survive because:
+1. ALTER SYSTEM writes to postgresql.auto.conf
+2. pg_reload_conf() reloads the settings into memory
+3. No rollback SQL is ever executed to remove the ALTER SYSTEM entries from auto.conf
+
+=== 01-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 02-test_collector_manifest.py-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 02-test_collector_manifest.py.txt ===
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_golden_manifest_answers_every_check PASSED [  6%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_provenance_matches_the_actual_files PASSED [  13%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_no_manifest_collects_baseline_only PASSED [  20%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_setting_fails_only_its_own_check PASSED [  26%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unsupported_kind_fails_only_its_own_check PASSED [  33%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_injection_is_just_an_unknown_setting PASSED [  40%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[archive_cleanup_command-cp rclone://backup:s3cr3t-9f8e7d6c@bucket/%r /tmp] PASSED [  46%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[ssl_passphrase_command-echo password=s3cr3t-9f8e7d6c] PASSED [  53%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_id-entry 1 has no spec_id] PASSED [  60%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_hash-has no spec_hash] PASSED [  66%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[kind-has no kind] PASSED [  73%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[query-has no query] PASSED [  80%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[setting_name-has no setting_name] PASSED [  86%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_duplicate_spec_id_refuses_whole_run PASSED [  93%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_manifest_version_refuses_whole_run PASSED [ 100%]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_golden_manifest_answers_every_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_provenance_matches_the_actual_files
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_no_manifest_collects_baseline_only
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_setting_fails_only_its_own_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unsupported_kind_fails_only_its_own_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_injection_is_just_an_unknown_setting
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[archive_cleanup_command-cp rclone://backup:s3cr3t-9f8e7d6c@bucket/%r /tmp]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[ssl_passphrase_command-echo password=s3cr3t-9f8e7d6c]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_id-entry 1 has no spec_id]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_hash-has no spec_hash]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[kind-has no kind]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[query-has no query]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[setting_name-has no setting_name]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_duplicate_spec_id_refuses_whole_run
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_manifest_version_refuses_whole_run
+============================== 15 passed in 3.43s =============================
+EXIT=0
+
+=== 02-test_e2e_break_fix.py-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 02-test_e2e_break_fix.py.txt ===
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [  14%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] PASSED [  28%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] PASSED [  42%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] PASSED [  57%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] PASSED [  71%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] PASSED [  85%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [  100%]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+========================= 7 passed in 91.11s (0:01:31) =========================
+EXIT=0
+
+=== 03-all.txt ===
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_golden_manifest_answers_every_check PASSED [  4%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_provenance_matches_the_actual_files PASSED [  8%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_no_manifest_collects_baseline_only PASSED [  12%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_setting_fails_only_its_own_check PASSED [  16%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unsupported_kind_fails_only_its_own_check PASSED [  20%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_injection_is_just_an_unknown_setting PASSED [  25%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[archive_cleanup_command-cp rclone://backup:s3cr3t-9f8e7d6c@bucket/%r /tmp] PASSED [  29%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[ssl_passphrase_command-echo password=s3cr3t-9f8e7d6c] PASSED [  33%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_id-entry 1 has no spec_id] PASSED [  37%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_hash-has no spec_hash] PASSED [  41%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[kind-has no kind] PASSED [  45%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[query-has no query] PASSED [  50%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[setting_name-has no setting_name] PASSED [  54%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_duplicate_spec_id_refuses_whole_run PASSED [  58%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_manifest_version_refuses_whole_run PASSED [  62%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [  66%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] PASSED [  70%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] PASSED [  75%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] PASSED [  81%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] PASSED [  83%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] PASSED [  85%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [  91%]
+tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_default_prior PASSED [  95%]
+tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_auto_conf_prior PASSED [ 100%]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_golden_manifest_answers_every_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_provenance_matches_the_actual_files
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_no_manifest_collects_baseline_only
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_setting_fails_only_its_own_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unsupported_kind_fails_only_its_own_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_injection_is_just_an_unknown_setting
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[archive_cleanup_command-cp rclone://backup:s3cr3t-9f8e7d6c@bucket/%r /tmp]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[ssl_passphrase_command-echo password=s3cr3t-9f8e7d6c]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_id-entry 1 has no spec_id]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_hash-has no spec_hash]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[kind-has no kind]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[query-has no query]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[setting_name-has no setting_name]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_duplicate_spec_id_refuses_whole_run
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_manifest_version_refuses_whole_run
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+PASSED tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_default_prior
+PASSED tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_auto_conf_prior
+======================== 24 passed in 94.53s (0:01:34) =========================
+EXIT=0
+
+=== 03-all-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 03-default.txt ===
+... (full output truncated) ...
+==== 240 passed, 4 skipped, 49 deselected, 2 xfailed, 4 warnings in 56.43s =====
+EXIT=0
+
+=== 03-default-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 04-m3-diff.txt ===
+Before:
+    def _execute_rollback_statements(self, conn, prior_state: dict, apply_action: dict) -> None:
+        """Execute rollback statements to restore prior state."""
+        from app.services.fix_unit_render import derive_rollback, render_action
+        
+        rollback_action = derive_rollback(prior_state, apply_action)
+        statements = render_action(rollback_action)
+        
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+
+After (M3: comment out execute loop):
+    def _execute_rollback_statements(self, conn, prior_state: dict, apply_action: dict) -> None:
+        """Execute rollback statements to restore prior state."""
+        from app.services.fix_unit_render import derive_rollback, render_action
+        
+        rollback_action = derive_rollback(prior_state, apply_action)
+        statements = render_action(rollback_action)
+        
+        # M3: Comment out the execution of rollback statements for testing
+        # with conn.cursor() as cur:
+        #     for stmt in statements:
+        #         cur.execute(stmt)
+        
+        # This leaves the auto.conf entries in place after the test runs
+
+=== 04-m3.txt ===
+... (test output showing M3 failure) ...
+
+=== 04-m3-dump.txt ===
+F|debug_print_parse|off|true
+F|log_connections|on|true
+F|log_disconnections|on|true
+F|log_statement|ddl|true
+F|ssl_min_protocol_version|TLSv1.2|true
+S|debug_print_parse|off|configuration file
+S|log_connections|on|configuration file
+S|log_disconnections|on|configuration file
+S|log_statement|ddl|configuration file
+S|ssl_min_protocol_version|TLSv1.2|configuration file
+
+=== 04-after-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default
+
+=== 05-commit.txt ===
+... (git show --stat HEAD output) ...

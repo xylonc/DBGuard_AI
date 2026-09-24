@@ -1,0 +1,61 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 24 items
+
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_golden_manifest_answers_every_check PASSED [  4%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_provenance_matches_the_actual_files PASSED [  8%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_no_manifest_collects_baseline_only PASSED [ 12%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_setting_fails_only_its_own_check PASSED [ 16%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unsupported_kind_fails_only_its_own_check PASSED [ 20%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_injection_is_just_an_unknown_setting PASSED [ 25%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[archive_cleanup_command-cp rclone://backup:s3cr3t-9f8e7d6c@bucket/%r /tmp] PASSED [ 29%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[ssl_passphrase_command-echo password=s3cr3t-9f8e7d6c] PASSED [ 33%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_id-entry 1 has no spec_id] PASSED [ 37%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_hash-has no spec_hash] PASSED [ 41%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[kind-has no kind] PASSED [ 45%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[query-has no query] PASSED [ 50%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[setting_name-has no setting_name] PASSED [ 54%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_duplicate_spec_id_refuses_whole_run PASSED [ 58%]
+tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_manifest_version_refuses_whole_run PASSED [ 62%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 66%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] PASSED [ 70%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] PASSED [ 75%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] PASSED [ 79%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] PASSED [ 83%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] PASSED [ 87%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [ 91%]
+tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_default_prior PASSED [ 95%]
+tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_auto_conf_prior PASSED [100%]
+
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_golden_manifest_answers_every_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_provenance_matches_the_actual_files
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_no_manifest_collects_baseline_only
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_setting_fails_only_its_own_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unsupported_kind_fails_only_its_own_check
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_injection_is_just_an_unknown_setting
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[archive_cleanup_command-cp rclone://backup:s3cr3t-9f8e7d6c@bucket/%r /tmp]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_secret_in_sensitive_setting_never_reaches_output[ssl_passphrase_command-echo password=s3cr3t-9f8e7d6c]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_id-entry 1 has no spec_id]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[spec_hash-has no spec_hash]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[kind-has no kind]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[query-has no query]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_missing_field_refuses_whole_run[setting_name-has no setting_name]
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_duplicate_spec_id_refuses_whole_run
+PASSED tests/live/test_collector_manifest.py::TestCollectorManifest::test_unknown_manifest_version_refuses_whole_run
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+PASSED tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_default_prior
+PASSED tests/live/test_fix_unit_live.py::TestFixUnitLive::test_set_config_live_auto_conf_prior
+======================== 24 passed in 94.53s (0:01:34) =========================
+EXIT=0

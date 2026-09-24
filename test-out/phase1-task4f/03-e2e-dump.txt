@@ -1,0 +1,10 @@
+F|debug_print_parse|off|true
+F|log_connections|on|true
+F|log_disconnections|on|true
+F|log_statement|ddl|true
+F|ssl_min_protocol_version|TLSv1.2|true
+S|debug_print_parse|off|configuration file
+S|log_connections|on|configuration file
+S|log_disconnections|on|configuration file
+S|log_statement|ddl|configuration file
+S|ssl_min_protocol_version|TLSv1.2|configuration file

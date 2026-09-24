@@ -363,6 +363,27 @@ class TestAssessSpecificCases:
         assert result_row["result"] == "ERROR"
         assert result_row["reason_code"] == "non_string_result"
 
+    def test_decide_unknown_tier(self):
+        """_decide raises ValueError for unknown tier."""
+        spec = copy.deepcopy(specs_by_id["cis-pg17-v1.1.0:3.1.20"])
+        spec["tier"] = "automatd"  # Typo - not a valid tier
+        entry = make_check_entry("ok", result="on", spec=spec)
+        from app.services.spec_engine.assess import _decide
+
+        with pytest.raises(ValueError) as exc_info:
+            _decide(spec, entry, spec_sha256(spec))
+        assert "unknown tier" in str(exc_info.value)
+
+    def test_decide_unknown_status(self):
+        """_decide raises ValueError for unknown status."""
+        spec = specs_by_id["cis-pg17-v1.1.0:3.1.20"]
+        entry = make_check_entry("partial", result="on", spec=spec)
+        from app.services.spec_engine.assess import _decide
+
+        with pytest.raises(ValueError) as exc_info:
+            _decide(spec, entry, spec_sha256(spec))
+        assert "unknown status" in str(exc_info.value)
+
     def test_orphan_check(self):
         """Orphan checks are in snapshot but have no spec."""
         spec = specs_by_id["cis-pg17-v1.1.0:3.1.20"]
@@ -527,8 +548,7 @@ class TestAssessLiveSnapshot:
     def test_live_snapshot_assessment(self):
         """Live snapshot assesses with no STALE, NOT_COLLECTED or ERROR rows for automated specs."""
         snapshot_path = REPO_ROOT / "tests" / "fixtures" / "phase1" / "snapshot-pg17-live.json"
-        if not snapshot_path.exists():
-            pytest.skip("snapshot-pg17-live.json not found")
+        assert snapshot_path.exists(), f"Live fixture path does not exist: {snapshot_path}"
 
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
 

@@ -67,6 +67,10 @@ def _decide(spec: dict[str, Any], entry: dict[str, Any] | None, spec_hash: str) 
     if tier == "needs_capability":
         return ("NEEDS_CAPABILITY", "tier_needs_capability")
 
+    # Allow-list automated tier (only automated specs reach the operator check)
+    if tier != "automated":
+        raise ValueError(f"unknown tier: {tier!r}")
+
     # 3. no entry
     if entry is None:
         return ("NOT_COLLECTED", "no_entry")
@@ -85,21 +89,18 @@ def _decide(spec: dict[str, Any], entry: dict[str, Any] | None, spec_hash: str) 
     if status == "error":
         return ("ERROR", "status_error")
 
-    # status is ok at this point
+    if status != "ok":
+        raise ValueError(f"unknown status: {status!r}")
+
     result_value = entry.get("result")
 
     # 7. result is not a str
     if not isinstance(result_value, str):
         return ("ERROR", "non_string_result")
 
-    # Only automated specs have operators; if no operator, this is an error case
     check = spec.get("check", {})
     operator = check.get("operator")
     expected = check.get("expected")
-
-    # Only automated specs have operators; if no operator, this is an error case
-    if operator is None:
-        return ("ERROR", "missing_operator")
 
     ok = OPERATORS[operator](result_value, expected)
     return ("PASS", "operator_true") if ok else ("FAIL", "operator_false")

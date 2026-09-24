@@ -138,70 +138,95 @@ WHEN OTHERS THEN
 END;
 $$ LANGUAGE plpgsql;
 -- ---------------------------------------------------------------------------
--- 1b. Check runner - executes checks from manifest without EXECUTE of text
+-- 1b. Check runner. Answers the questions in the check manifest.
+--
+-- The manifest is DATA. Nothing in it is ever executed as SQL: for kind
+-- 'setting' the name is passed to current_setting() as an argument, so a
+-- hostile name is just a setting that does not exist.
+--
+-- Two kinds of failure, handled differently:
+--   * Malformed manifest (missing field, duplicate id, wrong version)
+--       -> RAISE: the whole run refuses. The manifest builder never produces
+--          these, so one means a broken or tampered file.
+--   * Runtime problem on THIS server (unknown setting, missing privilege,
+--     a kind this collector version does not support)
+--       -> status 'error' for that check only; the rest still run.
+--
+-- Every value passes through sanitise_setting(), exactly like the baseline
+-- 'settings' section. A second route to the same data must keep every
+-- protection of the first.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION pg_temp.run_checks(p_manifest jsonb) RETURNS jsonb AS $$
 DECLARE
-    v_version int;
-    v_checks jsonb := '{}'::jsonb;
-    v_check jsonb;
+    v_out     jsonb := '{}'::jsonb;
+    v_check   jsonb;
+    v_pos     int   := 0;
     v_spec_id text;
-    v_kind text;
-    v_setting_name text;
-    v_query text;
-    v_result text;
-    v_spec_hash text;
-    v_status text;
-    v_error text;
+    v_hash    text;
+    v_kind    text;
+    v_query   text;
+    v_name    text;
+    v_result  text;
+    v_error   text;
 BEGIN
-    -- Validate manifest_version
-    v_version := (p_manifest->>'manifest_version')::int;
-    IF v_version IS NULL OR v_version != 1 THEN
-        RAISE EXCEPTION 'manifest_version must be 1, got %', v_version;
+    IF p_manifest->'manifest_version' IS DISTINCT FROM '1'::jsonb THEN
+        RAISE EXCEPTION 'MANIFEST_INVALID: manifest_version must be 1, got %',
+            coalesce(p_manifest->>'manifest_version', 'null');
+    END IF;
+    IF jsonb_typeof(p_manifest->'checks') IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'MANIFEST_INVALID: checks must be an array';
     END IF;
 
-    -- Iterate over checks array
-    FOR v_check IN SELECT jsonb_array_elements(p_manifest->'checks') LOOP
-        v_spec_id := v_check->>'spec_id';
-        v_kind := v_check->>'kind';
-        v_setting_name := v_check->>'setting_name';
-        v_query := v_check->>'query';
-        v_spec_hash := v_check->>'spec_hash';
+    FOR v_check IN SELECT e FROM jsonb_array_elements(p_manifest->'checks') AS e LOOP
+        v_pos    := v_pos + 1;
+        v_result := NULL;          -- reset every iteration: no value may leak
+        v_error  := NULL;          -- from one check into the next
 
-        -- Handle unsupported kind
-        IF v_kind != 'setting' THEN
-            v_status := 'error';
-            v_error := format('unsupported kind: %s', v_kind);
-        ELSE
-            -- Run the check - note we never EXECUTE manifest-derived text
-            -- We use the known setting_name directly
-            BEGIN
-                v_result := current_setting(v_setting_name);
-                -- Sanitize the result using the existing function
-                v_result := pg_temp.sanitise_setting(v_setting_name, v_result);
-                v_status := 'ok';
-                v_error := NULL;
-            EXCEPTION
-                WHEN OTHERS THEN
-                    v_status := 'error';
-                    v_error := SQLERRM;
-            END;
+        IF jsonb_typeof(v_check) IS DISTINCT FROM 'object' THEN
+            RAISE EXCEPTION 'MANIFEST_INVALID: entry % is not an object', v_pos;
         END IF;
 
-        -- Build result object for this check
-        v_checks := v_checks || jsonb_build_object(
-            v_spec_id,
-            jsonb_build_object(
-                'spec_hash', v_spec_hash,
-                'query', v_query,
-                'status', v_status,
-                CASE WHEN v_status = 'ok' THEN 'result' ELSE 'error' END,
-                COALESCE(v_result, v_error)
-            )
-        );
+        v_spec_id := nullif(v_check->>'spec_id',   '');
+        v_hash    := nullif(v_check->>'spec_hash', '');
+        v_kind    := nullif(v_check->>'kind',      '');
+        v_query   := nullif(v_check->>'query',     '');
+        v_name    := nullif(v_check->>'setting_name', '');
+
+        IF v_spec_id IS NULL THEN
+            RAISE EXCEPTION 'MANIFEST_INVALID: entry % has no spec_id', v_pos;
+        ELSIF v_out ? v_spec_id THEN
+            RAISE EXCEPTION 'MANIFEST_INVALID: entry % repeats spec_id %', v_pos, v_spec_id;
+        ELSIF v_hash IS NULL THEN
+            RAISE EXCEPTION 'MANIFEST_INVALID: entry % (%) has no spec_hash', v_pos, v_spec_id;
+        ELSIF v_kind IS NULL THEN
+            RAISE EXCEPTION 'MANIFEST_INVALID: entry % (%) has no kind', v_pos, v_spec_id;
+        ELSIF v_query IS NULL THEN
+            RAISE EXCEPTION 'MANIFEST_INVALID: entry % (%) has no query', v_pos, v_spec_id;
+        END IF;
+
+        IF v_kind = 'setting' THEN
+            IF v_name IS NULL THEN
+                RAISE EXCEPTION 'MANIFEST_INVALID: entry % (%) has no setting_name', v_pos, v_spec_id;
+            END IF;
+            BEGIN
+                v_result := pg_temp.sanitise_setting(v_name, current_setting(v_name));
+            EXCEPTION WHEN OTHERS THEN
+                v_error := SQLERRM;
+            END;
+        ELSE
+            v_error := 'unsupported kind: ' || v_kind;
+        END IF;
+
+        v_out := v_out || jsonb_build_object(v_spec_id,
+            CASE WHEN v_error IS NULL
+                 THEN jsonb_build_object('spec_hash', v_hash, 'query', v_query,
+                                         'status', 'ok',    'result', v_result)
+                 ELSE jsonb_build_object('spec_hash', v_hash, 'query', v_query,
+                                         'status', 'error', 'error',  v_error)
+            END);
     END LOOP;
 
-    RETURN v_checks;
+    RETURN v_out;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -286,8 +311,21 @@ SELECT jsonb_pretty(jsonb_build_object(
     'has_pg_monitor',      pg_has_role(current_user,'pg_monitor','MEMBER'),
     'has_read_all_settings', pg_has_role(current_user,'pg_read_all_settings','MEMBER'),
     'can_read_pg_authid',  has_table_privilege('pg_authid','SELECT'),
-    'deployment_type',     'self-managed'
+    'deployment_type',     'self-managed',
+    -- provenance: exactly which code and which question list produced this
+    'collector_sha256',    :'collector_sha256',
+    'manifest', jsonb_build_object(
+        'sha256',           :'manifest_sha256',
+        'manifest_version', mf.m->'manifest_version',
+        'benchmark_id',     mf.m->'benchmark_id',
+        'check_count',      CASE WHEN jsonb_typeof(mf.m->'checks') = 'array'
+                                 THEN jsonb_array_length(mf.m->'checks') END
+    )
 ),
+
+-- ---- baseline: the fixed picture, the same for every benchmark -----------
+-- Everything below up to 'checks' is unchanged from 0.2.0, just nested.
+'baseline', jsonb_build_object(
 
 -- ---- identity: fixed at initdb, must match for a faithful sandbox ---------
 'identity', (SELECT jsonb_build_object(
@@ -638,8 +676,14 @@ SELECT jsonb_pretty(jsonb_build_object(
     'password_on_process_command_line','psql_history_state','pg_service.conf_password',
     'package_installation_source','selinux_state','filesystem_mount_options',
     'tls_private_key_file_mode','certificate_contents'
-),
+)
 
-'checks', pg_temp.run_checks(COALESCE(NULLIF(:'manifest', ''), '{"'manifest_version'":1,'checks':[]}')::jsonb)
+), -- end baseline
 
-)) AS bundle;
+-- ---- checks: answers to the manifest's questions, keyed by spec_id -------
+'checks', pg_temp.run_checks(mf.m)
+
+)) AS bundle
+-- The manifest is parsed once, here. The wrapper always passes it as a psql
+-- variable (an empty manifest when run without -m), quoted as a literal.
+FROM (SELECT :'manifest'::jsonb AS m) AS mf;

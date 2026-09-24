@@ -1,0 +1,29 @@
+== started 2026-09-24T08:43:03Z  HEAD 5e60139
+5e60139 Phase 1 task 4g: T2 teardown restores each setting and proves auto.conf is clean
+ tests/live/test_e2e_break_fix.py | 33 +++++++++++++++++++++------------
+ 1 file changed, 21 insertions(+), 12 deletions(-)
+== reset
+ALTER SYSTEM
+t
+== dump before
+S|debug_print_parse|default
+S|log_connections|default
+S|log_disconnections|default
+S|log_statement|default
+S|ssl_min_protocol_version|default
+== pytest EXIT=0
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 14%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] PASSED [ 28%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] PASSED [ 42%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] PASSED [ 57%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] PASSED [ 71%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] PASSED [ 85%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [100%]
+========================= 7 passed in 91.79s (0:01:31) =========================
+== dump after
+S|debug_print_parse|default
+S|log_connections|default
+S|log_disconnections|default
+S|log_statement|default
+S|ssl_min_protocol_version|default
+== finished 2026-09-24T08:44:41Z

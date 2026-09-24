@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import psycopg2
+import pytest
 
 from app.models import TemplateIngestRequest, ProposalCompileRequest
 from app.services.template_service import compile_sql_plan_from_templates
@@ -19,6 +20,7 @@ from app.services.vector_service import (
 )
 
 
+@pytest.mark.tier_b
 class TemplateRegistryTests(unittest.TestCase):
     """Test template registry behavior."""
 

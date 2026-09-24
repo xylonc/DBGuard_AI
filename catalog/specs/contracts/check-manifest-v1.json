@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dbguardai.local/schemas/check-manifest-v1.json",
+  "title": "DBGuardAI check manifest contract (version 1)",
+  "description": "Contract for a check manifest: a plain JSON list of checks the collector must look up, derived from CIS control specs. The manifest is data only and never contains SQL built from spec text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "benchmark_id", "checks"],
+  "properties": {
+    "manifest_version": {
+      "description": "The manifest schema version. Must be 1.",
+      "type": "integer",
+      "const": 1
+    },
+    "benchmark_id": {
+      "description": "The benchmark identifier that these checks belong to (e.g., 'cis-pg17-v1.1.0').",
+      "type": "string"
+    },
+    "checks": {
+      "description": "List of check entries. Each check corresponds to one automated spec.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check_entry"
+      },
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "check_entry": {
+      "description": "A single check entry derived from a spec.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec_id", "spec_hash", "kind", "setting_name", "query"],
+      "properties": {
+        "spec_id": {
+          "description": "The spec_id that this check corresponds to.",
+          "type": "string"
+        },
+        "spec_hash": {
+          "description": "The SHA-256 hash of the spec file (as computed by spec_sha256).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "kind": {
+          "description": "The kind of check. Currently only 'setting' is supported.",
+          "type": "string",
+          "enum": ["setting"]
+        },
+        "setting_name": {
+          "description": "The PostgreSQL GUC parameter name being checked. Must match pattern ^[a-z_][a-z0-9_.]*$.",
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_.]*$"
+        },
+        "query": {
+          "description": "The SQL query to execute to gather the current value. Currently always 'SHOW <setting_name>'.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

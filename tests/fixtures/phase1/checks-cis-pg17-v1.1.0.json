@@ -1,0 +1,41 @@
+{
+  "benchmark_id": "cis-pg17-v1.1.0",
+  "checks": [
+    {
+      "kind": "setting",
+      "query": "SHOW debug_print_parse",
+      "setting_name": "debug_print_parse",
+      "spec_hash": "99a35fe36ce3a7ef2b656cc1b41053e40f2539fe091f4779be8c86f9bd5f0769",
+      "spec_id": "cis-pg17-v1.1.0:3.1.16"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_connections",
+      "setting_name": "log_connections",
+      "spec_hash": "4180999090635516d57fa3bf591f9943640049253d86af6483739316718089c1",
+      "spec_id": "cis-pg17-v1.1.0:3.1.20"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_disconnections",
+      "setting_name": "log_disconnections",
+      "spec_hash": "3eaab872703d2daf9c58cdf9dbefdf43607209caf2d5445b69fa0bf554b1c024",
+      "spec_id": "cis-pg17-v1.1.0:3.1.21"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_statement",
+      "setting_name": "log_statement",
+      "spec_hash": "3b4d97ea5cfaba24215e66bc1c2628b6dfb194f4b5fc8bb34d89cb1178e625f0",
+      "spec_id": "cis-pg17-v1.1.0:3.1.25"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW ssl_min_protocol_version",
+      "setting_name": "ssl_min_protocol_version",
+      "spec_hash": "93cb822b981b65dde92c365dfa4ce3a95505d2e8fa066a9eb10a9bc1f367107b",
+      "spec_id": "cis-pg17-v1.1.0:6.9"
+    }
+  ],
+  "manifest_version": 1
+}

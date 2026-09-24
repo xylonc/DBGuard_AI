@@ -1,6 +1,6 @@
 {
   "envelope": {
-    "schema_version": "0.2.0",
+    "schema_version": "0.3.0",
     "database": "postgres",
     "target_id": "fixture-insecure",
     "collected_at": "2026-09-16T09:27:22Z",
@@ -10,7 +10,14 @@
     "deployment_type": "self-managed",
     "collector_version": "2.0.0-sql",
     "can_read_pg_authid": true,
-    "has_read_all_settings": true
+    "has_read_all_settings": true,
+    "collector_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "manifest_version": 1,
+      "benchmark_id": "cis-pg17-v1.1.0",
+      "check_count": 1
+    }
   },
   "baseline": {
     "gaps": [],

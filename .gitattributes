@@ -1,7 +1,8 @@
 * text=auto eol=lf
-*.sh text eol=lf
-*.sql text eol=lf
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.json text eol=lf
+*.j2   text eol=lf
 *.xlsx binary
-*.png binary
-*.ico binary
-*.j2 text eol=lf
+*.png  binary
+*.ico  binary

@@ -19,3 +19,8 @@ bundle.json
 *.bundle.json
 
 local docs
+
+# local run artifacts
+run_tests_out.txt
+*.diff
+snap.json

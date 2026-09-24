@@ -4,7 +4,64 @@ This document describes the contracts enforced by the DBGuardAI codebase as of c
 
 ## snapshot v0.3.0
 
-### Structure
+### Enforced by: `collector/collect.sql:pg_temp.run_checks()` and `catalog/specs/contracts/snapshot-v0.3.0.json` (JSON Schema)
+
+### Structure:
+
+The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.json`.
+
+- **Envelope (v0.3.0)**: Contains collector metadata:
+  - `schema_version`: Must be `'0.3.0'`
+  - `database`: Non-empty string
+  - `target_id`: Non-empty string
+  - Optional fields: `collected_at`, `collected_by`, `is_superuser`, `has_pg_monitor`, `deployment_type`, `collector_version`, `can_read_pg_authid`, `has_read_all_settings`
+
+- **Baseline**: Contains all collector sections (roles, settings, hba_rules, etc.) as a free-form object.
+
+- **Checks**: Assessment results keyed by `spec_id`. Each entry has:
+  - `spec_hash`: SHA-256 hash of the spec (pattern: `^[0-9a-f]{64}$`)
+  - `query`: Non-empty string
+  - `status`: One of `"ok"`, `"error"`, `"not_collected"`
+  - When `status == "ok"`: `result` field is required
+  - When `status == "error"`: `error` field is required
+  - When `status == "not_collected"`: `result` must not be present
+
+### Safety rules:
+
+1. **No EXECUTE of manifest text**: The `pg_temp.run_checks()` function never uses `EXECUTE` on any text derived from the manifest. It only reads known fields (`spec_id`, `kind`, `setting_name`, `query`) and uses them directly in controlled operations.
+
+2. **Secret redaction**: The `pg_temp.sanitise_setting()` function masks credentials in sensitive settings (`archive_command`, `restore_command`, `archive_cleanup_command`, `recovery_end_command`, `primary_conninfo`, `ssl_passphrase_command`, `krb_server_keyfile`) before returning them.
+
+#
+## check manifest v1
+
+### Enforced by: `app/services/spec_engine/manifest.py:build_manifest()` and `catalog/specs/contracts/check-manifest-v1.json` (JSON Schema)
+
+### Structure:
+
+The check manifest is a plain JSON list of checks the collector must look up, derived from CIS control specs.
+
+- **Envelope**: Contains metadata:
+  - `manifest_version`: Must be `1`
+  - `benchmark_id`: The benchmark identifier (e.g., `'cis-pg17-v1.1.0'`)
+
+- **Checks**: Array of check entries, sorted by `spec_id`:
+  - `spec_id`: The spec identifier that this check corresponds to
+  - `spec_hash`: SHA-256 hash of the spec file (pattern: `^[0-9a-f]{64}$`)
+  - `kind`: One of `"setting"` (current only)
+  - `setting_name`: PostgreSQL GUC parameter name (pattern: `^[a-z_][a-z0-9_.]*$`)
+  - `query`: SQL query to execute (currently always `"SHOW <setting_name>"`)
+
+### Constraints:
+- Only `tier: automated` specs are included
+- `kind` must be `"setting"` (the only supported kind)
+- `setting_name` uses the same pattern as the spec schema
+- No SQL is generated from spec text - only the query field from the spec is used
+- Output is deterministic: same specs always produce byte-identical output (sorted by spec_id)
+
+### Generation:
+Run: `python scripts/build_check_manifest.py --specs <dir> --out <file>`
+## Structure
 
 The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.json`.
 
@@ -140,8 +197,8 @@ Defined in `app/services/fix_unit_render.py:derive_rollback()`:
 
 **File:** `app/services/vector_service.py:approve_template()`
 
-- Approval sets `status = 'approved'` and archives previous versions
-- Only one version can be active (`status = 'approved'`) per `template_name`
+- Approval sets `status = 'active'` and archives previous versions
+- Only one version can be active (`status = 'active'`) per `template_name`
 - Previously approved versions are archived (`status = 'archived'`)
 
 ### literal/ident escaping:

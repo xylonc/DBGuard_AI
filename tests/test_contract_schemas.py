@@ -76,12 +76,15 @@ class TestSnapshotSchema:
         """The schema itself validates as a valid JSON Schema."""
         valid = snapshot_validator.is_valid({
             "envelope": {
-                "schema_version": "0.2.0",
+                "schema_version": "0.3.0",
                 "database": "test",
-                "target_id": "test"
+                "target_id": "test",
+                "collector_sha256": "0" * 64,
+                "manifest": {"sha256": "0" * 64, "manifest_version": 1,
+                             "benchmark_id": None, "check_count": 0},
             },
             "baseline": {},
-            "checks": {}
+            "checks": {},
         })
         assert valid
 

@@ -1,7 +1,14 @@
-* text=auto eol=lf
+]633;E;{ git show HEAD~1:.gitattributes\x3b printf '\\n'\x3b cat .gitattributes\x3b } > .gitattributes.merged;49d69ddb-ea56-42d7-9ae0-7d7f352d83b6]633;C* text=auto eol=lf
 *.sh text eol=lf
 *.sql text eol=lf
 *.xlsx binary
 *.png binary
 *.ico binary
 *.j2 text eol=lf
+
+# Byte-identical on every checkout: collector_sha256 is computed over
+# collect.sql, and bash on the target host rejects CRLF line endings.
+*.sql  text eol=lf
+*.sh   text eol=lf
+*.json text eol=lf
+*.j2   text eol=lf

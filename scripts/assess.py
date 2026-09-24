@@ -74,21 +74,12 @@ def main() -> int:
         print(f"FAIL: cannot load records from {args.records}: {exc}", file=sys.stderr)
         return 2
 
-    # Load and validate snapshot
+    # Load snapshot
     try:
         snapshot_text = args.snapshot.read_text(encoding="utf-8")
         snapshot = json.loads(snapshot_text)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"FAIL: cannot load snapshot from {args.snapshot}: {exc}", file=sys.stderr)
-        return 2
-
-    # Validate snapshot schema
-    from app.services.spec_engine.assess import _validate_snapshot
-    snapshot_errors = _validate_snapshot(snapshot)
-    if snapshot_errors:
-        print("FAIL: snapshot validation failed:", file=sys.stderr)
-        for err in snapshot_errors:
-            print(f"  - {err}", file=sys.stderr)
         return 2
 
     # Load specs
@@ -106,16 +97,7 @@ def main() -> int:
             print(f"FAIL: cannot load spec from {spec_path}: {exc}", file=sys.stderr)
             return 2
 
-    # Validate specs and check for duplicates
-    from app.services.spec_engine.assess import _validate_specs
-    spec_errors = _validate_specs(specs, records)
-    if spec_errors:
-        print("FAIL: spec validation failed:", file=sys.stderr)
-        for err in spec_errors:
-            print(f"  - {err}", file=sys.stderr)
-        return 2
-
-    # Run assessment
+    # Run assessment (includes all validation)
     try:
         report = assess(specs, snapshot, records)
     except ValueError as exc:

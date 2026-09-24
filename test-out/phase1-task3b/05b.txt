@@ -1,0 +1,1 @@
+531:            pytest.skip("snapshot-pg17-live.json not found")

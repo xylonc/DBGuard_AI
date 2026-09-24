@@ -8,122 +8,101 @@ produce identical output.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from .operators import equals, in_, not_equals, true
+from jsonschema import Draft7Validator
+
+from .operators import equals, in_, not_equals
 from .records import RecordsIndex
 from .specs import spec_sha256
-from .validate import validate_spec
+from .validate import OPERATORS, validate_spec
+
+# Compute REPO_ROOT from this file's location
+# assess.py is at backend/app/services/spec_engine/assess.py
+# So parent.parent.parent.parent.parent = backend/../ = /workspace/DBGuardAI
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 
-def _validate_snapshot(snapshot: dict[str, Any]) -> list[str]:
-    """Validate snapshot against v0.3.0 JSON Schema.
-
-    Returns a list of error messages. Empty list means valid.
-    """
-    errors: list[str] = []
-
-    # Basic structure check
-    if not isinstance(snapshot, dict):
-        errors.append("Snapshot must be a mapping")
-        return errors
-
-    # Required top-level keys
-    for key in ("envelope", "baseline", "checks"):
-        if key not in snapshot:
-            errors.append(f"Missing required top-level key: {key}")
-
-    if errors:
-        return errors
-
-    envelope = snapshot.get("envelope", {})
-    if not isinstance(envelope, dict):
-        errors.append("envelope must be a mapping")
-        return errors
-
-    # Required envelope keys
-    for key in ("schema_version", "database", "target_id", "collector_sha256", "manifest"):
-        if key not in envelope:
-            errors.append(f"Missing required envelope key: {key}")
-
-    if "schema_version" in envelope and envelope["schema_version"] != "0.3.0":
-        errors.append(f"envelope.schema_version must be '0.3.0', got {envelope['schema_version']!r}")
-
-    manifest = envelope.get("manifest", {})
-    if isinstance(manifest, dict):
-        for key in ("sha256", "manifest_version", "benchmark_id", "check_count"):
-            if key not in manifest:
-                errors.append(f"Missing required manifest key: {key}")
-
-    if errors:
-        return errors
-
-    # Validate checks structure
-    checks = snapshot.get("checks", {})
-    if not isinstance(checks, dict):
-        errors.append("checks must be a mapping")
-        return errors
-
-    # Validate each check entry
-    for spec_id, entry in checks.items():
-        if not isinstance(entry, dict):
-            errors.append(f"checks[{spec_id}] must be a mapping")
-            continue
-
-        # Required check entry keys
-        for key in ("spec_hash", "query", "status"):
-            if key not in entry:
-                errors.append(f"checks[{spec_id}] missing required key: {key}")
-
-        status = entry.get("status")
-        if status == "ok" and "result" not in entry:
-            errors.append(f"checks[{spec_id}] with status='ok' must have 'result'")
-        if status == "error" and "error" not in entry:
-            errors.append(f"checks[{spec_id}] with status='error' must have 'error'")
-        if status == "not_collected" and "result" in entry:
-            errors.append(f"checks[{spec_id}] with status='not_collected' must not have 'result'")
-
-        if status not in ("ok", "error", "not_collected"):
-            errors.append(f"checks[{spec_id}] status must be one of 'ok', 'error', 'not_collected', got {status!r}")
-
-        # spec_hash must be 64-char hex
-        spec_hash = entry.get("spec_hash")
-        if isinstance(spec_hash, str):
-            if len(spec_hash) != 64 or not all(c in "0123456789abcdef" for c in spec_hash):
-                errors.append(f"checks[{spec_id}] spec_hash must be 64-char hex string")
-
-    return errors
-
-
-def _validate_specs(specs: list[dict[str, Any]], records: RecordsIndex) -> list[str]:
-    """Validate all specs against validate_spec and check for duplicate spec_ids.
+def _validate_snapshot(snapshot: dict[str, Any], schema_path: Path) -> list[str]:
+    """Validate snapshot against v0.3.0 JSON Schema using jsonschema.
 
     Returns a list of error messages. Empty list means valid.
     """
     errors: list[str] = []
-    seen_spec_ids: set[str] = set()
-
-    for i, spec in enumerate(specs):
-        if not isinstance(spec, dict):
-            errors.append(f"spec[{i}] must be a mapping")
-            continue
-
-        # Check for duplicate spec_id
-        spec_id = spec.get("spec_id")
-        if spec_id is None:
-            errors.append(f"spec[{i}] missing spec_id")
-        elif spec_id in seen_spec_ids:
-            errors.append(f"Duplicate spec_id: {spec_id}")
-        else:
-            seen_spec_ids.add(spec_id)
-
-        # Validate against validate_spec
-        spec_errors = validate_spec(spec, records)
-        for err in spec_errors:
-            errors.append(f"spec[{i}] ({spec_id or 'unknown'}): {err}")
-
+    try:
+        with open(schema_path, "r", encoding="utf-8") as f:
+            schema = json.load(f)
+        validator = Draft7Validator(schema)
+        for error in validator.iter_errors(snapshot):
+            errors.append(error.message)
+    except Exception as e:
+        errors.append(f"JSON schema validation error: {e}")
     return errors
+
+
+def _decide(spec: dict[str, Any], entry: dict[str, Any] | None, spec_hash: str) -> tuple[str, str]:
+    """Decide result for a single spec based on entry and hash.
+
+    Returns (result, reason_code) at the first match, returning at the first
+    condition that matches in this order:
+
+    1. tier manual_checklist or parameterised -> ("MANUAL", "tier_manual")
+    2. tier needs_capability -> ("NEEDS_CAPABILITY", "tier_needs_capability")
+    3. no entry -> ("NOT_COLLECTED", "no_entry")
+    4. entry spec_hash != spec_hash -> ("STALE", "hash_mismatch")
+    5. status not_collected -> ("NOT_COLLECTED", "status_not_collected")
+    6. status error -> ("ERROR", "status_error")
+    7. result is not a str -> ("ERROR", "non_string_result")
+    8. ok = OPERATORS[operator](result, expected) -> ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
+    """
+    tier = spec.get("tier", "")
+
+    # 1. tier manual_checklist or parameterised
+    if tier in ("manual_checklist", "parameterised"):
+        return ("MANUAL", "tier_manual")
+
+    # 2. tier needs_capability
+    if tier == "needs_capability":
+        return ("NEEDS_CAPABILITY", "tier_needs_capability")
+
+    # 3. no entry
+    if entry is None:
+        return ("NOT_COLLECTED", "no_entry")
+
+    # 4. hash mismatch (checked before status to report stale data regardless of status)
+    collected_spec_hash = entry.get("spec_hash")
+    if collected_spec_hash != spec_hash:
+        return ("STALE", "hash_mismatch")
+
+    # 5. status not_collected
+    status = entry.get("status")
+    if status == "not_collected":
+        return ("NOT_COLLECTED", "status_not_collected")
+
+    # 6. status error
+    if status == "error":
+        return ("ERROR", "status_error")
+
+    # status is ok at this point
+    result_value = entry.get("result")
+
+    # 7. result is not a str
+    if not isinstance(result_value, str):
+        return ("ERROR", "non_string_result")
+
+    # Only automated specs have operators; if no operator, this is an error case
+    check = spec.get("check", {})
+    operator = check.get("operator")
+    expected = check.get("expected")
+
+    # Only automated specs have operators; if no operator, this is an error case
+    if operator is None:
+        return ("ERROR", "missing_operator")
+
+    ok = OPERATORS[operator](result_value, expected)
+    return ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
 
 
 def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: RecordsIndex) -> dict[str, Any]:
@@ -142,11 +121,27 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
                    or there are duplicate spec_ids.
     """
     # Validate inputs first
-    snapshot_errors = _validate_snapshot(snapshot)
+    schema_path = REPO_ROOT / "catalog" / "specs" / "contracts" / "snapshot-v0.3.0.json"
+    snapshot_errors = _validate_snapshot(snapshot, schema_path)
     if snapshot_errors:
         raise ValueError("Snapshot validation failed:\n" + "\n".join(snapshot_errors))
 
-    spec_errors = _validate_specs(specs, records)
+    # Validate specs and check for duplicate spec_ids
+    seen_spec_ids: set[str] = set()
+    for i, spec in enumerate(specs):
+        if not isinstance(spec, dict):
+            raise ValueError(f"spec[{i}] must be a mapping")
+        spec_id = spec.get("spec_id")
+        if spec_id is None:
+            raise ValueError(f"spec[{i}] missing spec_id")
+        if spec_id in seen_spec_ids:
+            raise ValueError(f"Duplicate spec_id: {spec_id}")
+        seen_spec_ids.add(spec_id)
+
+    spec_errors: list[str] = []
+    for i, spec in enumerate(specs):
+        spec_id = spec.get("spec_id")
+        spec_errors.extend([f"spec[{i}] ({spec_id or 'unknown'}): {e}" for e in validate_spec(spec, records)])
     if spec_errors:
         raise ValueError("Spec validation failed:\n" + "\n".join(spec_errors))
 
@@ -168,93 +163,16 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
         spec_id = spec["spec_id"]
         spec_hash = spec_sha256(spec)
         tier = spec.get("tier", "")
-        title = spec.get("title", "")
-
-        # Determine result based on tier and check entry
-        entry = snapshot_checks.get(spec_id)
-
-        # Compute collected_spec_hash if entry exists (needed for output row)
-        collected_spec_hash = entry.get("spec_hash") if entry else None
+        title = ""
 
         # Extract title from ref
-        title = ""
         ref = spec.get("ref", {})
         if isinstance(ref, dict):
             title = ref.get("title", "")
 
-        # Check for tier-based results FIRST (before entry checks)
-        if tier in ("manual_checklist", "parameterised"):
-            result = "MANUAL"
-            reason_code = "tier_manual"
-        elif tier == "needs_capability":
-            result = "NEEDS_CAPABILITY"
-            reason_code = "tier_needs_capability"
-        elif entry is None:
-            # No entry in snapshot for this spec_id
-            result = "NOT_COLLECTED"
-            reason_code = "no_entry"
-        elif entry.get("status") == "not_collected":
-            # Entry exists but status is not_collected
-            result = "NOT_COLLECTED"
-            reason_code = "no_entry"
-        elif entry.get("status") == "error":
-            # Entry exists with error status
-            result = "ERROR"
-            reason_code = "status_error"
-        elif entry is not None:
-            # Entry exists - check hash (only if status is ok)
-            collected_spec_hash = entry.get("spec_hash")
-
-            if collected_spec_hash != spec_hash:
-                result = "STALE"
-                reason_code = "hash_mismatch"
-            elif entry.get("status") == "ok":
-                # status is ok, check result type
-                result_value = entry.get("result")
-                if not isinstance(result_value, str):
-                    result = "ERROR"
-                    reason_code = "non_string_result"
-                else:
-                    # For automated specs, check the operator
-                    check = spec.get("check", {})
-                    operator = check.get("operator")
-                    expected = check.get("expected")
-
-                    if operator == "true":
-                        result = "PASS"
-                        reason_code = "operator_true"
-                    elif operator == "equals":
-                        if equals(result_value, expected):
-                            result = "PASS"
-                            reason_code = "operator_true"
-                        else:
-                            result = "FAIL"
-                            reason_code = "operator_false"
-                    elif operator == "not_equals":
-                        if not_equals(result_value, expected):
-                            result = "PASS"
-                            reason_code = "operator_true"
-                        else:
-                            result = "FAIL"
-                            reason_code = "operator_false"
-                    elif operator == "in":
-                        if isinstance(expected, list) and in_(result_value, expected):
-                            result = "PASS"
-                            reason_code = "operator_true"
-                        else:
-                            result = "FAIL"
-                            reason_code = "operator_false"
-                    else:
-                        result = "ERROR"
-                        reason_code = "unknown_operator"
-            else:
-                # Unexpected status
-                result = "ERROR"
-                reason_code = "status_error"
-        else:
-            # Should not reach here
-            result = "ERROR"
-            reason_code = "unknown_error"
+        # Determine result using _decide
+        entry = snapshot_checks.get(spec_id)
+        result, reason_code = _decide(spec, entry, spec_hash)
 
         # Build result row
         row: dict[str, Any] = {
@@ -275,7 +193,7 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
             row["operator"] = operator
             row["expected"] = expected
             row["spec_hash"] = spec_hash
-            row["collected_spec_hash"] = collected_spec_hash
+            row["collected_spec_hash"] = entry.get("spec_hash")
 
             if entry.get("status") == "ok":
                 row["observed"] = entry.get("result")
@@ -289,9 +207,11 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
     orphan_checks.sort()
 
     # Compute check_count
-    declared = snapshot.get("envelope", {}).get("manifest", {}).get("check_count")
+    env = snapshot.get("envelope", {})
+    manifest = env.get("manifest", {})
+    declared = manifest.get("check_count")
     actual = len(snapshot_checks)
-    matches = declared == actual if declared is not None else None
+    matches = declared == actual if isinstance(declared, int) else None
 
     # Compute summary counts
     summary = {
@@ -315,16 +235,13 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
     server_major = server_version_num // 10000 if isinstance(server_version_num, int) else None
 
     # Determine version mismatch
-    env = snapshot.get("envelope", {})
-    manifest = env.get("manifest", {})
-    benchmark_id = manifest.get("benchmark_id")  # e.g., "cis-pg17-v1.1.0"
+    benchmark_id = manifest.get("benchmark_id")
     version_mismatch = None
 
     if benchmark_id and server_major:
-        # Extract major version from benchmark_id (e.g., "cis-pg17-v1.1.0" -> 17)
         if benchmark_id.startswith("cis-pg"):
             try:
-                benchmark_major = int(benchmark_id.split("-")[1][2:])  # "pg17" -> 17
+                benchmark_major = int(benchmark_id.split("-")[1][2:])
                 version_mismatch = benchmark_major != server_major
             except (ValueError, IndexError):
                 pass
@@ -341,7 +258,7 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
         "inputs": {
             "collector_sha256": env.get("collector_sha256"),
             "manifest_sha256": manifest.get("sha256"),
-            "benchmark_id": manifest.get("benchmark_id"),
+            "benchmark_id": benchmark_id,
             "specs": [{"spec_id": s["spec_id"], "spec_hash": spec_sha256(s)} for s in specs],
         },
         "flags": {

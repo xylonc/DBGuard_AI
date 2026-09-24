@@ -1,5 +1,6 @@
 """Operators for spec validation checks."""
 
+
 def _validate_actual_is_string(actual: str) -> None:
     """Validate that actual is a string, raise TypeError if not."""
     if not isinstance(actual, str):
@@ -22,9 +23,3 @@ def in_(actual: str, expected: list[str]) -> bool:
     """Check if actual is a member of expected list."""
     _validate_actual_is_string(actual)
     return actual in expected
-
-
-def true(actual: str, expected: str) -> bool:
-    """Operator that always returns True (pass_condition always satisfied)."""
-    _validate_actual_is_string(actual)
-    return True

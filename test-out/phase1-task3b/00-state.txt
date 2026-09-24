@@ -1,0 +1,11 @@
+pwd: /workspace/DBGuardAI
+feature/phase1-engine
+## feature/phase1-engine...origin/feature/phase1-engine
+ M backend/app/services/spec_engine/assess.py
+ M backend/app/services/spec_engine/operators.py
+ M backend/app/services/spec_engine/validate.py
+ M tests/test_assess.py
+d8fbb78 Phase 1 task 3: assessment engine and report contract v1
+05961d0 Fix .gitattributes: remove terminal escape codes that disabled the catch-all LF rule
+eb217c7 Force LF line endings for sql/sh/json/j2 (keeping existing attributes) so collector bytes and hashes match on every OS
+(empty)

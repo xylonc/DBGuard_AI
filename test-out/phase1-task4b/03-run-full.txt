@@ -1,0 +1,54 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 3 items
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 33%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix PASSED [ 66%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass FAILED [100%]
+
+=================================== FAILURES ===================================
+_____________ TestE2EBreakFix.test_edited_spec_is_stale_never_pass _____________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x7124f7577100>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-184/test_edited_spec_is_stale_neve0')
+
+    def test_edited_spec_is_stale_never_pass(self, tmp_path):
+        """Edited spec produces STALE result, never PASS."""
+        import yaml
+    
+        # Copy spec_dir to tmp
+        orig_spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+        copy_spec_dir = tmp_path / "specs_copy"
+        shutil.copytree(orig_spec_dir, copy_spec_dir)
+    
+        # Build manifest + collect from ORIGINAL dir
+        manifest_path, snapshot_path, report_baseline = run_pipeline(orig_spec_dir, tmp_path / "baseline")
+    
+        # Change title of one automated spec in the COPY
+        automated_specs = get_automated_specs(copy_spec_dir)
+        assert automated_specs, "No automated specs in copy"
+    
+        # Find a spec with a title to edit
+        edited_spec_id = None
+        for spec_file in copy_spec_dir.glob("*.yaml"):
+            with open(spec_file) as f:
+                spec = yaml.safe_load(f)
+            if "title" in spec:
+                original_title = spec["title"]
+                spec["title"] = original_title + " (EDITED)"
+                with open(spec_file, "w") as f:
+                    yaml.dump(spec, f, default_flow_style=False)
+                edited_spec_id = spec["spec_id"]
+                break
+        else:
+>           pytest.fail("No spec with title found to edit")
+E           Failed: No spec with title found to edit
+
+tests/live/test_e2e_break_fix.py:237: Failed
+=========================== short test summary info ============================
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+==================== 1 failed, 2 passed in 91.07s (0:01:31) ====================

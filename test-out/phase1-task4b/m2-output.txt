@@ -1,0 +1,22 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 1 item
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix FAILED [100%]
+
+=================================== FAILURES ===================================
+_____________________ TestE2EBreakFix.test_break_then_fix ______________________
+tests/live/test_e2e_break_fix.py:162: in test_break_then_fix
+    assert target_result[0]["result"] == "FAIL", (
+E   AssertionError: After break, expected FAIL for cis-pg17-v1.1.0:3.1.16, got PASS
+E   assert 'PASS' == 'FAIL'
+E     
+E     - FAIL
+E     + PASS
+=========================== short test summary info ============================
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix
+============================== 1 failed in 13.98s ==============================

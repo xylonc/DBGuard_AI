@@ -1,0 +1,13 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 3 items
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 33%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix PASSED [ 66%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass SKIPPED [100%]
+
+=================== 2 passed, 1 skipped in 90.72s (0:01:30) ====================

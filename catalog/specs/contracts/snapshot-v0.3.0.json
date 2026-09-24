@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbguardai.local/schemas/snapshot-v0.3.0.json",
   "title": "DBGuardAI snapshot schema (version 0.3.0)",
-  "description": "Contract for snapshot bundles. Version 0.3.0 extends v0.2.0 by adding a checks object keyed by spec_id to record assessment results for each spec.",
+  "description": "Contract for snapshot bundles. Version 0.3.0 extends v0.2.0 by adding a checks object keyed by spec_id to record assessment results for each spec and provenance fields for manifest tracking.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,15 +15,41 @@
       "description": "The v0.2.0 envelope with collector metadata. This is unchanged from 0.2.0.",
       "$ref": "#/$defs/envelope"
     },
-    "baseline": {
-      "description": "The v0.2.0 bundle body (all sections: roles, settings, hba_rules, etc.). This represents the baseline snapshot without assessment.",
-      "$ref": "#/$defs/baseline"
+    "collector_sha256": {
+      "description": "SHA-256 hash of the collector SQL file used to generate this snapshot.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
-    "checks": {
-      "description": "Assessment results keyed by spec_id. Each spec_id must match a spec in the benchmark spec set.",
+    "manifest": {
+      "description": "Provenance metadata about the manifest that was used (if any).",
       "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/check_entry"
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "manifest_version",
+        "benchmark_id",
+        "check_count"
+      ],
+      "properties": {
+        "sha256": {
+          "description": "SHA-256 hash of the manifest file.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_version": {
+          "description": "Manifest version number (always 1 for current format).",
+          "type": "integer",
+          "const": 1
+        },
+        "benchmark_id": {
+          "description": "Benchmark identifier from the manifest; null when run without a manifest.",
+          "type": ["string", "null"]
+        },
+        "check_count": {
+          "description": "Number of checks in the manifest.",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     }
   },
@@ -34,11 +60,13 @@
       "required": [
         "schema_version",
         "database",
-        "target_id"
+        "target_id",
+        "collector_sha256",
+        "manifest"
       ],
       "properties": {
         "schema_version": {
-          "description": "Must be '0.2.0' for the baseline envelope.",
+          "description": "Must be '0.3.0'.",
           "const": "0.3.0"
         },
         "database": {
@@ -78,9 +106,46 @@
         },
         "has_read_all_settings": {
           "type": "boolean"
+        },
+        "collector_sha256": {
+          "description": "SHA-256 hash of the collector SQL file used to generate this snapshot.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest": {
+          "description": "Provenance metadata about the manifest that was used (if any).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "manifest_version",
+            "benchmark_id",
+            "check_count"
+          ],
+          "properties": {
+            "sha256": {
+              "description": "SHA-256 hash of the manifest file.",
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "manifest_version": {
+              "description": "Manifest version number (always 1 for current format).",
+              "type": "integer",
+              "const": 1
+            },
+            "benchmark_id": {
+              "description": "Benchmark identifier from the manifest; null when run without a manifest.",
+              "type": ["string", "null"]
+            },
+            "check_count": {
+              "description": "Number of checks in the manifest.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         }
       },
-      "description": "The v0.3.0 envelope with collector metadata."
+      "description": "The v0.3.0 envelope with collector metadata and provenance."
     },
     "baseline": {
       "description": "The v0.2.0 bundle body - all sections from the collector. Keys are section names, values are arrays or objects depending on the section.",

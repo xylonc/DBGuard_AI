@@ -2,7 +2,7 @@
 
 This module verifies the complete pipeline:
 1. baseline_pipeline_integrity - one pipeline run validates structure
-2. break_then_fix[param] - for each automated spec, verify break->FAIL->fix->PASS flow
+2. break_then_fix - parametrized over each automated spec, verify break->FAIL->fix->PASS flow
 3. edited_spec_is_stale_never_pass - verify spec hash mismatch produces STALE
 
 All tests use the live pytest marker and require a working pg-target connection.
@@ -55,6 +55,10 @@ def get_automated_specs(spec_dir: Path) -> list[str]:
     return spec_ids
 
 
+# Build list of automated specs at module level for parametrization
+AUTOMATED_SPECS = get_automated_specs(REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0")
+
+
 @pytest.mark.live
 class TestE2EBreakFix:
     """End-to-end break/fix tests against pg-target."""
@@ -100,114 +104,110 @@ class TestE2EBreakFix:
         assert len(spec_3114) == 1
         assert spec_3114[0]["result"] == "NEEDS_CAPABILITY"
 
-    def test_break_then_fix(self, target_db, tmp_path, request):
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
         """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
         spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
         
-        # Get all automated spec_ids (built at collection time)
-        spec_ids = get_automated_specs(spec_dir)
-        assert spec_ids, "No automated specs found in spec_dir"
+        # Load spec to get the setting_name and proof values
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
         
-        # Test each spec
-        for spec_id in spec_ids:
-            # Load spec to get the setting_name and proof values
-            import yaml
-            spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
-            with open(spec_path) as f:
-                spec = yaml.safe_load(f)
-            
-            setting_name = spec["check"]["setting_name"]
-            
-            # Read prior state with fresh connection
-            prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
-            
-            # Skip if context is 'postmaster' (can't change at runtime)
-            if prior_sourcefile == "postmaster":
-                pytest.fail(
-                    f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
-                    f"Skipping test for this spec."
-                )
-            
-            # Get proof values
-            break_value = spec["proof"]["break"]["value"]
-            fix_value = spec["proof"]["fix"]["value"]
-            expected_operator = spec["check"]["operator"]
-            expected_value = spec["check"]["expected"]
-            
-            # a) Baseline: run pipeline before any change
-            manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
-            
-            # b) Apply proof.break.value
-            # Build action from proof
-            if spec["check"]["operator"] == "equals":
-                # To break, set to break_value which should NOT equal expected
-                action = {"action": "set_config", "param": setting_name, "value": break_value}
-            elif spec["check"]["operator"] == "not_equals":
-                # To break, set to value that equals expected (should break the not_equals check)
-                action = {"action": "set_config", "param": setting_name, "value": expected_value}
-            elif spec["check"]["operator"] == "in":
-                # To break, set to a value NOT in expected list
-                action = {"action": "set_config", "param": setting_name, "value": break_value}
-            else:
-                pytest.fail(f"Unsupported operator: {expected_operator}")
-            
-            run_action(target_db, action)
-            
-            # c) Run pipeline after break
-            manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
-            
-            # d) Assert: target spec's result == "FAIL"
-            target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
-            assert len(target_result) == 1, f"Spec {spec_id} not found in results"
-            assert target_result[0]["result"] == "FAIL", (
-                f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        setting_name = spec["check"]["setting_name"]
+        
+        # Read prior state with fresh connection
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+        
+        # Skip if context is 'postmaster' (can't change at runtime)
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
             )
-            
-            # Verify the snapshot shows the break value
-            check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
-            actual_setting = check_entry["result"]
-            
-            # e) Apply proof.fix.value
-            if spec["check"]["operator"] == "equals":
-                action = {"action": "set_config", "param": setting_name, "value": fix_value}
-            elif spec["check"]["operator"] == "not_equals":
-                # To fix, set to a value that does NOT equal expected
-                action = {"action": "set_config", "param": setting_name, "value": fix_value}
-            elif spec["check"]["operator"] == "in":
-                action = {"action": "set_config", "param": setting_name, "value": fix_value}
-            else:
-                pytest.fail(f"Unsupported operator for fix: {expected_operator}")
-            
-            run_action(target_db, action)
-            
-            # f) Run pipeline after fix
-            manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
-            
-            # g) Assert: target result == "PASS"
-            target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
-            assert len(target_result2) == 1
-            assert target_result2[0]["result"] == "PASS", (
-                f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
-            )
-            
-            # h) Assert: every OTHER spec's (result, reason_code) equals baseline
-            other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"]) 
-                           for r in report0["results"] if r["spec_id"] != spec_id}
-            other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"]) 
-                           for r in report1["results"] if r["spec_id"] != spec_id}
-            other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"]) 
-                           for r in report2["results"] if r["spec_id"] != spec_id}
-            
-            assert other_specs0 == other_specs1, (
-                f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
-            )
-            assert other_specs0 == other_specs2, (
-                f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
-            )
+        
+        # Get proof values
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+        
+        # a) Baseline: run pipeline before any change
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+        
+        # b) Apply proof.break.value
+        # Build action from proof
+        if spec["check"]["operator"] == "equals":
+            # To break, set to break_value which should NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To break, set to value that equals expected (should break the not_equals check)
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            # To break, set to a value NOT in expected list
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+        
+        run_action(target_db, action)
+        
+        # c) Run pipeline after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+        
+        # d) Assert: target spec's result == "FAIL"
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+        
+        # Verify the snapshot shows the break value
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+        
+        # e) Apply proof.fix.value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To fix, set to a value that does NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+        
+        run_action(target_db, action)
+        
+        # f) Run pipeline after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+        
+        # g) Assert: target result == "PASS"
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+        assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+        
+        # h) Assert: every OTHER spec's (result, reason_code) equals baseline
+        other_specs0 = {r["spec_id"]: (r["result"], r["reason_code"]) 
+                       for r in report0["results"] if r["spec_id"] != spec_id}
+        other_specs1 = {r["spec_id"]: (r["result"], r["reason_code"]) 
+                       for r in report1["results"] if r["spec_id"] != spec_id}
+        other_specs2 = {r["spec_id"]: (r["result"], r["reason_code"]) 
+                       for r in report2["results"] if r["spec_id"] != spec_id}
+        
+        assert other_specs0 == other_specs1, (
+            f"Other specs changed after break: {set(other_specs0.items()) ^ set(other_specs1.items())}"
+        )
+        assert other_specs0 == other_specs2, (
+            f"Other specs changed after fix: {set(other_specs0.items()) ^ set(other_specs2.items())}"
+        )
 
     def test_edited_spec_is_stale_never_pass(self, tmp_path):
-        """Edited spec produces STALE result, never PASS."""
+        """Edited spec produces STALE result, never PASS via whitespace edit."""
         import yaml
+        import jsonschema
         
         # Copy spec_dir to tmp
         orig_spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
@@ -217,31 +217,77 @@ class TestE2EBreakFix:
         # Build manifest + collect from ORIGINAL dir
         manifest_path, snapshot_path, report_baseline = run_pipeline(orig_spec_dir, tmp_path / "baseline")
         
-        # Find an automated spec to modify
+        # Find an automated spec to modify by adding extra space in check.pass_condition_quote
+        # The validation normalizes whitespace, so double space normalizes to single space
+        # but the hash will differ
         target_spec_id = None
-        for spec_file in copy_spec_dir.glob("*.yaml"):
+        target_spec_file = None
+        for spec_file in sorted(copy_spec_dir.glob("*.yaml")):
             with open(spec_file) as f:
                 spec = yaml.safe_load(f)
-            if spec.get("tier") == "automated":
+            if spec.get("tier") == "automated" and "check" in spec and "pass_condition_quote" in spec["check"]:
                 target_spec_id = spec["spec_id"]
+                target_spec_file = spec_file
+                # Find a position with a single space and change it to double space
+                original_quote = spec["check"]["pass_condition_quote"]
+                for i in range(len(original_quote) - 1):
+                    if original_quote[i] == " " and original_quote[i+1] != " ":
+                        # Insert another space after the existing space
+                        new_quote = original_quote[:i+1] + " " + original_quote[i+1:]
+                        spec["check"]["pass_condition_quote"] = new_quote
+                        break
+                # Write the modified spec
+                with open(spec_file, "w") as f:
+                    yaml.dump(spec, f, default_flow_style=False)
                 break
         
-        assert target_spec_id is not None, "No automated spec found"
+        assert target_spec_id is not None, "No automated spec with pass_condition_quote found"
+        assert target_spec_file is not None, "Target spec file not found"
         
-        # Note: The spec validation requires the title to match the record.
-        # Changing the title would break validation. We can't modify the spec file
-        # in a way that changes the hash without breaking validation.
-        # This test is SKIPPED due to this constraint.
-        # To implement this properly, the spec schema would need to allow optional fields
-        # that affect the hash but don't require validation checks.
-        pytest.skip(
-            "Spec validation requires title to match record; cannot modify spec to change hash "
-            "without breaking validation. See backend/app/services/spec_engine/validate.py "
-            "for TOP_REQUIRED keys that are strictly enforced."
+        # Precondition (a): validate_spec(edited, records) == []
+        from app.services.spec_engine import RecordsIndex, validate_spec
+        from app.services.spec_engine.specs import spec_sha256
+        records_path = REPO_ROOT / "catalog" / "benchmarks" / "cis-pg17-v1.1.0" / "records.json"
+        records = RecordsIndex.load(records_path)
+        with open(target_spec_file) as f:
+            edited_spec = yaml.safe_load(f)
+        errors = validate_spec(edited_spec, records)
+        assert errors == [], f"Edited spec failed validation: {errors}"
+        
+        # Precondition (b): spec_sha256(edited) != spec_sha256(original)
+        original_spec_file = orig_spec_dir / f"{target_spec_id.split(':')[-1]}.yaml"
+        with open(original_spec_file) as f:
+            original_spec = yaml.safe_load(f)
+        original_hash = spec_sha256(original_spec)
+        edited_hash = spec_sha256(edited_spec)
+        assert original_hash != edited_hash, "Spec hash should differ after whitespace edit"
+        
+        # Assess using the COPY
+        result = subprocess.run(
+            ["uv", "run", "python", str(REPO_ROOT / "scripts" / "assess.py"),
+             "--specs", str(copy_spec_dir), "--records", str(records_path),
+             "--snapshot", str(snapshot_path)],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT)
         )
         
-        # The following code would be used if spec modification were possible:
-        # target_spec_file = ...
-        # modify spec_hash or content
-        # assess using modified specs
-        # assert STALE result
+        assert result.returncode == 0, f"Assessment failed: {result.stderr}"
+        
+        report_edited = json.loads(result.stdout)
+        
+        # Assert: edited spec is STALE (not PASS, not FAIL)
+        target_result = [r for r in report_edited["results"] if r["spec_id"] == target_spec_id]
+        assert len(target_result) == 1, f"Target spec {target_spec_id} not found"
+        assert target_result[0]["result"] == "STALE", (
+            f"Expected STALE for edited spec, got {target_result[0]['result']}"
+        )
+        
+        # Assert: every other spec equals baseline
+        other_baseline = {r["spec_id"]: (r["result"], r["reason_code"]) 
+                         for r in report_baseline["results"] if r["spec_id"] != target_spec_id}
+        other_edited = {r["spec_id"]: (r["result"], r["reason_code"]) 
+                       for r in report_edited["results"] if r["spec_id"] != target_spec_id}
+        assert other_baseline == other_edited, (
+            f"Other specs differ from baseline: {set(other_baseline.items()) ^ set(other_edited.items())}"
+        )

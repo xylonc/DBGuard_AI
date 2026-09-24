@@ -1,0 +1,16 @@
+=== STEP 0: STATE CHECK ===
+
+Command: git status -sb; git log --oneline -3
+
+Output:
+## feature/phase1-e2e
+ M test-out/phase1-task4b/03-run.txt
+d9e7398 Phase 1 task 4: end-to-end break/fix test on pg-target
+4a2b977 Merge pull request #27 from xylonc/feature/phase1-engine
+2500110 Phase 1 task 3: allow-list tier and status in _decide; crash on unknown values; live fixture must exist
+
+Current branch: feature/phase1-e2e
+HEAD commit: d9e7398
+Working tree: modified (test-out/phase1-task4b/03-run.txt - in ignored directory)
+
+Decision: PROCEED (HEAD is d9e7398, working tree changes are in ignored directory)

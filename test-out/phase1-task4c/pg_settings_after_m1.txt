@@ -1,0 +1,5 @@
+debug_print_parse|off|default|
+log_connections|off|default|
+log_disconnections|off|default|
+log_statement|none|default|
+ssl_min_protocol_version|TLSv1.2|default|

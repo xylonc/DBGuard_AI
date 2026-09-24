@@ -33,17 +33,18 @@ from tests.live.conftest import fresh_setting, run_action
 
 
 @pytest.fixture(scope="session")
-def restore_setting():
+def restore_setting(request):
     """Fixture to restore a setting and return prior state.
     
     Returns a function that:
     1. Records the current setting state (prior state)
     2. Checks auto.conf is empty for this setting (setup precondition)
     3. Returns the prior state (value, source, sourcefile)
-    4. On teardown, executes rollback to restore prior state
+    4. Registers a finalizer to execute rollback and verify clean state
     """
     import psycopg2
     import os
+    from app.services.fix_unit_render import derive_rollback, render_action
     
     local_cache = {}
     
@@ -74,6 +75,42 @@ def restore_setting():
         # Store prior state for later restoration
         local_cache[setting_name] = (prior_setting, prior_source, prior_sourcefile)
         
+        # Register finalizer to execute rollback using request.addfinalizer
+        def _teardown():
+            """Execute rollback and verify clean state."""
+            if setting_name not in local_cache:
+                return
+            
+            prior_setting, prior_source, prior_sourcefile = local_cache[setting_name]
+            
+            # Determine the apply action (for rollback)
+            # This is a heuristic - the fix action is usually SET_CONFIG to a specific value
+            apply_action = {"action": "set_config", "param": setting_name, "value": prior_setting}
+            
+            # Execute rollback
+            rollback_action = derive_rollback({"value": prior_setting, "sourcefile": prior_sourcefile}, apply_action)
+            statements = render_action(rollback_action)
+            
+            with psycopg2.connect(pg_target_url) as conn:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    for stmt in statements:
+                        cur.execute(stmt)
+            
+            # Verify auto.conf is empty
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                    ('%postgresql.auto.conf%', setting_name),
+                )
+                rows = cur.fetchall()
+                if rows:
+                    rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+                    raise AssertionError(
+                        f"Teardown failed: auto.conf still has rows after rollback:\n{rows_str}"
+                    )
+        
+        request.addfinalizer(_teardown)
         return prior_setting, prior_source, prior_sourcefile
     
     return _restore_setting

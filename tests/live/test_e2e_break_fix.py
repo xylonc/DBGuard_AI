@@ -32,6 +32,53 @@ from tests.live._pipeline import run_pipeline, compute_file_hash
 from tests.live.conftest import fresh_setting, run_action
 
 
+@pytest.fixture(scope="session")
+def restore_setting():
+    """Fixture to restore a setting and return prior state.
+    
+    Returns a function that:
+    1. Records the current setting state (prior state)
+    2. Checks auto.conf is empty for this setting (setup precondition)
+    3. Returns the prior state (value, source, sourcefile)
+    4. On teardown, executes rollback to restore prior state
+    """
+    import psycopg2
+    import os
+    
+    local_cache = {}
+    
+    def _restore_setting(setting_name: str):
+        """Record prior state and prepare for restore."""
+        pg_target_url = os.environ.get("PG_TARGET_URL")
+        if not pg_target_url:
+            raise RuntimeError("PG_TARGET_URL is not set")
+        
+        # Get prior state
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+        
+        # Check auto.conf is empty (setup precondition)
+        with psycopg2.connect(pg_target_url) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                    ('%postgresql.auto.conf%', setting_name),
+                )
+                rows = cur.fetchall()
+                if rows:
+                    rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+                    raise AssertionError(
+                        f"pg-target contaminated before test: auto.conf has rows:\n{rows_str}"
+                    )
+        
+        # Store prior state for later restoration
+        local_cache[setting_name] = (prior_setting, prior_source, prior_sourcefile)
+        
+        return prior_setting, prior_source, prior_sourcefile
+    
+    return _restore_setting
+
+
 def compute_spec_hash(spec_path: Path) -> str:
     """Compute canonical-JSON SHA-256 hash of a spec file."""
     import json
@@ -105,7 +152,7 @@ class TestE2EBreakFix:
         assert spec_3114[0]["result"] == "NEEDS_CAPABILITY"
 
     @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
-    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+    def test_break_then_fix(self, target_db, tmp_path, spec_id, restore_setting):
         """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
         import yaml
         spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
@@ -118,7 +165,7 @@ class TestE2EBreakFix:
         setting_name = spec["check"]["setting_name"]
         
         # Read prior state with fresh connection
-        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+        prior_setting, prior_source, prior_sourcefile = restore_setting(setting_name)
         
         # Skip if context is 'postmaster' (can't change at runtime)
         if prior_sourcefile == "postmaster":

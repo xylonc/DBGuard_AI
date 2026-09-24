@@ -1,0 +1,28 @@
+........................................................................ [ 29%]
+..................................................x..sss................ [ 59%]
+.....x.................................................................. [ 88%]
+...........................s                                             [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/starlette/testclient.py:53
+  /workspace/DBGuardAI/.venv/lib/python3.13/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_lifecycle_tier_c.py::TestPartialChunkIngestionBug::test_partial_chunk_ingestion_reports_correct_status
+  /workspace/DBGuardAI/tests/test_lifecycle_tier_c.py:89: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    effective_date=datetime.utcnow(),
+
+tests/test_lifecycle_tier_c.py::TestPartialChunkIngestionBug::test_all_chunks_fail_reports_failed_status
+  /workspace/DBGuardAI/tests/test_lifecycle_tier_c.py:145: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    effective_date=datetime.utcnow(),
+
+tests/test_lifecycle_tier_c.py::TestPartialChunkIngestionBug::test_all_chunks_succeed_reports_ingested_status
+  /workspace/DBGuardAI/tests/test_lifecycle_tier_c.py:198: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    effective_date=datetime.utcnow(),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_live_e2e_sandbox.py:173: Docker daemon not available - skipping live integration tests
+SKIPPED [1] tests/test_live_e2e_sandbox.py:381: Docker daemon not available - skipping live integration tests
+SKIPPED [1] tests/test_live_e2e_sandbox.py:450: Docker daemon not available - skipping live integration tests
+SKIPPED [1] tests/test_twin_mcp_pipeline.py:19: Legacy test for deleted app.mcp.tools module
+238 passed, 4 skipped, 42 deselected, 2 xfailed, 4 warnings in 46.39s

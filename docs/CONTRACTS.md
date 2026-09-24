@@ -242,3 +242,67 @@ Both Python and Jinja template define `quote_identifier`:
 - `app/services/fix_unit_render.py:_quote_identifier()` (line 20)
 
 They are kept in agreement only by the template parity test `tests/test_contract_schemas.py:test_render_action_matches_template`. There is no automated check ensuring they remain identical.
+
+## assessment report v1
+
+### Enforced by: `backend/app/services/spec_engine/assess.py:assess()`
+
+### Structure:
+
+The assessment report is the output of the `assess()` function. It contains:
+
+- **report_version**: Integer 1 (current schema version)
+- **target**: Target database metadata (`target_id`, `database`, `server_version`, `server_major`)
+- **inputs**: Collector and manifest provenance (`collector_sha256`, `manifest_sha256`, `benchmark_id`, `specs`)
+- **flags**: Assessment metadata (`version_mismatch`, `check_count`, `orphan_checks`, `integrity_ok`)
+- **summary**: Counts for each result type (PASS, FAIL, MANUAL, NEEDS_CAPABILITY, NOT_COLLECTED, STALE, ERROR)
+- **results**: Array of result rows for each spec
+
+### Decision order for automated specs:
+
+The result for each spec is determined in this order (returns at first match):
+
+1. **STALE**: `entry exists AND collected_spec_hash != computed_spec_hash`
+2. **MANUAL**: `tier in ("manual_checklist", "parameterised")`
+3. **NEEDS_CAPABILITY**: `tier == "needs_capability"`
+4. **NOT_COLLECTED**: `entry is null`
+5. **NOT_COLLECTED**: `entry.status == "not_collected"`
+6. **ERROR**: `entry.status == "error"`
+7. **ERROR**: `entry.status == "ok" AND entry.result is not a string`
+8. **PASS**: `entry.status == "ok" AND operator == "true"`
+9. **FAIL**: `entry.status == "ok" AND operator != "true"`
+
+### Result codes:
+
+| Result | Reason code | Description |
+|--------|-------------|-------------|
+| PASS | `operator_true` | Operator `true` evaluated to true |
+| FAIL | `operator_false` | Operator evaluated to false |
+| MANUAL | `tier_manual` | Tier is `manual_checklist` or `parameterised` |
+| NEEDS_CAPABILITY | `tier_needs_capability` | Tier is `needs_capability` |
+| NOT_COLLECTED | `no_entry` | No entry in snapshot for spec_id |
+| STALE | `hash_mismatch` | Spec hash doesn't match collected hash |
+| ERROR | `status_error` | Entry status is `error` |
+| ERROR | `non_string_result` | Entry status is `ok` but result is not a string |
+
+### Output shape:
+
+Each result row contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| spec_id | string | Spec identifier |
+| title | string | Spec title |
+| tier | string | Spec tier |
+| result | string | Assessment result |
+| reason_code | string | Short code explaining result |
+| setting_name | string | PostgreSQL setting (automated only) |
+| operator | string | Check operator (automated only) |
+| expected | string/array | Expected value(s) (automated only) |
+| spec_hash | string | Computed spec hash (automated only) |
+| collected_spec_hash | string/null | Hash from snapshot (automated only) |
+| observed | string | Observed result when status is ok (automated only) |
+
+### Determinism:
+
+The same inputs always produce byte-identical output (sorted keys, no timestamps).

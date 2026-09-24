@@ -1,0 +1,65 @@
+def _decide(spec: dict[str, Any], entry: dict[str, Any] | None, spec_hash: str) -> tuple[str, str]:
+    """Decide result for a single spec based on entry and hash.
+
+    Returns (result, reason_code) at the first match, returning at the first
+    condition that matches in this order:
+
+    1. tier manual_checklist or parameterised -> ("MANUAL", "tier_manual")
+    2. tier needs_capability -> ("NEEDS_CAPABILITY", "tier_needs_capability")
+    3. no entry -> ("NOT_COLLECTED", "no_entry")
+    4. entry spec_hash != spec_hash -> ("STALE", "hash_mismatch")
+    5. status not_collected -> ("NOT_COLLECTED", "status_not_collected")
+    6. status error -> ("ERROR", "status_error")
+    7. result is not a str -> ("ERROR", "non_string_result")
+    8. ok = OPERATORS[operator](result, expected) -> ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
+    """
+    tier = spec.get("tier", "")
+
+    # 1. tier manual_checklist or parameterised
+    if tier in ("manual_checklist", "parameterised"):
+        return ("MANUAL", "tier_manual")
+
+    # 2. tier needs_capability
+    if tier == "needs_capability":
+        return ("NEEDS_CAPABILITY", "tier_needs_capability")
+
+    # Allow-list automated tier (only automated specs reach the operator check)
+    if tier != "automated":
+        raise ValueError(f"unknown tier: {tier!r}")
+
+    # 3. no entry
+    if entry is None:
+        return ("NOT_COLLECTED", "no_entry")
+
+    # 4. hash mismatch (checked before status to report stale data regardless of status)
+    collected_spec_hash = entry.get("spec_hash")
+    if collected_spec_hash != spec_hash:
+        return ("STALE", "hash_mismatch")
+
+    # 5. status not_collected
+    status = entry.get("status")
+    if status == "not_collected":
+        return ("NOT_COLLECTED", "status_not_collected")
+
+    # 6. status error
+    if status == "error":
+        return ("ERROR", "status_error")
+
+    if status != "ok":
+        raise ValueError(f"unknown status: {status!r}")
+
+    result_value = entry.get("result")
+
+    # 7. result is not a str
+    if not isinstance(result_value, str):
+        return ("ERROR", "non_string_result")
+
+    check = spec.get("check", {})
+    operator = check.get("operator")
+    expected = check.get("expected")
+
+    ok = OPERATORS[operator](result_value, expected)
+    return ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
+
+
+def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: RecordsIndex) -> dict[str, Any]:

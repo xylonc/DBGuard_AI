@@ -1,0 +1,43 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 33 items
+
+tests/test_assess.py::TestAssessDecisionTable::test_pass_only_when_automated_hash_matches_and_result_ok_on PASSED [  3%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_fix_value_passes[cis-pg17-v1.1.0:3.1.16] PASSED [  6%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_fix_value_passes[cis-pg17-v1.1.0:3.1.20] PASSED [  9%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_fix_value_passes[cis-pg17-v1.1.0:3.1.21] PASSED [ 12%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_fix_value_passes[cis-pg17-v1.1.0:3.1.25] PASSED [ 15%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_fix_value_passes[cis-pg17-v1.1.0:6.9] PASSED [ 18%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_break_value_fails[cis-pg17-v1.1.0:3.1.16] PASSED [ 21%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_break_value_fails[cis-pg17-v1.1.0:3.1.20] PASSED [ 24%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_break_value_fails[cis-pg17-v1.1.0:3.1.21] PASSED [ 27%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_break_value_fails[cis-pg17-v1.1.0:3.1.25] PASSED [ 30%]
+tests/test_assess.py::TestAssessRealSpecs::test_automated_spec_with_break_value_fails[cis-pg17-v1.1.0:6.9] PASSED [ 33%]
+tests/test_assess.py::TestAssessRealSpecs::test_non_automated_tier_results PASSED [ 36%]
+tests/test_assess.py::TestAssessSpecificCases::test_stale_result PASSED  [ 39%]
+tests/test_assess.py::TestAssessSpecificCases::test_not_collected_no_entry PASSED [ 42%]
+tests/test_assess.py::TestAssessSpecificCases::test_not_collected_status_not_collected PASSED [ 45%]
+tests/test_assess.py::TestAssessSpecificCases::test_hash_match_status_not_collected PASSED [ 48%]
+tests/test_assess.py::TestAssessSpecificCases::test_error_status_error PASSED [ 51%]
+tests/test_assess.py::TestAssessSpecificCases::test_hash_match_status_error PASSED [ 54%]
+tests/test_assess.py::TestAssessSpecificCases::test_error_result_none PASSED [ 57%]
+tests/test_assess.py::TestAssessSpecificCases::test_error_result_int PASSED [ 60%]
+tests/test_assess.py::TestAssessSpecificCases::test_error_result_array PASSED [ 63%]
+tests/test_assess.py::TestAssessSpecificCases::test_orphan_check PASSED  [ 66%]
+tests/test_assess.py::TestAssessSpecificCases::test_check_count_mismatch PASSED [ 69%]
+tests/test_assess.py::TestAssessSpecificCases::test_version_mismatch PASSED [ 72%]
+tests/test_assess.py::TestAssessSpecificCases::test_unknown_version PASSED [ 75%]
+tests/test_assess.py::TestAssessInvalidInput::test_invalid_snapshot_raises PASSED [ 78%]
+tests/test_assess.py::TestAssessInvalidInput::test_duplicate_spec_id_raises PASSED [ 81%]
+tests/test_assess.py::TestAssessOutputShape::test_report_validates_contract PASSED [ 84%]
+tests/test_assess.py::TestAssessOutputShape::test_all_result_fields_present PASSED [ 87%]
+tests/test_assess.py::TestAssessDeterminism::test_deterministic_output PASSED [ 90%]
+tests/test_assess.py::TestAssessLiveSnapshot::test_live_snapshot_assessment PASSED [ 93%]
+tests/test_assess.py::TestAssessCLI::test_cli_exit_0_on_live_fixture PASSED [ 96%]
+tests/test_assess.py::TestAssessCLI::test_cli_exit_2_on_invalid_operator PASSED [100%]
+
+============================== 33 passed in 6.93s ==============================

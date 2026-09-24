@@ -1,0 +1,151 @@
+{
+  "envelope": {
+    "schema_version": "0.3.0",
+    "target_id": "test-pg17",
+    "database": "postgres",
+    "collected_at": "2026-09-24T10:00:00Z",
+    "collected_by": "test-collector",
+    "is_superuser": true,
+    "deployment_type": "self-managed",
+    "collector_version": "2.0.0-sql",
+    "collector_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "manifest_version": 1,
+      "benchmark_id": "cis-pg17-v1.1.0",
+      "check_count": 5
+    }
+  },
+  "baseline": {
+    "identity": {
+      "version_full": "PostgreSQL 17.0 on x86_64-pc-linux-gnu",
+      "server_version_num": 170000,
+      "server_encoding": "UTF8",
+      "lc_collate": "en_US.UTF-8",
+      "lc_ctype": "en_US.UTF-8",
+      "block_size": 8192,
+      "wal_segment_size": 1048576,
+      "data_checksums": "on",
+      "data_directory": "/var/lib/postgresql/17/data",
+      "system_identifier": "1234567890123456789"
+    },
+    "settings": [
+      {
+        "name": "debug_print_parse",
+        "setting": "off",
+        "unit": null,
+        "category": "Developer",
+        "context": "user",
+        "vartype": "bool",
+        "source": "default",
+        "sourcefile": null,
+        "sourceline": null,
+        "boot_val": "off",
+        "reset_val": "off",
+        "pending_restart": false,
+        "sanitised": false
+      },
+      {
+        "name": "log_connections",
+        "setting": "on",
+        "unit": null,
+        "category": "Reporting",
+        "context": "user",
+        "vartype": "bool",
+        "source": "default",
+        "sourcefile": null,
+        "sourceline": null,
+        "boot_val": "off",
+        "reset_val": "off",
+        "pending_restart": false,
+        "sanitised": false
+      },
+      {
+        "name": "log_disconnections",
+        "setting": "on",
+        "unit": null,
+        "category": "Reporting",
+        "context": "user",
+        "vartype": "bool",
+        "source": "default",
+        "sourcefile": null,
+        "sourceline": null,
+        "boot_val": "off",
+        "reset_val": "off",
+        "pending_restart": false,
+        "sanitised": false
+      },
+      {
+        "name": "log_statement",
+        "setting": "ddl",
+        "unit": null,
+        "category": "Reporting",
+        "context": "user",
+        "vartype": "enum",
+        "source": "default",
+        "sourcefile": null,
+        "sourceline": null,
+        "boot_val": "none",
+        "reset_val": "none",
+        "pending_restart": false,
+        "sanitised": false
+      },
+      {
+        "name": "ssl_min_protocol_version",
+        "setting": "TLSv1.2",
+        "unit": null,
+        "category": "Security",
+        "context": "postmaster",
+        "vartype": "enum",
+        "source": "default",
+        "sourcefile": null,
+        "sourceline": null,
+        "boot_val": "TLSv1.2",
+        "reset_val": "TLSv1.2",
+        "pending_restart": false,
+        "sanitised": false
+      }
+    ],
+    "roles": [],
+    "password_types": [],
+    "schemas": [],
+    "databases": [],
+    "object_acls": [],
+    "default_acls": [],
+    "hba_rules": [],
+    "ident": [],
+    "file_settings": []
+  },
+  "checks": {
+  "cis-pg17-v1.1.0:3.1.16": {
+    "spec_hash": "99a35fe36ce3a7ef2b656cc1b41053e40f2539fe091f4779be8c86f9bd5f0769",
+    "query": "SHOW debug_print_parse",
+    "status": "ok",
+    "result": "off"
+  },
+  "cis-pg17-v1.1.0:3.1.20": {
+    "spec_hash": "4180999090635516d57fa3bf591f9943640049253d86af6483739316718089c1",
+    "query": "SHOW log_connections",
+    "status": "ok",
+    "result": "on"
+  },
+  "cis-pg17-v1.1.0:3.1.21": {
+    "spec_hash": "3eaab872703d2daf9c58cdf9dbefdf43607209caf2d5445b69fa0bf554b1c024",
+    "query": "SHOW log_disconnections",
+    "status": "ok",
+    "result": "on"
+  },
+  "cis-pg17-v1.1.0:3.1.25": {
+    "spec_hash": "3b4d97ea5cfaba24215e66bc1c2628b6dfb194f4b5fc8bb34d89cb1178e625f0",
+    "query": "SHOW log_statement",
+    "status": "ok",
+    "result": "ddl"
+  },
+  "cis-pg17-v1.1.0:6.9": {
+    "spec_hash": "93cb822b981b65dde92c365dfa4ce3a95505d2e8fa066a9eb10a9bc1f367107b",
+    "query": "SHOW ssl_min_protocol_version",
+    "status": "ok",
+    "result": "TLSv1.2"
+  }
+  }
+}

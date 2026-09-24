@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dbguardai.local/schemas/assessment-report-v1.json",
+  "title": "DBGuardAI assessment report schema (version 1)",
+  "description": "Contract for assessment reports produced by the spec_engine.assess() function.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_version",
+    "target",
+    "inputs",
+    "flags",
+    "summary",
+    "results"
+  ],
+  "properties": {
+    "report_version": {
+      "description": "Report schema version (always 1 for current format).",
+      "type": "integer",
+      "const": 1
+    },
+    "target": {
+      "description": "Target database information.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_id", "database", "server_major"],
+      "properties": {
+        "target_id": {
+          "description": "Target identifier.",
+          "type": "string",
+          "minLength": 1
+        },
+        "database": {
+          "description": "Database name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "server_version": {
+          "description": "Full server version string (e.g., 'PostgreSQL 17.0 on x86_64-pc-linux-gnu').",
+          "type": ["string", "null"]
+        },
+        "server_major": {
+          "description": "Server major version as integer (e.g., 17).",
+          "type": ["integer", "null"]
+        }
+      }
+    },
+    "inputs": {
+      "description": "Input metadata for reproducibility.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collector_sha256", "manifest_sha256", "benchmark_id", "specs"],
+      "properties": {
+        "collector_sha256": {
+          "description": "SHA-256 hash of the collector SQL file.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_sha256": {
+          "description": "SHA-256 hash of the manifest file.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "benchmark_id": {
+          "description": "Benchmark identifier (e.g., 'cis-pg17-v1.1.0').",
+          "type": ["string", "null"]
+        },
+        "specs": {
+          "description": "List of specs that were assessed.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["spec_id", "spec_hash"],
+            "properties": {
+              "spec_id": {
+                "description": "Spec identifier.",
+                "type": "string",
+                "minLength": 1
+              },
+              "spec_hash": {
+                "description": "SHA-256 hash of the spec.",
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "flags": {
+      "description": "Assessment flags and metadata.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version_mismatch", "check_count", "orphan_checks", "integrity_ok"],
+      "properties": {
+        "version_mismatch": {
+          "description": "True if benchmark version doesn't match server version, false if it matches, null if unknown.",
+          "type": ["boolean", "null"]
+        },
+        "check_count": {
+          "description": "Check count statistics.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["declared", "actual", "matches"],
+          "properties": {
+            "declared": {
+              "description": "Declared check count from manifest.",
+              "type": ["integer", "null"],
+              "minimum": 0
+            },
+            "actual": {
+              "description": "Actual number of checks in snapshot.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "matches": {
+              "description": "True if declared equals actual.",
+              "type": ["boolean", "null"]
+            }
+          }
+        },
+        "orphan_checks": {
+          "description": "Sorted list of spec_ids in snapshot but not in specs.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "integrity_ok": {
+          "description": "True if check count matches.",
+          "type": "boolean"
+        }
+      }
+    },
+    "summary": {
+      "description": "Counts of each result type.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["PASS", "FAIL", "MANUAL", "NEEDS_CAPABILITY", "NOT_COLLECTED", "STALE", "ERROR"],
+      "properties": {
+        "PASS": {
+          "description": "Count of PASS results.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "FAIL": {
+          "description": "Count of FAIL results.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "MANUAL": {
+          "description": "Count of MANUAL results (manual_checklist, parameterised tier).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "NEEDS_CAPABILITY": {
+          "description": "Count of NEEDS_CAPABILITY results (needs_capability tier).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "NOT_COLLECTED": {
+          "description": "Count of NOT_COLLECTED results.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "STALE": {
+          "description": "Count of STALE results (hash mismatch).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "ERROR": {
+          "description": "Count of ERROR results.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "results": {
+      "description": "List of assessment results for each spec.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["spec_id", "title", "tier", "result", "reason_code"],
+        "properties": {
+          "spec_id": {
+            "description": "Spec identifier.",
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "description": "Spec title.",
+            "type": "string"
+          },
+          "tier": {
+            "description": "Spec tier.",
+            "type": "string",
+            "enum": ["automated", "parameterised", "manual_checklist", "needs_capability"]
+          },
+          "result": {
+            "description": "Assessment result.",
+            "type": "string",
+            "enum": ["PASS", "FAIL", "MANUAL", "NEEDS_CAPABILITY", "NOT_COLLECTED", "STALE", "ERROR"]
+          },
+          "reason_code": {
+            "description": "Short code explaining the result.",
+            "type": "string",
+            "enum": ["hash_mismatch", "no_entry", "status_error", "non_string_result", "operator_true", "operator_false", "tier_manual", "tier_needs_capability"]
+          },
+          "setting_name": {
+            "description": "PostgreSQL setting name (automated specs only).",
+            "type": "string",
+            "minLength": 1
+          },
+          "operator": {
+            "description": "Operator for automated checks (equals, not_equals, in, true).",
+            "type": "string",
+            "enum": ["equals", "not_equals", "in", "true"]
+          },
+          "expected": {
+            "description": "Expected value(s) for the check.",
+            "type": ["string", "array"]
+          },
+          "spec_hash": {
+            "description": "SHA-256 hash of the spec.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "collected_spec_hash": {
+            "description": "SHA-256 hash in the snapshot entry, or null if no entry.",
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "observed": {
+            "description": "Observed result value when status is ok (only when status was ok).",
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

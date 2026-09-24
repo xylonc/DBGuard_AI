@@ -6,11 +6,11 @@ validate_spec() returns ALL errors it can find. An empty list means the spec is 
 import re
 from typing import Any
 
-from .operators import equals, in_, not_equals
+from .operators import equals, in_, not_equals, true
 from .records import RecordsIndex
 
 TIERS = ("automated", "parameterised", "manual_checklist", "needs_capability")
-OPERATORS = {"equals": equals, "not_equals": not_equals, "in": in_}
+OPERATORS = {"equals": equals, "not_equals": not_equals, "in": in_, "true": true}
 CHECK_KINDS = ("setting",)
 
 TOP_REQUIRED = ("spec_id", "schema_version", "authored_by", "ref", "tier", "reason")

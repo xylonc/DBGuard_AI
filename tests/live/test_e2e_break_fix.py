@@ -91,24 +91,33 @@ def restore_setting(request):
             rollback_action = derive_rollback({"value": prior_setting, "sourcefile": prior_sourcefile}, apply_action)
             statements = render_action(rollback_action)
             
-            with psycopg2.connect(pg_target_url) as conn:
-                conn.autocommit = True
+            # Execute statements with autocommit
+            conn = psycopg2.connect(pg_target_url)
+            conn.autocommit = True
+            try:
                 with conn.cursor() as cur:
                     for stmt in statements:
                         cur.execute(stmt)
+            finally:
+                conn.close()
             
             # Verify auto.conf is empty
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
-                    ('%postgresql.auto.conf%', setting_name),
-                )
-                rows = cur.fetchall()
-                if rows:
-                    rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
-                    raise AssertionError(
-                        f"Teardown failed: auto.conf still has rows after rollback:\n{rows_str}"
+            conn = psycopg2.connect(pg_target_url)
+            conn.autocommit = True
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE %s AND name = %s",
+                        ('%postgresql.auto.conf%', setting_name),
                     )
+                    rows = cur.fetchall()
+                    if rows:
+                        rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+                        raise AssertionError(
+                            f"Teardown failed: auto.conf still has rows after rollback:\n{rows_str}"
+                        )
+            finally:
+                conn.close()
         
         request.addfinalizer(_teardown)
         return prior_setting, prior_source, prior_sourcefile

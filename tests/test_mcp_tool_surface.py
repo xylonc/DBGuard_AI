@@ -113,3 +113,48 @@ def test_mcp_tool_surface_parity():
 
 if __name__ == "__main__":
     test_mcp_tool_surface_parity()
+
+
+def test_container_host_is_accepted_without_allowing_arbitrary_hosts():
+    from starlette.testclient import TestClient
+    from services.dbguard_mcp.server import mcp, MCP_PORT, TRANSPORT_SECURITY
+
+    app = mcp.streamable_http_app(
+        transport_security=TRANSPORT_SECURITY, stateless_http=True, json_response=True)
+    request = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-03-26", "capabilities": {},
+        "clientInfo": {"name": "host-regression", "version": "1"}}}
+    with TestClient(app) as client:
+        for host, expected in [(f"mcp:{MCP_PORT}", 200),
+                               (f"127.0.0.1:{MCP_PORT}", 200),
+                               ("untrusted.example", 421)]:
+            response = client.post("/mcp", json=request, headers={
+                "Host": host, "Accept": "application/json, text/event-stream"})
+            assert response.status_code == expected
+
+
+def test_missing_environment_cannot_silently_default_to_dev(monkeypatch):
+    import pytest
+    from mcp.server.mcpserver.exceptions import ToolError
+    from services.dbguard_mcp import server
+    from unittest.mock import Mock
+    request = Mock()
+    monkeypatch.setattr(server.requests, "request", request)
+    with pytest.raises(ToolError, match="environment"):
+        asyncio.run(server.mcp.call_tool("prepare_sandbox_handoff", {
+            "snapshot_id": "snap-unit", "template_version": 1,
+            "evidence_ids": ["demo-evidence"]}))
+    request.assert_not_called()
+
+
+def test_expected_api_failure_reaches_model_instead_of_generic_crash(monkeypatch):
+    import pytest
+    from unittest.mock import Mock
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+    from services.dbguard_mcp import server
+    response = Mock(status_code=404)
+    response.json.return_value = {"detail": "Snapshot not found"}
+    monkeypatch.setattr(server.requests, "request", Mock(return_value=response))
+    with pytest.raises(ToolError, match="HTTP 404.*Snapshot not found") as error:
+        asyncio.run(server.mcp.call_tool("get_snapshot_spec_assessment", {"snapshot_id":"snap-missing"}))
+    assert not isinstance(error.value, UnexpectedToolError)

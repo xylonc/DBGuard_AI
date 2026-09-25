@@ -52,10 +52,15 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - get_demo_workflow_context
         - get_snapshot_context
         - get_snapshot_assessment
         - search_approved_knowledge
         - search_approved_templates
         - validate_and_render_proposal
+        - get_snapshot_spec_assessment
+        - prepare_sandbox_handoff
+        - run_sandbox_handoff
+        - get_sandbox_handoff_status
       prompts: false
       resources: false

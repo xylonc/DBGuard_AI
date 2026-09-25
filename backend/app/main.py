@@ -12,6 +12,7 @@ from jinja2 import TemplateError
 from pydantic import BaseModel, Field
 
 from app.collector_models import (
+    SnapshotV030,
     CollectorBundleV020,
     SnapshotContextResponse,
     SnapshotUploadResponse,
@@ -47,6 +48,7 @@ from app.services.vector_service import (
 )
 from app.config import settings
 from services.rag.rag_service import KnowledgeDocument, RAGService
+from services.sandbox_poc.router import router as sandbox_poc_router
 
 app = FastAPI(
     title="DBGuardAI",
@@ -54,6 +56,9 @@ app = FastAPI(
     description="Collector snapshot intake, approved knowledge retrieval, and human-reviewed hardening proposals.",
 )
 snapshot_store = SnapshotStore(settings.snapshot_storage_dir)
+
+# The new spec-driven local endpoint is separate from legacy /sandbox/validate.
+app.include_router(sandbox_poc_router)
 
 
 @app.get("/api/v1/health")
@@ -64,6 +69,7 @@ def health_check():
         "scope": "proposal",
         "assessment_enabled": False,
         "twin_runner_enabled": False,
+        "sandbox_poc_enabled": settings.sandbox_poc_enabled,
     }
 
 
@@ -80,6 +86,8 @@ def get_assessment_report(snapshot_id: str):
     except SnapshotNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Snapshot not found") from exc
     
+    if isinstance(bundle, SnapshotV030):
+        raise HTTPException(422, "Native Phase 1 snapshots use /spec-assessment with the exact benchmark")
     # Convert bundle to dict for assessment
     snapshot = bundle.model_dump(mode="json", exclude_none=False)
     
@@ -94,8 +102,8 @@ def get_assessment_report(snapshot_id: str):
 
 
 @app.post("/api/v1/snapshots", response_model=SnapshotUploadResponse, status_code=201)
-def upload_snapshot(bundle: CollectorBundleV020):
-    """Validate and store an immutable collector v0.2.0 bundle."""
+def upload_snapshot(bundle: CollectorBundleV020 | SnapshotV030):
+    """Validate and store an immutable legacy bundle or native Phase 1 snapshot."""
     return snapshot_store.save(bundle)
 
 
@@ -461,6 +469,9 @@ def validate_in_sandbox(request: SandboxValidationRequest):
         raise HTTPException(status_code=404, detail=f"Snapshot not found: {exc}") from exc
 
     # Build proposal artifact
+    if isinstance(source_bundle, SnapshotV030):
+        raise HTTPException(422, "Native Phase 1 snapshots use /api/v1/sandbox/handoffs or /api/v1/sandbox/runs")
+
     from app.services.sandbox_service import build_proposal_artifact
 
     artifact = build_proposal_artifact(
@@ -515,4 +526,3 @@ def validate_in_sandbox(request: SandboxValidationRequest):
         logs=result.execution_log,
         errors=[result.error] if result.error else [],
     )
-

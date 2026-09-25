@@ -4,14 +4,28 @@ import os
 from pathlib import Path
 
 import yaml
-from plugins.dashboard_auth.basic import hash_password
 
 
 SOURCE = Path("/opt/dbguard/config.yaml")
 DESTINATION = Path("/opt/data/config.yaml")
 
 
+DEMO_TOOLS = [
+    "get_demo_workflow_context", "get_snapshot_spec_assessment",
+    "prepare_sandbox_handoff", "run_sandbox_handoff", "get_sandbox_handoff_status",
+]
+
+
+def configure_workflow(config: dict, mode: str) -> None:
+    if mode not in ("standard", "demo"):
+        raise ValueError("HERMES_WORKFLOW_MODE must be standard or demo")
+    if mode == "demo":
+        # Hide legacy proposal tools entirely, instead of relying on model routing.
+        config["mcp_servers"]["dbguard"]["tools"]["include"] = list(DEMO_TOOLS)
+
+
 def main() -> None:
+    from plugins.dashboard_auth.basic import hash_password
     username = os.environ.get("HERMES_DASHBOARD_USERNAME", "dbguard")
     password = os.environ.get("HERMES_DASHBOARD_PASSWORD")
     if not password:
@@ -26,6 +40,7 @@ def main() -> None:
         raise SystemExit("HERMES_MODEL_API_KEY must be set")
 
     config = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    configure_workflow(config, os.environ.get("HERMES_WORKFLOW_MODE", "standard"))
     config["model"].update(
         {
             "provider": "custom",

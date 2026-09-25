@@ -52,39 +52,31 @@ def build_manifest(spec_dir: Path, records: RecordsIndex) -> dict:
                 error_lines.append(f"    - {err}")
         raise ValueError("\n".join(error_lines))
 
-    # Filter to only automated tier specs
-    automated_specs = [
-        (path, spec) for path, spec in valid_specs
-        if spec.get("tier") == "automated"
-    ]
+    return manifest_from_specs([spec for _, spec in valid_specs], records)
 
-    # Build checks list
-    checks: list[dict] = []
-    for spec_path, spec in automated_specs:
-        check = spec["check"]
-        checks.append({
-            "spec_id": spec["spec_id"],
-            "spec_hash": spec_sha256(spec),
-            "kind": check["kind"],
-            "setting_name": check["setting_name"],
-            "query": check["query"],
-        })
 
-    # Sort by spec_id for deterministic output
-    checks.sort(key=lambda c: c["spec_id"])
-
-    manifest = {
-        "manifest_version": 1,
-        "benchmark_id": records.benchmark_id,
-        "checks": checks,
-    }
-
-    # Validate against schema before returning
-    schema_path = spec_dir.parent.parent / "specs" / "contracts" / "check-manifest-v1.json"
+def manifest_from_specs(specs: list[dict], records: RecordsIndex) -> dict:
+    """Build the same manifest from exact handoff specs, without temporary files."""
+    if not specs or len({s["spec_id"] for s in specs}) != len(specs):
+        raise ValueError("Specs must be nonempty with unique IDs")
+    for spec in specs:
+        errors = validate_spec(spec, records)
+        if errors:
+            raise ValueError("; ".join(errors))
+    checks = [{"spec_id": spec["spec_id"], "spec_hash": spec_sha256(spec),
+               **{key: spec["check"][key] for key in ("kind", "setting_name", "query")}}
+              for spec in specs if spec.get("tier") == "automated"]
+    checks.sort(key=lambda check: check["spec_id"])
+    manifest = {"manifest_version": 1, "benchmark_id": records.benchmark_id, "checks": checks}
+    schema_path = Path(__file__).resolve().parents[4] / "catalog/specs/contracts/check-manifest-v1.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     _validate_manifest(manifest, schema)
-
     return manifest
+
+
+def manifest_text(manifest: dict) -> str:
+    """Canonical bytes shared with the manifest CLI and collector hash binding."""
+    return json.dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
 
 
 def _validate_manifest(manifest: dict, schema: dict) -> None:

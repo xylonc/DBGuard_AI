@@ -41,6 +41,8 @@ def main() -> None:
 
     config = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
     configure_workflow(config, os.environ.get("HERMES_WORKFLOW_MODE", "standard"))
+    if os.environ.get("HERMES_MCP_URL"):
+        config["mcp_servers"]["dbguard"]["url"] = os.environ["HERMES_MCP_URL"]
     config["model"].update(
         {
             "provider": "custom",

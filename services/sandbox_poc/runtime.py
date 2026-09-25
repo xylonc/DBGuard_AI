@@ -6,6 +6,7 @@ is accepted. DATABASE_URL is never used by this execution layer.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import subprocess
 import time
@@ -18,6 +19,8 @@ LABEL = "dbguard.sandbox-poc.run"
 
 
 def docker(*args: str, stdin: str | None = None, timeout: int = 60) -> str:
+    if args and args[0] == "run" and os.environ.get("DBGUARD_DEMO_OWNER"):
+        args = ("run", "--label", "dbguard.demo.owner=" + os.environ["DBGUARD_DEMO_OWNER"], *args[1:])
     result = subprocess.run(["docker", *args], input=stdin, capture_output=True,
                             text=True, timeout=timeout)
     if result.returncode:
@@ -26,10 +29,10 @@ def docker(*args: str, stdin: str | None = None, timeout: int = 60) -> str:
 
 
 class DisposablePostgres:
-    def __init__(self, image: str = "postgres:17-bookworm"):
+    def __init__(self, image: str | None = None):
         self.run_id = uuid.uuid4().hex
         self.name = f"dbguard-poc-{self.run_id}"
-        self.image = image
+        self.image = image or os.environ.get("DBGUARD_POSTGRES_IMAGE", "postgres:17-bookworm")
         self.image_id = None
         self.started = False
 

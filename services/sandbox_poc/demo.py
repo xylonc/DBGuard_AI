@@ -1,6 +1,7 @@
 """Local live demo: isolated fixtures, existing sandbox endpoint, no team DB access."""
 from contextlib import asynccontextmanager, closing
 import hashlib
+import os
 import json
 from pathlib import Path
 import secrets
@@ -53,7 +54,7 @@ class DemoResources:
                "--tmpfs", "/var/run/postgresql:rw,uid=999,gid=999,mode=0775",
                "-p", "127.0.0.1::5432", "-e", "POSTGRES_USER=demo_fixture",
                "-e", "POSTGRES_DB=demo_fixture", "-e", f"POSTGRES_PASSWORD={password}",
-               "pgvector/pgvector:pg17")
+               os.environ.get("DBGUARD_REGISTRY_IMAGE", "pgvector/pgvector:pg17"))
         port = int(docker("port", self.name, "5432/tcp").rsplit(":", 1)[1])
         self.admin = dict(host="127.0.0.1", port=port, user="demo_fixture",
                           password=password, dbname="demo_fixture", connect_timeout=2)

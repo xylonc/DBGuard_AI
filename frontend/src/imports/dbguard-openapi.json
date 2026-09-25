@@ -1,0 +1,2440 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DBGuardAI",
+    "description": "Collector snapshot intake, approved knowledge retrieval, and human-reviewed hardening proposals.",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/api/v1/sandbox/runs": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Test a pinned, approved fix in disposable PostgreSQL",
+        "description": "Returns VERIFIED, FAILED or CLEANUP_FAILED with fix-unit and attempt evidence.\n\nThis synchronous local POC never applies a fix to the source or registry DB.\nHTTP 200 means testing completed; inspect the result's status for acceptance.",
+        "operationId": "run_sandbox_api_v1_sandbox_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxHandoff"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Run Sandbox Api V1 Sandbox Runs Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sandbox/runs/{run_id}/bundle": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Download a server-verified DBA review bundle",
+        "operationId": "download_bundle_api_v1_sandbox_runs__run_id__bundle_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshots/{snapshot_id}/spec-assessment": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Spec Assessment",
+        "description": "Exact-spec assessment for the sandbox; legacy /assessment stays unchanged.",
+        "operationId": "spec_assessment_api_v1_snapshots__snapshot_id__spec_assessment_get",
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Snapshot Id"
+            }
+          },
+          {
+            "name": "benchmark_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+              "default": "cis-pg17-v1.1.0",
+              "title": "Benchmark Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sandbox/handoffs": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Prepare Handoff",
+        "operationId": "prepare_handoff_api_v1_sandbox_handoffs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sandbox/handoffs/{handoff_id}": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Handoff Status",
+        "operationId": "handoff_status_api_v1_sandbox_handoffs__handoff_id__get",
+        "parameters": [
+          {
+            "name": "handoff_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handoff Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sandbox/handoffs/{handoff_id}/run": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Run Handoff",
+        "operationId": "run_handoff_api_v1_sandbox_handoffs__handoff_id__run_post",
+        "parameters": [
+          {
+            "name": "handoff_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handoff Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshots/{snapshot_id}/assessment": {
+      "get": {
+        "summary": "Get Assessment Report",
+        "description": "Evaluate a snapshot against the control registry and return findings.\n\nThis endpoint performs deterministic assessment of a snapshot using the\noffline ASSESS evaluation engine. It returns pass/fail/gap status for\neach control.",
+        "operationId": "get_assessment_report_api_v1_snapshots__snapshot_id__assessment_get",
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Snapshot Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshots": {
+      "post": {
+        "summary": "Upload Snapshot",
+        "description": "Validate and store an immutable legacy bundle or native Phase 1 snapshot.",
+        "operationId": "upload_snapshot_api_v1_snapshots_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CollectorBundleV020"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SnapshotV030"
+                  }
+                ],
+                "title": "Bundle"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotUploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshots/{snapshot_id}": {
+      "get": {
+        "summary": "Get Snapshot Context",
+        "description": "Return the safe, normalized context used by the proposal agent.",
+        "operationId": "get_snapshot_context_api_v1_snapshots__snapshot_id__get",
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Snapshot Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotContextResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/proposals/validate-and-render": {
+      "post": {
+        "summary": "Validate And Render Proposal",
+        "description": "Validate a HERMES proposal and render only reviewed SQL templates.\n\nThis is the trusted boundary endpoint. The HERMES agent:\n1. Uses search_approved_templates to find eligible templates\n2. Uses search_approved_knowledge to find evidence\n3. Selects a template + parameters + reasoning\n4. Submits here for validation and rendering\n\nThe API validates:\n- Template exists and is active\n- Parameters match template schema\n- Evidence references point to approved documents\n- Renders the template from PostgreSQL\n\nReturns rendered SQL for human DBA review.\nNo SQL is ever generated - only rendered from approved templates.",
+        "operationId": "validate_and_render_proposal_api_v1_proposals_validate_and_render_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemediationProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HardenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/ingest-all": {
+      "post": {
+        "summary": "Ingest All",
+        "description": "Manually trigger re-ingestion of all templates.",
+        "operationId": "ingest_all_api_v1_templates_ingest_all_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/ingest": {
+      "post": {
+        "summary": "Ingest Single Template",
+        "description": "Ingest a single SQL hardening template with embedding.\n\nNew templates are always created as 'draft' status regardless of request status.\nApproval must happen separately through the template approval flow.",
+        "operationId": "ingest_single_template_api_v1_templates_ingest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/search": {
+      "get": {
+        "summary": "Search",
+        "description": "Search templates by semantic similarity.",
+        "operationId": "search_api_v1_templates_search_get",
+        "parameters": [
+          {
+            "name": "search_query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Search Query"
+            }
+          },
+          {
+            "name": "top_k",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 5,
+              "title": "Top K"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates/{template_name}/approve": {
+      "post": {
+        "summary": "Approve Sql Template",
+        "description": "Record human approval of an exact template version and make it searchable.\n\nApproval applies to the exact (template_name, version) combination.\nThe template must exist and be in 'draft' status.",
+        "operationId": "approve_sql_template_api_v1_templates__template_name__approve_post",
+        "parameters": [
+          {
+            "name": "template_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Template Name"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateApprovalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/documents": {
+      "post": {
+        "summary": "Ingest Knowledge Document",
+        "description": "Ingest a draft, or an explicitly human-approved source document.",
+        "operationId": "ingest_knowledge_document_api_v1_knowledge_documents_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/documents/{document_id}/approve": {
+      "post": {
+        "summary": "Approve Knowledge Document",
+        "description": "Record human approval and make a draft eligible for retrieval.",
+        "operationId": "approve_knowledge_document_api_v1_knowledge_documents__document_id__approve_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeApprovalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/documents/{document_id}": {
+      "get": {
+        "summary": "Get Knowledge Document Metadata",
+        "description": "Inspect document lifecycle and provenance without returning all chunks.",
+        "operationId": "get_knowledge_document_metadata_api_v1_knowledge_documents__document_id__get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/search": {
+      "get": {
+        "summary": "Search Approved Knowledge",
+        "description": "Search only active, effective, non-expired, applicable documents.",
+        "operationId": "search_approved_knowledge_api_v1_knowledge_search_get",
+        "parameters": [
+          {
+            "name": "search_query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Search Query"
+            }
+          },
+          {
+            "name": "pg_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pg Version"
+            }
+          },
+          {
+            "name": "environment",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Environment"
+            }
+          },
+          {
+            "name": "top_k",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "default": 5,
+              "title": "Top K"
+            }
+          },
+          {
+            "name": "min_score",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": -1.0,
+              "default": 0.5,
+              "title": "Min Score"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/upload": {
+      "post": {
+        "summary": "Upload Knowledge Xlsx",
+        "description": "Upload an XLSX file for knowledge ingestion.\n\nThe file is parsed, converted to normalized text, validated via the\nexisting ``KnowledgeIngestRequest`` Pydantic model, and passed into\nthe existing RAG ingestion pipeline (chunking \u2192 embedding \u2192 pgvector).",
+        "operationId": "upload_knowledge_xlsx_api_v1_knowledge_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_knowledge_xlsx_api_v1_knowledge_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sandbox/validate": {
+      "post": {
+        "summary": "Validate In Sandbox",
+        "description": "Validate a proposal by executing it in an ephemeral PostgreSQL sandbox.\n\nThis endpoint:\n1. Creates an isolated PostgreSQL container\n2. Replays only security-relevant metadata (settings)\n3. Verifies the initial state matches the source finding (FAIL)\n4. Executes the rendered proposal artifact\n5. Verifies the control flips to PASS\n6. Executes rollback SQL\n7. Verifies restoration to original state\n8. Runs basic compatibility validation\n9. Destroys the container\n10. Returns structured validation evidence\n\nThe sandbox does NOT contain an autonomous agent. It only executes\nthe approved artifact from the proposal and returns evidence.",
+        "operationId": "validate_in_sandbox_api_v1_sandbox_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxValidationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AssessmentReport": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id",
+            "description": "Content-addressed snapshot identifier"
+          },
+          "evaluated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Evaluated At",
+            "description": "Timestamp when evaluation completed"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/AssessmentSummary",
+            "description": "Aggregate counts of finding statuses"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "type": "array",
+            "title": "Findings",
+            "description": "Detailed findings for each evaluated control"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "summary"
+        ],
+        "title": "AssessmentReport",
+        "description": "Complete assessment report for a single snapshot."
+      },
+      "AssessmentSummary": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total controls evaluated"
+          },
+          "pass_count": {
+            "type": "integer",
+            "title": "Pass Count",
+            "description": "Number of PASS findings"
+          },
+          "fail_count": {
+            "type": "integer",
+            "title": "Fail Count",
+            "description": "Number of FAIL findings"
+          },
+          "gapped_count": {
+            "type": "integer",
+            "title": "Gapped Count",
+            "description": "Number of GAPPED findings"
+          },
+          "manual_review_count": {
+            "type": "integer",
+            "title": "Manual Review Count",
+            "description": "Number of MANUAL_REVIEW findings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "pass_count",
+          "fail_count",
+          "gapped_count",
+          "manual_review_count"
+        ],
+        "title": "AssessmentSummary",
+        "description": "Summary counts for an assessment report."
+      },
+      "Body_upload_knowledge_xlsx_api_v1_knowledge_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_knowledge_xlsx_api_v1_knowledge_upload_post"
+      },
+      "CollectionGap": {
+        "properties": {
+          "section": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Section"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "remediation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "section",
+          "reason"
+        ],
+        "title": "CollectionGap"
+      },
+      "CollectorBundleV020": {
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/CollectorEnvelope"
+          },
+          "identity": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Identity"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roles"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionGap"
+            },
+            "type": "array",
+            "title": "Gaps"
+          },
+          "redactions": {
+            "items": {
+              "$ref": "#/components/schemas/RedactionRecord"
+            },
+            "type": "array",
+            "title": "Redactions"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "envelope",
+          "identity",
+          "settings",
+          "roles"
+        ],
+        "title": "CollectorBundleV020",
+        "description": "Collector wire format.\n\nOptional or inaccessible sections may be ``null``.  Do not coerce those\nvalues into empty collections: downstream code needs the accompanying gap\nrecord to distinguish unknown evidence from a verified empty result."
+      },
+      "CollectorEnvelope": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "0.2.0",
+            "title": "Schema Version"
+          },
+          "collector_version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Collector Version"
+          },
+          "collected_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Collected At"
+          },
+          "target_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Target Id"
+          },
+          "database": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Database"
+          },
+          "collected_by": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Collected By"
+          },
+          "is_superuser": {
+            "type": "boolean",
+            "title": "Is Superuser"
+          },
+          "deployment_type": {
+            "type": "string",
+            "title": "Deployment Type",
+            "default": "self-managed"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "collector_version",
+          "collected_at",
+          "target_id",
+          "database",
+          "collected_by",
+          "is_superuser"
+        ],
+        "title": "CollectorEnvelope"
+      },
+      "ControlMetadata": {
+        "properties": {
+          "template_id": {
+            "type": "string",
+            "title": "Template Id",
+            "description": "Approved Jinja template ID for remediation"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version",
+            "description": "Optional template version"
+          },
+          "is_automatable": {
+            "type": "boolean",
+            "title": "Is Automatable",
+            "description": "True if remediation can be automated via template rendering"
+          },
+          "risk_level": {
+            "type": "string",
+            "title": "Risk Level",
+            "description": "Risk level (low, medium, high)",
+            "default": "medium"
+          },
+          "requires_dba_review": {
+            "type": "boolean",
+            "title": "Requires Dba Review",
+            "description": "Whether DBA approval is required before execution",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "template_id",
+          "is_automatable"
+        ],
+        "title": "ControlMetadata",
+        "description": "Metadata for a control, mapping to Jinja templates for remediation.\n\nThis replaces the old TypedAction system. Controls now map directly to\napproved Jinja templates, and the AI/Hermes agent proposes by selecting\ntemplate_id + parameters."
+      },
+      "EvidenceReference": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Document Id"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document_id",
+          "version",
+          "sha256"
+        ],
+        "title": "EvidenceReference"
+      },
+      "Finding": {
+        "properties": {
+          "control_id": {
+            "type": "string",
+            "title": "Control Id",
+            "description": "Unique control identifier (e.g., CIS-3.1.2)"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FindingStatus",
+            "description": "Evaluation outcome: PASS, FAIL, GAPPED, or MANUAL_REVIEW"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Human-readable control title"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale",
+            "description": "Explanation of why the control passed or failed"
+          },
+          "evidence_found": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Found",
+            "description": "Raw evidence extracted from snapshot that determined the status"
+          },
+          "control_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ControlMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Template mapping for remediation when status is FAIL or MANUAL_REVIEW"
+          },
+          "is_gapped": {
+            "type": "boolean",
+            "title": "Is Gapped",
+            "description": "True if the evidence was gapped (null with matching gap record)",
+            "default": false
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity",
+            "description": "CIS severity level (e.g., '1', '2A', '2B', '3')"
+          },
+          "evidence_paths": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Paths",
+            "description": "JSON paths of evidence fields read (e.g., settings[name='log_connections'].setting)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "control_id",
+          "status",
+          "title",
+          "rationale"
+        ],
+        "title": "Finding",
+        "description": "Result of evaluating a single control against snapshot evidence.\n\nWhen status is FAIL, the finding includes control_metadata that maps\nto an approved Jinja template for remediation. The AI/Hermes agent\nproposes remediation by selecting from these approved templates."
+      },
+      "FindingStatus": {
+        "type": "string",
+        "enum": [
+          "PASS",
+          "FAIL",
+          "GAPPED",
+          "MANUAL_REVIEW"
+        ],
+        "title": "FindingStatus",
+        "description": "Status of a control evaluation against snapshot evidence."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HardenResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "target_db": {
+            "type": "string",
+            "title": "Target Db"
+          },
+          "ai_plan": {
+            "type": "string",
+            "title": "Ai Plan"
+          },
+          "retrieved_templates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Retrieved Templates",
+            "description": "Template names retrieved via RAG"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "reasoning": {
+            "type": "string",
+            "title": "Reasoning",
+            "default": ""
+          },
+          "requires_dba_approval": {
+            "type": "boolean",
+            "title": "Requires Dba Approval",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "target_db",
+          "ai_plan"
+        ],
+        "title": "HardenResponse"
+      },
+      "KnowledgeApprovalRequest": {
+        "properties": {
+          "approved_by": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Approved By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "approved_by"
+        ],
+        "title": "KnowledgeApprovalRequest"
+      },
+      "KnowledgeIngestRequest": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Document Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 100,
+            "title": "Content"
+          },
+          "effective_date": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Effective Date"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active"
+            ],
+            "title": "Status",
+            "default": "draft"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "expiry_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Date"
+          },
+          "postgresql_versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Postgresql Versions"
+          },
+          "environment_applicability": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Environment Applicability"
+          },
+          "policy_owner": {
+            "type": "string",
+            "title": "Policy Owner",
+            "default": ""
+          },
+          "classification": {
+            "type": "string",
+            "title": "Classification",
+            "default": "internal"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "title",
+          "version",
+          "content",
+          "effective_date"
+        ],
+        "title": "KnowledgeIngestRequest"
+      },
+      "KnowledgeIngestResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "chunks_created": {
+            "type": "integer",
+            "title": "Chunks Created",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "document_id",
+          "title"
+        ],
+        "title": "KnowledgeIngestResponse",
+        "description": "Response for knowledge ingestion operations (e.g. XLSX upload)."
+      },
+      "KnowledgeSearchResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeSearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "title": "KnowledgeSearchResponse"
+      },
+      "KnowledgeSearchResult": {
+        "properties": {
+          "chunk_id": {
+            "type": "integer",
+            "title": "Chunk Id"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "section": {
+            "type": "string",
+            "title": "Section"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "source_document_title": {
+            "type": "string",
+            "title": "Source Document Title"
+          },
+          "source_document_version": {
+            "type": "string",
+            "title": "Source Document Version"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "postgresql_versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Postgresql Versions"
+          },
+          "environment_applicability": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Environment Applicability"
+          },
+          "similarity_score": {
+            "type": "number",
+            "title": "Similarity Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chunk_id",
+          "document_id",
+          "section",
+          "content",
+          "source_document_title",
+          "source_document_version",
+          "postgresql_versions",
+          "environment_applicability",
+          "similarity_score"
+        ],
+        "title": "KnowledgeSearchResult"
+      },
+      "PrepareRequest": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^snap-[a-zA-Z0-9]+$",
+            "title": "Snapshot Id"
+          },
+          "benchmark_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+            "title": "Benchmark Id",
+            "default": "cis-pg17-v1.1.0"
+          },
+          "assessment": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessment"
+          },
+          "template_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Template Version"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Evidence Ids"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "test",
+              "prod"
+            ],
+            "title": "Environment",
+            "default": "dev"
+          },
+          "retry_mode": {
+            "type": "string",
+            "enum": [
+              "repeat",
+              "adaptive"
+            ],
+            "title": "Retry Mode",
+            "default": "adaptive"
+          },
+          "retry_template_versions": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Retry Template Versions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "template_version",
+          "evidence_ids"
+        ],
+        "title": "PrepareRequest"
+      },
+      "RedactionRecord": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Field"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "title": "RedactionRecord"
+      },
+      "RemediationProposal": {
+        "properties": {
+          "control_id": {
+            "type": "string",
+            "title": "Control Id",
+            "description": "CIS Control identifier (e.g., 'CIS-3.1.2')"
+          },
+          "finding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finding Id",
+            "description": "Optional finding identifier from assessment"
+          },
+          "template_id": {
+            "type": "string",
+            "title": "Template Id",
+            "description": "Approved template ID (must exist in active registry)"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version",
+            "description": "Optional exact version; defaults to latest active"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters",
+            "description": "Template parameters - validated against template schema"
+          },
+          "reasoning": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Reasoning",
+            "description": "Agent reasoning: why this template, how it applies"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs",
+            "description": "References to approved RAG evidence documents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "control_id",
+          "template_id",
+          "parameters",
+          "reasoning"
+        ],
+        "title": "RemediationProposal",
+        "description": "Generic, template-driven remediation proposal contract.\n\nThis is the single authoritative contract for proposing remediation.\nThe AI/Hermes agent selects from approved templates and provides\nstructured parameters - NOT arbitrary SQL or Python action objects.\n\nTemplate selection + parameters \u2192 validation \u2192 rendering \u2192 execution"
+      },
+      "RemediationProposalRequest": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshot Id"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/RemediationProposal"
+          },
+          "environment": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Environment",
+            "default": "all"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "proposal"
+        ],
+        "title": "RemediationProposalRequest",
+        "description": "Request to create a remediation proposal from an approved template.\n\nHERMES/MCP submits a proposal by selecting an approved template ID\nand providing structured parameters. The API validates, renders, and\nexecutes the template."
+      },
+      "SandboxHandoff": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "sandbox-handoff-v1",
+            "title": "Schema Version"
+          },
+          "benchmark_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+            "title": "Benchmark Id"
+          },
+          "spec_set_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Spec Set Hash"
+          },
+          "specs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Specs"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Snapshot"
+          },
+          "assessment": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Assessment"
+          },
+          "template_ref": {
+            "$ref": "#/components/schemas/TemplateReference"
+          },
+          "retry_mode": {
+            "type": "string",
+            "enum": [
+              "repeat",
+              "adaptive"
+            ],
+            "title": "Retry Mode",
+            "default": "repeat"
+          },
+          "retry_template_refs": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateReference"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Retry Template Refs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
+          "benchmark_id",
+          "spec_set_hash",
+          "specs",
+          "snapshot",
+          "assessment",
+          "template_ref"
+        ],
+        "title": "SandboxHandoff"
+      },
+      "SandboxValidationRequest": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Snapshot Id"
+          },
+          "control_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Control Id",
+            "description": "CIS control ID (e.g., 'CIS-3.1.2')"
+          },
+          "template_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Template Id",
+            "description": "Approved template ID"
+          },
+          "template_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Template Version",
+            "description": "Template version"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          },
+          "rendered_sql": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Rendered Sql",
+            "description": "Rendered SQL from approved template"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "control_id",
+          "template_id",
+          "template_version",
+          "rendered_sql"
+        ],
+        "title": "SandboxValidationRequest",
+        "description": "Request for sandbox validation of a proposal."
+      },
+      "SandboxValidationResponse": {
+        "properties": {
+          "sandbox_run_id": {
+            "type": "string",
+            "title": "Sandbox Run Id"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id"
+          },
+          "control_id": {
+            "type": "string",
+            "title": "Control Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "pre_remediation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pre Remediation Status"
+          },
+          "post_remediation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Post Remediation Status"
+          },
+          "post_rollback_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Post Rollback Status"
+          },
+          "security_validation_passed": {
+            "type": "boolean",
+            "title": "Security Validation Passed"
+          },
+          "compatibility_validation_passed": {
+            "type": "boolean",
+            "title": "Compatibility Validation Passed"
+          },
+          "rollback_executed": {
+            "type": "boolean",
+            "title": "Rollback Executed"
+          },
+          "rollback_verified": {
+            "type": "boolean",
+            "title": "Rollback Verified"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sandbox_run_id",
+          "snapshot_id",
+          "control_id",
+          "status",
+          "security_validation_passed",
+          "compatibility_validation_passed",
+          "rollback_executed",
+          "rollback_verified"
+        ],
+        "title": "SandboxValidationResponse",
+        "description": "Response from sandbox validation."
+      },
+      "SnapshotContextResponse": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id"
+          },
+          "snapshot_hash": {
+            "type": "string",
+            "title": "Snapshot Hash"
+          },
+          "target_id": {
+            "type": "string",
+            "title": "Target Id"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          },
+          "postgresql_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Postgresql Version"
+          },
+          "deployment_type": {
+            "type": "string",
+            "title": "Deployment Type"
+          },
+          "collected_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collected At"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Settings"
+          },
+          "roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roles"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionGap"
+            },
+            "type": "array",
+            "title": "Gaps"
+          },
+          "available_sections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available Sections"
+          },
+          "unavailable_sections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unavailable Sections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "snapshot_hash",
+          "target_id",
+          "database",
+          "postgresql_version",
+          "deployment_type",
+          "collected_at",
+          "settings",
+          "roles",
+          "gaps",
+          "available_sections",
+          "unavailable_sections"
+        ],
+        "title": "SnapshotContextResponse"
+      },
+      "SnapshotUploadResponse": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id"
+          },
+          "snapshot_hash": {
+            "type": "string",
+            "title": "Snapshot Hash"
+          },
+          "target_id": {
+            "type": "string",
+            "title": "Target Id"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          },
+          "schema_version": {
+            "type": "string",
+            "title": "Schema Version"
+          },
+          "collected_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collected At"
+          },
+          "gap_count": {
+            "type": "integer",
+            "title": "Gap Count"
+          },
+          "status": {
+            "type": "string",
+            "const": "stored",
+            "title": "Status",
+            "default": "stored"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "snapshot_hash",
+          "target_id",
+          "database",
+          "schema_version",
+          "collected_at",
+          "gap_count"
+        ],
+        "title": "SnapshotUploadResponse"
+      },
+      "SnapshotV030": {
+        "properties": {
+          "envelope": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Envelope"
+          },
+          "baseline": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Baseline"
+          },
+          "checks": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Checks"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "envelope",
+          "baseline",
+          "checks"
+        ],
+        "title": "SnapshotV030",
+        "description": "Native Phase 1 snapshot, validated against the shared contract."
+      },
+      "TemplateApprovalRequest": {
+        "properties": {
+          "approved_by": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Approved By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "approved_by"
+        ],
+        "title": "TemplateApprovalRequest"
+      },
+      "TemplateIngestRequest": {
+        "properties": {
+          "template_name": {
+            "type": "string",
+            "title": "Template Name"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version",
+            "default": 1
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "sql_template": {
+            "type": "string",
+            "title": "Sql Template"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "risk_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Level"
+          },
+          "pg_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pg Version"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active"
+            ],
+            "title": "Status",
+            "default": "draft"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "template_name",
+          "description",
+          "sql_template"
+        ],
+        "title": "TemplateIngestRequest",
+        "description": "Request to ingest a single template into pgvector."
+      },
+      "TemplateIngestResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "template_name": {
+            "type": "string",
+            "title": "Template Name"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "lifecycle_status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active"
+            ],
+            "title": "Lifecycle Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "template_name",
+          "lifecycle_status"
+        ],
+        "title": "TemplateIngestResponse"
+      },
+      "TemplateReference": {
+        "properties": {
+          "registry_name": {
+            "type": "string",
+            "const": "set_config_parameter",
+            "title": "Registry Name",
+            "default": "set_config_parameter"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceReference"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Evidence"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "test",
+              "prod"
+            ],
+            "title": "Environment",
+            "default": "dev"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "sha256",
+          "evidence"
+        ],
+        "title": "TemplateReference"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

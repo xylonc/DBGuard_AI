@@ -1,3 +1,7 @@
+# Unified live demo
+
+For the packaged UI + live HERMES + disposable sandbox, see [the one-command demo guide](docs/LOCAL_DEMO.md). Copy `.env.demo.example` to `.env.demo`, set your own Ollama Cloud key, then run `python3 scripts/demo.py up`.
+
 # DBGuardAI
 
 DBGuardAI lets a database analyst describe a PostgreSQL hardening requirement

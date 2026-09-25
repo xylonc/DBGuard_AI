@@ -24,3 +24,10 @@ local docs
 run_tests_out.txt
 *.diff
 snap.json
+
+# Local demo package
+.env.demo
+.demo/
+.venv-demo/
+frontend/node_modules/
+frontend/dist/

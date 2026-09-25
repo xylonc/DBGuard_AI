@@ -1,0 +1,38 @@
+# Started by scripts/demo.py. Runtime credentials come from its private environment.
+services:
+  hermes:
+    build:
+      context: ..
+      dockerfile: hermes/Dockerfile
+    command: ["gateway", "run"]
+    ports:
+      - "127.0.0.1:${DEMO_HERMES_PORT}:8642"
+      - "127.0.0.1:${DEMO_DASHBOARD_PORT}:9119"
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: 8642
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:?launcher required}
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_USERNAME: dbguard
+      HERMES_DASHBOARD_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:?launcher required}
+      HERMES_WORKFLOW_MODE: demo
+      HERMES_MCP_URL: http://mcp:${DEMO_MCP_PORT}/mcp
+      HERMES_TUI_SKILLS: dbguard-hardening
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-oss:20b}
+      HERMES_MODEL_BASE_URL: ${HERMES_MODEL_BASE_URL:-https://ollama.com/v1}
+      HERMES_MODEL_API_KEY: ${OLLAMA_API_KEY:?Set OLLAMA_API_KEY in .env.demo}
+    extra_hosts:
+      - "mcp:host-gateway"
+    volumes:
+      - hermes-data:/opt/data
+    stop_grace_period: 30s
+  embeddings:
+    image: ollama/ollama@sha256:8262851b2846b87c649eddf3e76beb270c52f4d1bc94559f47efde16b0841551
+    ports:
+      - "127.0.0.1:${DEMO_EMBEDDING_PORT}:11434"
+    volumes:
+      - embedding-models:/root/.ollama
+volumes:
+  hermes-data:
+  embedding-models:

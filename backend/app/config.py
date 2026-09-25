@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "postgresql://dbguard:dbguard@localhost:5432/dbguard"))
     snapshot_storage_dir: str = "./data/snapshots"
+    sandbox_poc_enabled: bool = False
+    sandbox_poc_image: str = "postgres:17-bookworm"
+    sandbox_llm_enabled: bool = False
+    sandbox_llm_base_url: str = "https://ollama.com/v1"
+    sandbox_llm_model: str = "gpt-oss:20b"
+    sandbox_llm_api_key: str = ""
 
     # Embedding
     embedding_model: str = "nomic-embed-text"

@@ -1,0 +1,130 @@
+"""Bridge existing uploaded collector snapshots into exact-spec sandbox inputs."""
+from collections import OrderedDict
+import copy
+from threading import Lock
+from typing import Literal
+import uuid
+
+from pydantic import Field
+
+from .collector_intake import from_collector_bundle
+from .handoff import StrictModel, SandboxHandoff, build_handoff
+from .shared import ROOT, SpecEngine, ContractError
+from .templates import export_reference
+from .review_bundle import is_fixture
+
+
+class PrepareRequest(StrictModel):
+    snapshot_id: str = Field(pattern=r'^snap-[a-zA-Z0-9]+$', max_length=64)
+    benchmark_id: str = Field(default='cis-pg17-v1.1.0', pattern=r'^[a-z0-9]+(?:-[a-z0-9.]+)+$')
+    assessment: dict | None = None
+    template_version: int = Field(ge=1)
+    evidence_ids: list[str] = Field(min_length=1, max_length=20)
+    environment: Literal['dev', 'test', 'prod'] = 'dev'
+    retry_mode: Literal['repeat', 'adaptive'] = 'adaptive'
+    retry_template_versions: list[int] = Field(default_factory=list, max_length=2)
+
+
+def assess_uploaded(store, snapshot_id, benchmark_id):
+    directory = ROOT / 'catalog/specs' / benchmark_id
+    records = ROOT / 'catalog/benchmarks' / benchmark_id / 'records.json'
+    if not directory.is_dir() or not records.is_file():
+        raise ContractError('Exact benchmark specs/records are not installed')
+    engine = SpecEngine.load(directory, records)
+    bundle = store.load(snapshot_id).model_dump(mode='json', exclude_none=False)
+    snapshot = from_collector_bundle(bundle, engine)
+    return engine, snapshot, engine.assess(snapshot)
+
+
+def prepare_uploaded(store, service, request):
+    engine, snapshot, assessment = assess_uploaded(store, request.snapshot_id, request.benchmark_id)
+    assessment = engine.bind_assessment(snapshot, request.assessment)
+    ref, _ = export_reference(service.registry_url, request.template_version,
+                              request.evidence_ids, request.environment)
+    handoff = build_handoff(engine, snapshot, ref, assessment=assessment)
+    handoff.retry_mode = request.retry_mode
+    if len(set(request.retry_template_versions)) != len(request.retry_template_versions):
+        raise ContractError('Retry template versions must be unique')
+    handoff.retry_template_refs = [export_reference(service.registry_url, version,
+        request.evidence_ids, request.environment)[0] for version in request.retry_template_versions]
+    handoff = SandboxHandoff.model_validate(handoff.model_dump())
+    service.validate_handoff(handoff)
+    return handoff
+
+
+def result_summary(result):
+    attempts = result.get('attempts', [])
+    latest = attempts[-1] if attempts else {}
+    spec_id = result.get('fix_unit', {}).get('spec_id')
+    def control_status(assessment):
+        return assessment.get('findings', {}).get(spec_id, {}).get('status', 'UNKNOWN')
+    before = control_status(latest.get('before_assessment', {}))
+    after = control_status(latest.get('after_assessment', {}))
+    demo = result.get('demo_evidence', {})
+    source_status = control_status(demo.get('assessment', {}))
+    fixture = is_fixture(result) or result.get('demo_fixture_approval', False)
+    report = (f"Sandbox control {spec_id}: {before} -> {after}. "
+              f"Overall sandbox test status: {result.get('status', 'UNKNOWN')}. "
+              f"Rollback verified: {latest.get('rollback_verified', False)}. "
+              f"Attempt cleanup verified: {latest.get('cleanup', {}).get('verified', False)}.")
+    if demo:
+        report += (f" Separately, source control status: {source_status}; "
+                   f"source unchanged: {demo.get('source_unchanged')}. "
+                   "The source assessment is not the sandbox after-fix assessment.")
+    if fixture:
+        report += " Approval: DEMO_FIXTURE_ONLY; no human approval or approved RAG validation."
+    return {**{key: result.get(key) for key in ('run_id', 'status', 'retry_mode', 'revisions',
+                 'review_bundle', 'requires_dba_review', 'limitations')},
+            'demo_fixture_approval': bool(fixture),
+            'verification_report': report,
+            'sandbox_control': {'spec_id': spec_id, 'before_status': before, 'after_status': after},
+            'sandbox_after_findings': {sid: finding['status'] for sid, finding in
+                latest.get('after_assessment', {}).get('findings', {}).items()},
+            'demo_evidence': {**{key: demo.get(key) for key in
+                ('source_unchanged', 'registry_unchanged', 'scope')},
+                'source_control_status': source_status} if demo else None,
+            'attempts': [{key: attempt.get(key) for key in ('attempt', 'candidate_id', 'status',
+                         'phase', 'rollback_verified', 'health_after_apply', 'health_after_rollback',
+                         'regressions', 'cleanup')} for attempt in attempts]}
+
+
+class HandoffStore:
+    """Bounded process-local handles; repeated execution returns the saved outcome."""
+    def __init__(self, limit=8):
+        self.limit, self.items, self.lock = limit, OrderedDict(), Lock()
+
+    def put(self, handoff, snapshot_id):
+        with self.lock:
+            if len(self.items) >= self.limit:
+                removable = next((key for key, item in self.items.items() if item['status'] != 'RUNNING'), None)
+                if removable is None:
+                    raise ContractError('All handoff slots are running; wait for a result')
+                del self.items[removable]
+            key = str(uuid.uuid4())
+            self.items[key] = {'handoff': handoff.model_copy(deep=True), 'snapshot_id': snapshot_id,
+                               'status': 'PREPARED', 'result': None}
+            return key
+
+    def get(self, key):
+        with self.lock:
+            return copy.deepcopy(self.items.get(key))
+
+    def begin(self, key):
+        with self.lock:
+            item = self.items.get(key)
+            if item is None:
+                raise KeyError(key)
+            if item['status'] != 'PREPARED':
+                return None
+            item['status'] = 'RUNNING'
+            return item['handoff'].model_copy(deep=True)
+
+    def finish(self, key, result):
+        with self.lock:
+            summary = result_summary(result)
+            self.items[key].update(status='FINISHED', result=copy.deepcopy(summary))
+            return summary
+
+    def fail(self, key):
+        with self.lock:
+            self.items[key]['status'] = 'REJECTED'

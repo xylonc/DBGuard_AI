@@ -8,7 +8,7 @@ while preserving any new collector sections through ``extra='allow'``.
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CollectorEnvelope(BaseModel):
@@ -63,7 +63,7 @@ class SnapshotUploadResponse(BaseModel):
     target_id: str
     database: str
     schema_version: str
-    collected_at: datetime
+    collected_at: datetime | None
     gap_count: int
     status: Literal["stored"] = "stored"
 
@@ -75,9 +75,34 @@ class SnapshotContextResponse(BaseModel):
     database: str
     postgresql_version: str | None
     deployment_type: str
-    collected_at: datetime
+    collected_at: datetime | None
     settings: dict[str, Any]
     roles: list[dict[str, Any]] | None
     gaps: list[CollectionGap]
     available_sections: list[str]
     unavailable_sections: list[str]
+
+
+class SnapshotV030(BaseModel):
+    """Native Phase 1 snapshot, validated against the shared contract."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    envelope: dict[str, Any]
+    baseline: dict[str, Any]
+    checks: dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_wire_contract(self):
+        import json
+        from pathlib import Path
+        from jsonschema import Draft202012Validator, ValidationError
+        schema = Path(__file__).resolve().parents[2] / "catalog/specs/contracts/snapshot-v0.3.0.json"
+        try:
+            Draft202012Validator(json.loads(schema.read_text())).validate(self.model_dump())
+        except ValidationError as exc:
+            raise ValueError("Invalid snapshot-v0.3.0: " + exc.message) from exc
+        return self
+
+
+def parse_snapshot(payload: dict) -> CollectorBundleV020 | SnapshotV030:
+    model = SnapshotV030 if payload.get("envelope", {}).get("schema_version") == "0.3.0" else CollectorBundleV020
+    return model.model_validate(payload)

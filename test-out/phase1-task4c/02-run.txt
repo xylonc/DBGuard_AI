@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 7 items
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 14%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] PASSED [ 28%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] PASSED [ 42%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] PASSED [ 57%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] PASSED [ 71%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] PASSED [ 85%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [100%]
+
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+========================= 7 passed in 92.01s (0:01:32) =========================

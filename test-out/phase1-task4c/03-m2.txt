@@ -1,0 +1,458 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 5 items
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] FAILED [ 20%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] FAILED [ 40%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] FAILED [ 60%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] FAILED [ 80%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] FAILED [100%]
+
+=================================== FAILURES ===================================
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.16] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x7c8b2da5c550>
+target_db = <connection object at 0x7c8b2f770a40; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-201/test_break_then_fix_cis_pg17_v0')
+spec_id = 'cis-pg17-v1.1.0:3.1.16'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        # Load spec to get the setting_name and proof values
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Read prior state with fresh connection
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        # Skip if context is 'postmaster' (can't change at runtime)
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        # Get proof values
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        # a) Baseline: run pipeline before any change
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply proof.break.value
+        # Build action from proof
+        if spec["check"]["operator"] == "equals":
+            # To break, set to break_value which should NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To break, set to value that equals expected (should break the not_equals check)
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            # To break, set to a value NOT in expected list
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run pipeline after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert: target spec's result == "FAIL"
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+>       assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+E       AssertionError: After break, expected FAIL for cis-pg17-v1.1.0:3.1.16, got PASS
+E       assert 'PASS' == 'FAIL'
+E         
+E         - FAIL
+E         + PASS
+
+tests/live/test_e2e_break_fix.py:161: AssertionError
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.20] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x7c8b2da6c180>
+target_db = <connection object at 0x7c8b2f770a40; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-201/test_break_then_fix_cis_pg17_v1')
+spec_id = 'cis-pg17-v1.1.0:3.1.20'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        # Load spec to get the setting_name and proof values
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Read prior state with fresh connection
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        # Skip if context is 'postmaster' (can't change at runtime)
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        # Get proof values
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        # a) Baseline: run pipeline before any change
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply proof.break.value
+        # Build action from proof
+        if spec["check"]["operator"] == "equals":
+            # To break, set to break_value which should NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To break, set to value that equals expected (should break the not_equals check)
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            # To break, set to a value NOT in expected list
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run pipeline after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert: target spec's result == "FAIL"
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify the snapshot shows the break value
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply proof.fix.value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To fix, set to a value that does NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run pipeline after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert: target result == "PASS"
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+>       assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+E       AssertionError: After fix, expected PASS for cis-pg17-v1.1.0:3.1.20, got FAIL
+E       assert 'FAIL' == 'PASS'
+E         
+E         - PASS
+E         + FAIL
+
+tests/live/test_e2e_break_fix.py:188: AssertionError
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.21] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x7c8b2da6c640>
+target_db = <connection object at 0x7c8b2f770a40; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-201/test_break_then_fix_cis_pg17_v2')
+spec_id = 'cis-pg17-v1.1.0:3.1.21'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        # Load spec to get the setting_name and proof values
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Read prior state with fresh connection
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        # Skip if context is 'postmaster' (can't change at runtime)
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        # Get proof values
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        # a) Baseline: run pipeline before any change
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply proof.break.value
+        # Build action from proof
+        if spec["check"]["operator"] == "equals":
+            # To break, set to break_value which should NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To break, set to value that equals expected (should break the not_equals check)
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            # To break, set to a value NOT in expected list
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run pipeline after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert: target spec's result == "FAIL"
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify the snapshot shows the break value
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply proof.fix.value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To fix, set to a value that does NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run pipeline after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert: target result == "PASS"
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+>       assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+E       AssertionError: After fix, expected PASS for cis-pg17-v1.1.0:3.1.21, got FAIL
+E       assert 'FAIL' == 'PASS'
+E         
+E         - PASS
+E         + FAIL
+
+tests/live/test_e2e_break_fix.py:188: AssertionError
+_________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:3.1.25] __________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x7c8b2df929f0>
+target_db = <connection object at 0x7c8b2f770a40; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-201/test_break_then_fix_cis_pg17_v3')
+spec_id = 'cis-pg17-v1.1.0:3.1.25'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        # Load spec to get the setting_name and proof values
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Read prior state with fresh connection
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        # Skip if context is 'postmaster' (can't change at runtime)
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        # Get proof values
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        # a) Baseline: run pipeline before any change
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply proof.break.value
+        # Build action from proof
+        if spec["check"]["operator"] == "equals":
+            # To break, set to break_value which should NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To break, set to value that equals expected (should break the not_equals check)
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            # To break, set to a value NOT in expected list
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run pipeline after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert: target spec's result == "FAIL"
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+        assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+    
+        # Verify the snapshot shows the break value
+        check_entry = json.loads(snapshot_path1.read_text())["checks"][spec_id]
+        actual_setting = check_entry["result"]
+    
+        # e) Apply proof.fix.value
+        if spec["check"]["operator"] == "equals":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To fix, set to a value that does NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        elif spec["check"]["operator"] == "in":
+            action = {"action": "set_config", "param": setting_name, "value": fix_value}
+        else:
+            pytest.fail(f"Unsupported operator for fix: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # f) Run pipeline after fix
+        manifest_path2, snapshot_path2, report2 = run_pipeline(spec_dir, tmp_path / "after_fix")
+    
+        # g) Assert: target result == "PASS"
+        target_result2 = [r for r in report2["results"] if r["spec_id"] == spec_id]
+        assert len(target_result2) == 1
+>       assert target_result2[0]["result"] == "PASS", (
+            f"After fix, expected PASS for {spec_id}, got {target_result2[0]['result']}"
+        )
+E       AssertionError: After fix, expected PASS for cis-pg17-v1.1.0:3.1.25, got FAIL
+E       assert 'FAIL' == 'PASS'
+E         
+E         - PASS
+E         + FAIL
+
+tests/live/test_e2e_break_fix.py:188: AssertionError
+___________ TestE2EBreakFix.test_break_then_fix[cis-pg17-v1.1.0:6.9] ___________
+
+self = <test_e2e_break_fix.TestE2EBreakFix object at 0x7c8b2ec93f00>
+target_db = <connection object at 0x7c8b2f770a40; dsn: 'user=dbguard_test password=xxx dbname=target host=pg-target port=5432', closed: 0>
+tmp_path = PosixPath('/tmp/pytest-of-hermes/pytest-201/test_break_then_fix_cis_pg17_v4')
+spec_id = 'cis-pg17-v1.1.0:6.9'
+
+    @pytest.mark.parametrize("spec_id", AUTOMATED_SPECS)
+    def test_break_then_fix(self, target_db, tmp_path, spec_id):
+        """For each automated spec: baseline -> break -> FAIL -> fix -> PASS."""
+        import yaml
+        spec_dir = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
+    
+        # Load spec to get the setting_name and proof values
+        spec_path = spec_dir / f"{spec_id.split(':')[-1]}.yaml"
+        with open(spec_path) as f:
+            spec = yaml.safe_load(f)
+    
+        setting_name = spec["check"]["setting_name"]
+    
+        # Read prior state with fresh connection
+        prior_setting, prior_source, prior_sourcefile = fresh_setting(setting_name)
+    
+        # Skip if context is 'postmaster' (can't change at runtime)
+        if prior_sourcefile == "postmaster":
+            pytest.fail(
+                f"Setting {setting_name} has context='postmaster' - cannot change at runtime. "
+                f"Skipping test for this spec."
+            )
+    
+        # Get proof values
+        break_value = spec["proof"]["break"]["value"]
+        fix_value = spec["proof"]["fix"]["value"]
+        expected_operator = spec["check"]["operator"]
+        expected_value = spec["check"]["expected"]
+    
+        # a) Baseline: run pipeline before any change
+        manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+    
+        # b) Apply proof.break.value
+        # Build action from proof
+        if spec["check"]["operator"] == "equals":
+            # To break, set to break_value which should NOT equal expected
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        elif spec["check"]["operator"] == "not_equals":
+            # To break, set to value that equals expected (should break the not_equals check)
+            action = {"action": "set_config", "param": setting_name, "value": expected_value}
+        elif spec["check"]["operator"] == "in":
+            # To break, set to a value NOT in expected list
+            action = {"action": "set_config", "param": setting_name, "value": break_value}
+        else:
+            pytest.fail(f"Unsupported operator: {expected_operator}")
+    
+        run_action(target_db, action)
+    
+        # c) Run pipeline after break
+        manifest_path1, snapshot_path1, report1 = run_pipeline(spec_dir, tmp_path / "after_break")
+    
+        # d) Assert: target spec's result == "FAIL"
+        target_result = [r for r in report1["results"] if r["spec_id"] == spec_id]
+        assert len(target_result) == 1, f"Spec {spec_id} not found in results"
+>       assert target_result[0]["result"] == "FAIL", (
+            f"After break, expected FAIL for {spec_id}, got {target_result[0]['result']}"
+        )
+E       AssertionError: After break, expected FAIL for cis-pg17-v1.1.0:6.9, got PASS
+E       assert 'PASS' == 'FAIL'
+E         
+E         - FAIL
+E         + PASS
+
+tests/live/test_e2e_break_fix.py:161: AssertionError
+=========================== short test summary info ============================
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+========================= 5 failed in 69.69s (0:01:09) =========================

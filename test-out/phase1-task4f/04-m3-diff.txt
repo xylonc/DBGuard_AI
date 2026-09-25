@@ -1,0 +1,40 @@
+=== 04-m3-diff.txt ===
+
+Before (lines 107-116 in test_e2e_break_fix.py):
+    def _execute_rollback_statements(self, conn, prior_state: dict, apply_action: dict) -> None:
+        """Execute rollback statements to restore prior state."""
+        from app.services.fix_unit_render import derive_rollback, render_action
+        
+        rollback_action = derive_rollback(prior_state, apply_action)
+        statements = render_action(rollback_action)
+        
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+
+After (M3 mutation - rollback execution commented out):
+    def _execute_rollback_statements(self, conn, prior_state: dict, apply_action: dict) -> None:
+        """Execute rollback statements to restore prior state."""
+        from app.services.fix_unit_render import derive_rollback, render_action
+        
+        rollback_action = derive_rollback(prior_state, apply_action)
+        statements = render_action(rollback_action)
+        
+        # M3: Comment out the execution of rollback statements for testing
+        # with conn.cursor() as cur:
+        #     for stmt in statements:
+        #         cur.execute(stmt)
+        
+        # This leaves the auto.conf entries in place after the test runs
+
+Result of M3 (with rollback commented out):
+- 5 tests FAILED (test_break_then_fix) because teardown check detects auto.conf entries
+- auto.conf has 5 F rows for the 5 settings
+- All S rows have source='configuration file' instead of 'default'
+
+=== 04-after-dump.txt ===
+S|debug_print_parse|off|default
+S|log_connections|off|default
+S|log_disconnections|off|default
+S|log_statement|none|default
+S|ssl_min_protocol_version|TLSv1.2|default

@@ -1,0 +1,99 @@
+=== STEP 0: UNDERSTANDING BEFORE BUILDING ===
+
+--- tests/live/conftest.py (92 lines) ---
+
+Function: target_db (fixture, scope=module)
+  Creates a psycopg2 connection to pg-target with autocommit=True
+  Uses PG_TARGET_URL from environment
+  Yields connection, closes on teardown
+  On failure, fails with clear message about PG_TARGET_URL or connection error
+
+Function: log_connections_reset (fixture, scope=module)
+  Resets log_connections to default state after tests
+  Uses yield fixture pattern to ensure cleanup runs even on failure
+  Executes ALTER SYSTEM RESET log_connections and pg_reload_conf()
+
+Function: fresh_setting(param: str) -> Tuple[str, str, str | None]
+  Reads a setting from pg_settings with a fresh connection
+  Returns (setting, source, sourcefile) tuple
+  Raises RuntimeError if PG_TARGET_URL not set or setting not found
+
+Function: run_action(conn, action: dict)
+  Executes render_action(action) elements in order using the provided connection
+  Connection must have autocommit=True
+  Uses cursor to execute each statement sequentially
+
+--- tests/live/test_collector_manifest.py (296 lines) ---
+
+Function: run_collector(tmp_path: Path, manifest: dict | None)
+  Returns (CompletedProcess, out_path, manifest_path)
+  Command: bash collector/dbguard-collect.sh -t live-test -o <tmp_path>/snapshot.json [-m <manifest_path>]
+  Uses libpq env vars (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE)
+  Exit code 0 on success, non-zero on failure
+  Writes to tmp_path/snapshot.json
+
+Function: _libpq_env() -> dict
+  Parses PG_TARGET_URL and extracts host, port, user, password, database
+  Returns copy of os.environ with libpq variables set
+  Never includes URL in messages
+
+Function: _sql(query: str, fetch: bool = False)
+  Runs one statement on a fresh autocommit connection
+  Returns.fetchone()[0] if fetch, else None
+
+Function: _set_and_wait(setting_name: str, value: str | None)
+  ALTER SYSTEM SET (or RESET), reload, wait for change to take effect
+  Waits up to 50 cycles (5 seconds total)
+
+--- backend/app/services/fix_unit_render.py (122 lines) ---
+
+Function: render_action(action: dict) -> list[str]
+  Renders a typed action to SQL statements
+  Input: {"action": "set_config", "param": <name>, "value": <str>}
+        or {"action": "reset_config", "param": <name>}
+  Output: List of SQL statements WITHOUT trailing semicolons
+          Order: ALTER SYSTEM statement first, then pg_reload_conf()
+  Example: ["ALTER SYSTEM SET log_connections = 'on'", "SELECT pg_reload_conf()"]
+
+Function: derive_rollback(prior_state: dict, apply_action: dict) -> dict
+  Computes the rollback action needed to restore prior_state
+  Input: prior_state (dict with value, sourcefile), apply_action (dict with action, param)
+  Output: rollback action dict
+  Logic:
+    - apply set_config, prior from auto.conf -> set_config(param, prior.value)
+    - apply set_config, prior from other/null -> reset_config(param)
+    - apply reset_config, prior from auto.conf -> set_config(param, prior.value)
+    - apply reset_config, otherwise -> raises ValueError
+
+--- scripts/assess.py (124 lines) ---
+
+Command: python scripts/assess.py --specs DIR --records PATH --snapshot PATH [--out PATH]
+Exit codes:
+  0: Report written successfully
+  1: Any other error (not input validation)
+  2: Invalid input
+Output: JSON report to stdout or --out path
+
+Inputs:
+  --specs: Directory containing .yaml spec files
+  --records: Path to records.json file
+  --snapshot: Path to snapshot JSON file
+  --out: Optional output path for report
+
+Outputs:
+  report_version, target, inputs, flags, summary, results
+
+--- manifest CLI (build_check_manifest.py, 76 lines) ---
+
+Command: python scripts/build_check_manifest.py --specs <dir> --out <file>
+Exit codes: 0 (success), 1 (failure), 2 (invalid input)
+Output: JSON manifest with sorted keys, 2-space indent, trailing newline
+Constraints: Only automated specs, never generates SQL
+
+--- pytest test run tail ---
+
+Running pytest tests/live with default markers (excluding live):
+- tests/live/test_fix_unit_live.py: 2 tests collected, 2 deselected (live marker)
+- tests/live/test_collector_manifest.py: 14 tests collected, 14 deselected (live marker)
+
+All non-live tests pass (no tests without live marker).

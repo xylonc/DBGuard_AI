@@ -1,0 +1,31 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 1 item
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix FAILED [100%]
+
+=================================== FAILURES ===================================
+_____________________ TestE2EBreakFix.test_break_then_fix ______________________
+tests/live/test_e2e_break_fix.py:138: in test_break_then_fix
+    manifest_path0, snapshot_path0, report0 = run_pipeline(spec_dir, tmp_path / "baseline")
+                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/live/_pipeline.py:60: in run_pipeline
+    raise RuntimeError(f"Manifest builder failed (exit {result.returncode}):\n{result.stderr}")
+E   RuntimeError: Manifest builder failed (exit 1):
+E   FAIL: Some specs failed validation:
+E     3.1.16.yaml:
+E       - proof.break.value ('on') already satisfies check (operator: equals)
+E       - proof.fix.value ('off') does not satisfy check (operator: equals)
+E     3.1.20.yaml:
+E       - proof.break.value ('off') already satisfies check (operator: equals)
+E       - proof.fix.value ('on') does not satisfy check (operator: equals)
+E     3.1.21.yaml:
+E       - proof.break.value ('off') already satisfies check (operator: equals)
+E       - proof.fix.value ('on') does not satisfy check (operator: equals)
+=========================== short test summary info ============================
+FAILED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix
+============================== 1 failed in 4.70s ===============================

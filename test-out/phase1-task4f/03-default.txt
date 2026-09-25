@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collected 295 items / 49 deselected / 246 selected
+
+tests/test_api_routes_tier_a.py .........                                [  3%]
+tests/test_assess.py ...................................                 [ 17%]
+tests/test_assessment_service.py ................                        [ 24%]
+tests/test_check_manifest.py ..........                                  [ 28%]
+tests/test_cis_parser.py .............                                   [ 33%]
+tests/test_contract_schemas.py .....................................     [ 48%]
+tests/test_cross_contract.py ....                                        [ 50%]
+tests/test_lifecycle_tier_c.py x..                                       [ 51%]
+tests/test_live_e2e_sandbox.py sss                                       [ 52%]
+tests/test_mcp_tool_surface.py .                                         [ 53%]
+tests/test_models.py .....                                               [ 55%]
+tests/test_remediation_proposal.py ...............                       [ 61%]
+tests/test_sandbox_validation.py x......                                 [ 64%]
+tests/test_snapshot_intake_tier_a.py ...........                         [ 68%]
+tests/test_snapshot_service.py ...                                       [ 69%]
+tests/test_spec_validate.py ............................................ [ 87%]
+...                                                                      [ 89%]
+tests/test_template_registry.py ..                                       [ 89%]
+tests/test_template_registry_tier_a.py .....................             [ 98%]
+tests/test_template_service.py ...                                       [ 99%]
+tests/test_twin_mcp_pipeline.py s                                        [100%]
+
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/starlette/testclient.py:53
+  /workspace/DBGuardAI/.venv/lib/python3.13/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_lifecycle_tier_c.py::TestPartialChunkIngestionBug::test_partial_chunk_ingestion_reports_correct_status
+  /workspace/DBGuardAI/tests/test_lifecycle_tier_c.py:89: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    effective_date=datetime.utcnow(),
+
+tests/test_lifecycle_tier_c.py::TestPartialChunkIngestionBug::test_all_chunks_fail_reports_failed_status
+  /workspace/DBGuardAI/tests/test_lifecycle_tier_c.py:145: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    effective_date=datetime.utcnow(),
+
+tests/test_lifecycle_tier_c.py::TestPartialChunkIngestionBug::test_all_chunks_succeed_reports_ingested_status
+  /workspace/DBGuardAI/tests/test_lifecycle_tier_c.py:198: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    effective_date=datetime.utcnow(),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==== 240 passed, 4 skipped, 49 deselected, 2 xfailed, 4 warnings in 56.43s =====
+EXIT=0

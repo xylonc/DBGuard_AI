@@ -1,0 +1,18 @@
+=== STEP 4: MUTATION CHECKS OUTPUT ===
+
+M1: operators.py - equals returns negation
+  - Test failed at manifest builder: proof validation rejected all specs
+  - Error: proof.break.value already satisfies check, proof.fix.value does not satisfy check
+  - This is expected behavior - validation correctly detects that proof values don't make sense
+    when the operator is negated
+
+M2: fix_unit_render.py - render_action omits pg_reload_conf
+  - Test failed at assertion: expected FAIL after break, got PASS
+  - Error: Settings were not reloaded because pg_reload_conf() was not executed
+  - The ALTER SYSTEM SET commands wrote to postgresql.auto.conf but the settings
+    were not loaded, so the old values persisted and tests saw unexpected results
+
+Restoration:
+  git checkout -- <file>
+  git diff --stat main (empty - no changes)
+  pg_settings state matches 03-settings.txt from task 4a

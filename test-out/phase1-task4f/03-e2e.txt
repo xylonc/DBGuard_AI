@@ -1,0 +1,80 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/DBGuardAI/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/DBGuardAI
+configfile: pytest.ini
+plugins: anyio-4.15.1, mock-3.15.1
+collecting ... collected 7 items
+
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity PASSED [ 14%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16] PASSED [ 28%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20] PASSED [ 42%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21] PASSED [ 57%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25] PASSED [ 71%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9] PASSED [ 85%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass PASSED [100%]
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass ERROR [100%]
+
+==================================== ERRORS ====================================
+__ ERROR at teardown of TestE2EBreakFix.test_edited_spec_is_stale_never_pass ___
+
+    @pytest.fixture(scope="session", autouse=True)
+    def autoconf_guard():
+        """Session-scoped autouse fixture to check auto.conf state at start/end of live tests.
+    
+        Before the first live test: asserts auto.conf is empty.
+        After the last live test: asserts auto.conf is empty.
+        This fixture DETECTS contamination but NEVER resets or cleans anything.
+        """
+        global _AUTOCONF_GUARD_RAN
+    
+        # Run check before first test
+        _check_autoconf_is_empty()
+        _AUTOCONF_GUARD_RAN = True
+    
+        yield
+    
+        # Run check after last test
+>       _check_autoconf_is_empty()
+
+tests/live/conftest.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check_autoconf_is_empty():
+        """Check that no auto.conf settings exist. Raises AssertionError if not empty."""
+        pg_target_url = os.environ.get("PG_TARGET_URL")
+        if not pg_target_url:
+            raise RuntimeError("PG_TARGET_URL is not set")
+    
+        with psycopg2.connect(pg_target_url) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, setting FROM pg_file_settings WHERE sourcefile LIKE '%postgresql.auto.conf' ORDER BY name"
+                )
+                rows = cur.fetchall()
+                if rows:
+                    rows_str = "\n".join(f"  {name}={setting}" for name, setting in rows)
+>                   raise AssertionError(
+                        f"postgresql.auto.conf is not empty before test run:\n{rows_str}"
+                    )
+E                   AssertionError: postgresql.auto.conf is not empty before test run:
+E                     debug_print_parse=off
+E                     log_connections=on
+E                     log_disconnections=on
+E                     log_statement=ddl
+E                     ssl_min_protocol_version=TLSv1.2
+
+tests/live/conftest.py:41: AssertionError
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_baseline_pipeline_integrity
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.16]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.20]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.21]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:3.1.25]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_break_then_fix[cis-pg17-v1.1.0:6.9]
+PASSED tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+ERROR tests/live/test_e2e_break_fix.py::TestE2EBreakFix::test_edited_spec_is_stale_never_pass
+==================== 7 passed, 1 error in 93.63s (0:01:33) =====================
+EXIT=0

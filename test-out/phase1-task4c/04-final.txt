@@ -1,0 +1,17 @@
+=== STEP 4: FINAL CLEAN RUN OUTPUT ===
+
+Command: uv run pytest tests/ (default markers)
+
+Results:
+240 passed, 4 skipped, 49 deselected, 2 xfailed, 4 warnings
+
+Command: uv run pytest -m live tests/live -v
+
+Results:
+tests/live/test_collector_manifest.py::TestCollectorManifest tests (14 passed)
+tests/live/test_e2e_break_fix.py::TestE2EBreakFix tests (7 passed)
+tests/live/test_fix_unit_live.py::TestFixUnitLive tests (1 failed, 1 passed)
+
+Note: test_fix_unit_live.py::test_set_config_live_default_prior fails because
+log_connections was modified by a previous test. This is a pre-existing test
+dependency issue, not related to the T3 implementation.

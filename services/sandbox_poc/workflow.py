@@ -17,17 +17,15 @@ from .adaptive import RevisionDecision, feedback_for
 CONTROL = "cis-pg17-v1.1.0:3.1.20"
 
 
-def template_action(sql: str) -> dict:
-    """Bind the existing approved-template SQL to the new typed action contract.
-
-    This intentionally supports just one boolean setting and two statements.
-    Candidate failures may be tested, but only an accepted 'on' fix is exportable.
-    """
+def template_action(sql: str, name="log_connections") -> dict:
+    from .planning import POLICIES
+    if name not in POLICIES:
+        raise ContractError("Unsupported setting action")
     body = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
-    match = re.fullmatch(r"\s*ALTER\s+SYSTEM\s+SET\s+\"?log_connections\"?\s*=\s*'(on|off|true|false)'\s*;\s*SELECT\s+pg_reload_conf\s*\(\s*\)\s*;\s*", body, re.I)
+    match = re.fullmatch(r"\s*ALTER\s+SYSTEM\s+SET\s+\"?"+re.escape(name)+r"\"?\s*=\s*'([a-zA-Z0-9_.]+)'\s*;\s*SELECT\s+pg_reload_conf\s*\(\s*\)\s*;\s*", body, re.I)
     if not match:
-        raise ContractError("Approved template is outside the supported connection-logging action")
-    return {"action": "set_config", "param": "log_connections", "value": match[1].lower()}
+        raise ContractError("Approved template is outside the supported setting action")
+    return {"action": "set_config", "param": name, "value": match[1]}
 
 
 class LoopState(TypedDict):
@@ -40,9 +38,10 @@ class LoopState(TypedDict):
 class RemediationLoop:
     def __init__(self, engine: SpecEngine, template: ApprovedTemplate,
                  runtime_factory=DisposablePostgres, max_attempts: int = 3,
-                 reviser=None, alternatives=(), refresh_template=None):
+                 reviser=None, alternatives=(), refresh_template=None, control_id=CONTROL):
         if type(max_attempts) is not int or not 1 <= max_attempts <= 3:
             raise ContractError("Attempt limit must be 1, 2 or 3")
+        self.control_id = control_id
         self.engine = engine
         self.template = template
         self.runtime_factory = runtime_factory
@@ -55,28 +54,26 @@ class RemediationLoop:
         snapshot = copy.deepcopy(snapshot)
         # A supplied assessment is bound to exact evidence, not merely an ID.
         actual = self.engine.bind_assessment(snapshot, assessment)
-        if actual["findings"].get(CONTROL, {}).get("status") != "FAIL":
-            raise ContractError("log_connections must be a reproduced source FAIL")
-        spec = next(s for s in self.engine.specs if s["spec_id"] == CONTROL)
-        supported = {"kind": "setting", "setting_name": "log_connections",
-                     "query": "SHOW log_connections", "operator": "equals", "expected": "on"}
-        if any(spec["check"].get(key) != value for key, value in supported.items()):
-            raise ContractError("This milestone only fixes log_connections equals on")
+        control = self.control_id
+        from .planning import fix_scope
+        spec, name, value = fix_scope(self.engine, control)
+        if actual["findings"].get(control, {}).get("status") != "FAIL":
+            raise ContractError("Selected control must be a reproduced source FAIL")
         if any(f["status"] == "GAPPED" for f in actual["findings"].values()):
             raise ContractError("Cannot establish regression coverage with gapped controls")
         plan = reconstruction_plan(snapshot, self.engine.specs)
-        rendered = self.template.render()
-        prior = setting_rows(snapshot)["log_connections"]
+        rendered = self.template.render(name, value)
+        prior = setting_rows(snapshot)[name]
         fix = {
-            "fix_id": "fix-log_connections", "spec_id": CONTROL,
-            "template_id": "SET_CONFIG_log_connections", "template_version": self.template.version,
-            "params": {"param_name": "log_connections", "param_value": "on"},
+            "fix_id": "fix-"+name, "spec_id": control,
+            "template_id": "SET_CONFIG_"+name, "template_version": self.template.version,
+            "params": {"param_name": name, "param_value": value},
             "prior_state": {"value": prior["setting"], "source": prior["source"],
                             "sourcefile": prior["sourcefile"], "context": prior["context"]},
-            "precheck": {"expected_value": prior["setting"], "query": "SHOW log_connections"},
-            "apply": template_action(rendered),
-            "verify": {"spec_check_ref": CONTROL, "expected_value": "on", "query": "SHOW log_connections"},
-            "requires": "reload",
+            "precheck": {"expected_value": prior["setting"], "query": f"SHOW {name}"},
+            "apply": template_action(rendered, name),
+            "verify": {"spec_check_ref": control, "expected_value": value, "query": f"SHOW {name}"},
+            "requires": "restart" if prior["context"] == "postmaster" else "reload",
         }
         fix["rollback"] = derive_rollback(fix["prior_state"], fix["apply"])
         fix["params"]["param_value"] = fix["apply"]["value"]
@@ -94,12 +91,12 @@ class RemediationLoop:
             available = {}
             try:
                 for index, candidate in enumerate(self.alternatives):
-                    if sql_identity(candidate.render()) not in used_sql:
+                    if sql_identity(candidate.render(name, value)) not in used_sql:
                         available[f'alternative-{index + 1}'] = candidate
-                choices = [{'candidate_id': key, 'template': value.identity(),
-                            'rendered_sql': value.render()} for key, value in available.items()]
+                choices = [{'candidate_id': key, 'template': candidate_template.identity(),
+                            'rendered_sql': candidate_template.render(name, value)} for key, candidate_template in available.items()]
                 decision = RevisionDecision.model_validate(self.reviser(
-                    feedback_for(state['attempts'], choices, current_id, current_template.render())))
+                    feedback_for(state['attempts'], choices, current_id, current_template.render(name, value), name, value)))
                 revision = decision.model_dump()
                 if decision.action == 'manual_review':
                     return {'done': True, 'status': 'NEEDS_REVIEW',
@@ -109,10 +106,10 @@ class RemediationLoop:
                 candidate = available[decision.candidate_id]
                 if self.refresh_template:
                     candidate = self.refresh_template(candidate)
-                if sql_identity(candidate.render()) in used_sql:
+                if sql_identity(candidate.render(name, value)) in used_sql:
                     raise ContractError('Revised candidate repeats previously tested SQL')
                 current_template, current_id = candidate, decision.candidate_id
-                fix = {**fix, 'apply': template_action(candidate.render()), 'template_version': candidate.version}
+                fix = {**fix, 'apply': template_action(candidate.render(name, value), name), 'template_version': candidate.version}
                 fix['params'] = {**fix['params'], 'param_value': fix['apply']['value']}
                 validate_contract(fix, 'fix-unit-v1.json')
                 return {'done': False, 'revisions': state['revisions'] + [revision]}
@@ -129,8 +126,8 @@ class RemediationLoop:
                       "status": "FAILED", "phase": "create", "rollback_verified": False,
                       "candidate_id": current_id, "template": current_template.identity(),
                       "fix_unit_hash": digest(fix)}
-            used_sql.add(sql_identity(current_template.render()))
-            record['rendered_apply_sql'] = current_template.render()
+            used_sql.add(sql_identity(current_template.render(name, value)))
+            record['rendered_apply_sql'] = current_template.render(name, value)
             terminal = False
             try:
                 runtime.start()
@@ -146,25 +143,30 @@ class RemediationLoop:
                     raise ContractError("Reconstruction did not reproduce all scoped findings")
                 record["phase"] = "apply"
                 try:
-                    runtime.sql(current_template.render())
-                    runtime.activate({"log_connections": "on"})
+                    runtime.sql(current_template.render(name, value))
+                    runtime.activate({name: value})
                     record["phase"] = "reassess"
                     after = self.engine.collect(runtime)
                     after_report = self.engine.assess(after)
                     record.update(after=after, after_assessment=after_report)
                     record["health_after_apply"] = runtime.health()
+                    if isinstance(runtime, DisposablePostgres):
+                        from .evidence_capture import verify_runtime
+                        record['functional_checks'] = verify_runtime(runtime, control, name, value, 'AFTER FIX')
+                        if not record['functional_checks']['passed']:
+                            raise RuntimeError('Functional verification failed')
                     regressions = [sid for sid, finding in before_report["findings"].items()
-                                   if sid != CONTROL and (
+                                   if sid != control and (
                                        (finding["status"] == "PASS" and after_report["findings"][sid]["status"] != "PASS")
                                        or after_report["findings"][sid]["status"] == "GAPPED")]
                     record["regressions"] = regressions
                     if after["baseline"].get("gaps"):
                         raise RuntimeError("Post-apply collection has gaps")
-                    if (after_report["findings"][CONTROL]["status"] != "PASS"
+                    if (after_report["findings"][control]["status"] != "PASS"
                             or regressions or not record["health_after_apply"]):
                         raise RuntimeError("Fix failed acceptance: target/regression/health")
                     # A reload request alone is not proof that the setting applied.
-                    if setting_rows(after)["log_connections"].get("pending_restart") is not False:
+                    if setting_rows(after)[name].get("pending_restart") is not False:
                         raise RuntimeError("Fix left a pending restart")
                 except Exception as exc:
                     record["apply_or_assessment_error"] = f"{type(exc).__name__}: {exc}"
@@ -223,11 +225,11 @@ class RemediationLoop:
                 "snapshot_hash": digest(snapshot), "spec_set_hash": self.engine.spec_set_hash,
                 "spec_hashes": self.engine.hashes, "collector_hash": self.engine.collector_hash,
                 "template": current_template.identity(), "fix_unit": fix,
-                "rendered_apply_sql": current_template.render(),
+                "rendered_apply_sql": current_template.render(name, value),
                 "rendered_rollback_sql": render_action_script(fix["rollback"]),
                 "retry_mode": 'adaptive' if self.reviser else 'repeat', 'revisions': state['revisions'],
                 "fix_unit_hash": digest(fix), "attempts": state["attempts"],
                 "regression_scope": list(self.engine.hashes),
-                "limitations": ["PostgreSQL 17; log_connections only; reload only",
+                "limitations": ["PostgreSQL 17; approved setting policies only",
                                 "Reconstructs settings in supplied specs, not the full database",
                                 "No real-target execution by the sandbox"]}

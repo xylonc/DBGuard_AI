@@ -47,7 +47,8 @@ class DisposablePostgres:
                "--tmpfs", f"{DATA}:rw,uid=999,gid=999,mode=0700,size=512m",
                "--tmpfs", "/var/run/postgresql:rw,uid=999,gid=999,mode=0775",
                "-e", "POSTGRES_USER=dbguard_poc", "-e", "POSTGRES_DB=dbguard_sandbox",
-               "-e", f"POSTGRES_PASSWORD={secrets.token_hex(24)}", self.image_id)
+               "-e", f"POSTGRES_PASSWORD={secrets.token_hex(24)}", self.image_id, "sh", "-c",
+               'trap "exit 0" TERM INT; while :; do docker-entrypoint.sh postgres & child=$!; wait "$child"; sleep 0.2; done')
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
             try:
@@ -91,6 +92,20 @@ class DisposablePostgres:
     def activate(self, expected: dict[str, str]) -> None:
         if self.sql("SELECT pg_reload_conf();") != "t":
             raise RuntimeError("PostgreSQL rejected reload request")
+        # Postmaster settings need a controlled restart of this owned container.
+        time.sleep(.15)
+        pending = self.sql("SELECT count(*) FROM pg_settings WHERE pending_restart;")
+        if int(pending) > 0:
+            self._assert_owned()
+            # Stop only PostgreSQL. PID 1 supervises its replacement, preserving tmpfs.
+            docker("exec", self.name, "pg_ctl", "-D", DATA, "-m", "fast", "-w", "stop")
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                try:
+                    if self.sql("SELECT 1;") == "1": break
+                except RuntimeError: pass
+                time.sleep(.25)
+            else: raise RuntimeError("PostgreSQL did not return after restart")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             # Every SHOW uses a fresh backend, including backend-context GUCs.

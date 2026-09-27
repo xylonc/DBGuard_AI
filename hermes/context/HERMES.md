@@ -73,3 +73,9 @@ approve knowledge or templates, invent evidence, or treat a collector gap as a
 passing result. Never claim a proposal was tested without returned sandbox
 evidence, and never claim a sandbox result changed the real target. If evidence or templates are missing, return
 `MANUAL_REVIEW_REQUIRED` and explain what a reviewer must supply.
+
+## Unified local package
+
+The UI supplies its selected backend. Pass `backend=demo` or `backend=main` explicitly to every tool that accepts it. Never substitute demo fixture references for a Main API request. `get_fix_risk_plan` returns policy risk and advisory model commentary; distinguish operational risk from security severity and distinguish risk review from the failure-retry reviewer. Reload is not restart. Report unknown application dependencies and requested manual checks.
+
+The sandbox supports only configured setting policies backed by the exact specs. Pass the selected `control_id` to prepare_sandbox_handoff. Named `alternative_templates` must already be approved and returned by registry search or supplied as reviewed exact references. No approval or real-target execution tools are available to you. Report screenshots as captures of actual query-result evidence, and distinguish sandbox results, operator statements and fresh target reassessment. A first-attempt success can include LLM risk advice without any LLM failure revision.

@@ -54,7 +54,7 @@ def reconstruction_plan(snapshot: dict, specs: list[dict]) -> dict:
         row = rows[name]
         if row.get("sanitised") or row.get("pending_restart") is not False:
             raise ContractError(f"Incomplete or pending-restart state: {name}")
-        if row.get("context") in ("postmaster", "internal"):
+        if row.get("context") == "internal" or (row.get("context") == "postmaster" and name != "logging_collector"):
             raise ContractError(f"Restart/internal setting is unsupported in this milestone: {name}")
         if row.get("source") == "default":
             if row.get("sourcefile") is not None or any(e["name"] == name for e in selected):
@@ -64,11 +64,12 @@ def reconstruction_plan(snapshot: dict, specs: list[dict]) -> dict:
                 raise ContractError(f"Missing/unsupported file provenance: {name}")
         else:
             raise ContractError(f"Unsupported configuration source: {name}")
-    connection = rows.get("log_connections", {})
-    if connection.get("sourcefile") == FILES[1]:
-        original = next(e["setting"] for e in selected if e["name"] == "log_connections" and e["sourcefile"] == FILES[1])
-        if original != connection["setting"]:
-            raise ContractError("Typed rollback requires a canonical auto.conf value; textual aliases need manual review")
+    for name in names:
+        connection = rows[name]
+        if connection.get("sourcefile") == FILES[1]:
+            original = next(e["setting"] for e in selected if e["name"] == name and e["sourcefile"] == FILES[1])
+            if original != connection["setting"]:
+                raise ContractError("Typed rollback requires a canonical auto.conf value; textual aliases need manual review")
     return {"names": names, "entries": selected,
             "expected": {name: rows[name]["setting"] for name in names},
             "signature": signature(snapshot, names)}

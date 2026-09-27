@@ -33,10 +33,10 @@
       "additionalProperties": false,
       "properties": {
         "registry_name": {
-          "const": "set_config_parameter",
           "default": "set_config_parameter",
           "title": "Registry Name",
-          "type": "string"
+          "type": "string",
+          "pattern": "^set_config_parameter(?:__[a-z0-9_]+)?$"
         },
         "version": {
           "minimum": 1,
@@ -133,6 +133,10 @@
       "maxItems": 2,
       "title": "Retry Template Refs",
       "type": "array"
+    },
+    "control_id": {
+      "type": "string",
+      "description": "Exact selected spec ID; defaults to cis-pg17-v1.1.0:3.1.20 for older callers"
     }
   },
   "required": [

@@ -87,7 +87,12 @@ export function EndpointPanel() {
         if (p.in === "query" && value) query.set(p.name, value)
       }
       if (path.includes("{")) throw new Error("Fill in path parameters")
-      if (path.startsWith("/api/v1/templates/") && path.endsWith("/approve") && !params.version) throw new Error("Enter the exact template version to approve")
+      if (
+        path.startsWith("/api/v1/templates/") &&
+        path.endsWith("/approve") &&
+        !params.version
+      )
+        throw new Error("Enter the exact template version to approve")
       const url = "/bridge/main" + path + (query.size ? "?" + query : "")
       let options: RequestInit = { method: selected.method.toUpperCase() }
       if (content["multipart/form-data"]) {
@@ -119,7 +124,7 @@ export function EndpointPanel() {
   }
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-5">
-      <h1 className="text-xl font-semibold">Library & API tools</h1>
+      <h1 className="text-xl font-semibold">Advanced API tools</h1>
       <p className="text-sm text-slate-500">
         Every endpoint in the supplied OpenAPI contract is connected through the
         local Main API gateway. Use the workflow for the guided path; use these
@@ -127,12 +132,25 @@ export function EndpointPanel() {
         and legacy operations.
       </p>
       <Card title="Choose an operation">
-        <div className="flex gap-2 flex-wrap">{[
-          ["Search evidence", "/api/v1/knowledge/search"],
-          ["Search templates", "/api/v1/templates/search"],
-          ["Upload knowledge", "/api/v1/knowledge/upload"],
-          ["Look up document", "/api/v1/knowledge/documents/{document_id}"],
-        ].map(([label,path]) => <button key={path} className="rounded border px-3 py-2 text-sm text-teal-700" disabled={busy} onClick={() => choose(operations.findIndex(o=>o.path===path))}>{label}</button>)}</div>
+        <div className="flex gap-2 flex-wrap">
+          {[
+            ["Search evidence", "/api/v1/knowledge/search"],
+            ["Search templates", "/api/v1/templates/search"],
+            ["Upload knowledge", "/api/v1/knowledge/upload"],
+            ["Look up document", "/api/v1/knowledge/documents/{document_id}"],
+          ].map(([label, path]) => (
+            <button
+              key={path}
+              className="rounded border px-3 py-2 text-sm text-teal-700"
+              disabled={busy}
+              onClick={() =>
+                choose(operations.findIndex((o) => o.path === path))
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <label className="block text-sm">
           API operation
           <select

@@ -105,6 +105,10 @@ def test_real_collector_to_review_bundle_and_exported_runner(tmp_path):
             execution_target.activate({'log_connections':'off','log_disconnections':'on'})
             with pytest.raises(RuntimeError, match='Demo fixture'):
                 runner.execute(config,'apply',dsn)
+            with pytest.raises(RuntimeError, match='cluster identity'):
+                runner.execute(config,'status',dsn,True)
+            # The runner fixture is explicitly rebound to this independent disposable target.
+            config['system_identifier'] = execution_target.sql('SELECT system_identifier::text FROM pg_control_system();')
             assert runner.execute(config,'status',dsn,True)['matches_prior']
             assert runner.execute(config,'apply',dsn,True)['verified']
             assert execution_target.sql('SHOW log_connections;') == 'on'

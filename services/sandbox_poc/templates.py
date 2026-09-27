@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 
 from app.services.template_service import safe_render_template
@@ -17,9 +18,10 @@ class ApprovedTemplate:
     sha256: str
     approved_by: str
     evidence: tuple[dict, ...]
+    risk_level: str | None = None
 
-    def render(self) -> str:
-        if self.registry_name != "set_config_parameter" or self.version < 1:
+    def render(self, name="log_connections", value="on") -> str:
+        if not re.fullmatch(r"set_config_parameter(?:__[a-z0-9_]+)?", self.registry_name) or self.version < 1:
             raise ContractError("Unsupported template identity")
         if not self.approved_by.strip() or not self.evidence:
             raise ContractError("Approved template and evidence are required")
@@ -27,7 +29,7 @@ class ApprovedTemplate:
             raise ContractError("Template content does not match the pinned hash")
         success, sql, error = safe_render_template(
             "set_config_parameter", self.sql,
-            {"param_name": "log_connections", "param_value": "on"})
+            {"param_name": name, "param_value": value})
         if not success:
             raise ContractError(error)
         return sql
@@ -35,12 +37,12 @@ class ApprovedTemplate:
     def identity(self) -> dict:
         return {"registry_name": self.registry_name, "version": self.version,
                 "sha256": self.sha256, "approved_by": self.approved_by,
-                "evidence": list(self.evidence)}
+                "evidence": list(self.evidence), "risk_level": self.risk_level}
 
 
 def from_registry(database_url: str, version: int, sha256: str,
                   evidence_refs: list[str], environment: str = "dev", *,
-                  evidence_pins: list[dict] | None = None) -> ApprovedTemplate:
+                  evidence_pins: list[dict] | None = None, registry_name: str = "set_config_parameter") -> ApprovedTemplate:
     """Read exact approved content. Never writes to the DBGuard/pgvector DB."""
     import psycopg2
 
@@ -54,10 +56,10 @@ def from_registry(database_url: str, version: int, sha256: str,
         conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '10s'")
-            cur.execute("""SELECT sql_template, template_hash, approved_by, pg_version
+            cur.execute("""SELECT sql_template, template_hash, approved_by, pg_version, risk_level
                 FROM templates WHERE template_name = %s AND version = %s
                 AND template_hash = %s AND status = 'active' AND approved_by IS NOT NULL""",
-                        ("set_config_parameter", version, sha256))
+                        (registry_name, version, sha256))
             row = cur.fetchone()
             if row is None:
                 raise ContractError("Exact approved template version/hash not found")
@@ -80,8 +82,8 @@ def from_registry(database_url: str, version: int, sha256: str,
                 if ref in pins and (doc[1] != pins[ref]["version"] or doc[2] != pins[ref]["sha256"]):
                     raise ContractError(f"Approved evidence version/hash mismatch: {ref}")
                 evidence.append(dict(zip(("document_id", "version", "sha256", "approved_by"), doc)))
-        template = ApprovedTemplate("set_config_parameter", version, row[0], row[1],
-                                    row[2], tuple(evidence))
+        template = ApprovedTemplate(registry_name, version, row[0], row[1],
+                                    row[2], tuple(evidence), row[4] if len(row)>4 else None)
         template.render()
         return template
     finally:
@@ -89,7 +91,7 @@ def from_registry(database_url: str, version: int, sha256: str,
 
 
 def export_reference(database_url: str, version: int, evidence_refs: list[str],
-                     environment: str = "dev"):
+                     environment: str = "dev", *, registry_name: str = "set_config_parameter"):
     """Read exact identities, then verify their active approvals and applicability.
 
     Does not choose a latest version or approve content. A second pinned read
@@ -110,7 +112,7 @@ def export_reference(database_url: str, version: int, evidence_refs: list[str],
             cur.execute("SET LOCAL statement_timeout = '10s'")
             cur.execute("""SELECT template_hash FROM templates
                 WHERE template_name = %s AND version = %s AND status = 'active'
-                AND approved_by IS NOT NULL""", ("set_config_parameter", version))
+                AND approved_by IS NOT NULL""", (registry_name, version))
             row = cur.fetchone()
             if row is None:
                 raise ContractError("Requested approved template version is unavailable")
@@ -123,10 +125,10 @@ def export_reference(database_url: str, version: int, evidence_refs: list[str],
                 if doc is None:
                     raise ContractError(f"Requested approved evidence is unavailable: {ref}")
                 pins.append(dict(zip(("document_id", "version", "sha256"), doc)))
-            reference = TemplateReference(version=version, sha256=row[0],
+            reference = TemplateReference(registry_name=registry_name, version=version, sha256=row[0],
                                           evidence=pins, environment=environment)
     finally:
         conn.close()
     template = from_registry(database_url, version, reference.sha256, evidence_refs,
-                             environment, evidence_pins=pins)
+                             environment, evidence_pins=pins, registry_name=registry_name)
     return reference, template

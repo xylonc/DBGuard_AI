@@ -14,6 +14,11 @@ from .templates import export_reference
 from .review_bundle import is_fixture
 
 
+class AlternativeTemplate(StrictModel):
+    registry_name: str = Field(pattern=r'^set_config_parameter__[a-z0-9_]+$')
+    version: int = Field(ge=1)
+
+
 class PrepareRequest(StrictModel):
     snapshot_id: str = Field(pattern=r'^snap-[a-zA-Z0-9]+$', max_length=64)
     benchmark_id: str = Field(default='cis-pg17-v1.1.0', pattern=r'^[a-z0-9]+(?:-[a-z0-9.]+)+$')
@@ -21,13 +26,15 @@ class PrepareRequest(StrictModel):
     template_version: int = Field(ge=1)
     evidence_ids: list[str] = Field(min_length=1, max_length=20)
     environment: Literal['dev', 'test', 'prod'] = 'dev'
+    alternative_templates: list[AlternativeTemplate] = Field(default_factory=list,max_length=2)
+    control_id: str = 'cis-pg17-v1.1.0:3.1.20'
     retry_mode: Literal['repeat', 'adaptive'] = 'adaptive'
     retry_template_versions: list[int] = Field(default_factory=list, max_length=2)
 
 
 def assess_uploaded(store, snapshot_id, benchmark_id):
-    directory = ROOT / 'catalog/specs' / benchmark_id
-    records = ROOT / 'catalog/benchmarks' / benchmark_id / 'records.json'
+    from .benchmarks import paths
+    directory, records = paths(benchmark_id)
     if not directory.is_dir() or not records.is_file():
         raise ContractError('Exact benchmark specs/records are not installed')
     engine = SpecEngine.load(directory, records)
@@ -42,11 +49,16 @@ def prepare_uploaded(store, service, request):
     ref, _ = export_reference(service.registry_url, request.template_version,
                               request.evidence_ids, request.environment)
     handoff = build_handoff(engine, snapshot, ref, assessment=assessment)
+    handoff.control_id = request.control_id
     handoff.retry_mode = request.retry_mode
     if len(set(request.retry_template_versions)) != len(request.retry_template_versions):
         raise ContractError('Retry template versions must be unique')
     handoff.retry_template_refs = [export_reference(service.registry_url, version,
         request.evidence_ids, request.environment)[0] for version in request.retry_template_versions]
+    if request.alternative_templates and request.retry_template_versions:
+        raise ContractError('Use named alternatives or legacy versions, not both')
+    handoff.retry_template_refs += [export_reference(service.registry_url, alternative.version,
+        request.evidence_ids,request.environment,registry_name=alternative.registry_name)[0] for alternative in request.alternative_templates]
     handoff = SandboxHandoff.model_validate(handoff.model_dump())
     service.validate_handoff(handoff)
     return handoff
@@ -74,7 +86,7 @@ def result_summary(result):
     if fixture:
         report += " Approval: DEMO_FIXTURE_ONLY; no human approval or approved RAG validation."
     return {**{key: result.get(key) for key in ('run_id', 'status', 'retry_mode', 'revisions',
-                 'review_bundle', 'requires_dba_review', 'limitations')},
+                 'review_bundle', 'requires_dba_review', 'limitations', 'risk_review', 'fix_unit', 'rendered_apply_sql', 'rendered_rollback_sql')},
             'demo_fixture_approval': bool(fixture),
             'verification_report': report,
             'sandbox_control': {'spec_id': spec_id, 'before_status': before, 'after_status': after},

@@ -141,7 +141,9 @@ class DemoService(SandboxService):
     demo_fixture_mode = True  # Server-owned mode; never accepted from a request.
 
     def __init__(self, resources, reviser=None):
-        super().__init__(resources.registry_url, reviser=reviser)
+        from .planning import LLMRiskReviewer
+        risk = LLMRiskReviewer(reviser.base_url,reviser.model,reviser.api_key) if hasattr(reviser,"base_url") else None
+        super().__init__(resources.registry_url, reviser=reviser, risk_reviewer=risk)
         self.resources = resources
         self.latest = None
         self.running = False
@@ -244,7 +246,7 @@ def create_app(resource_factory=DemoResources, *, reviser=None, public_url="http
             "ui_url": public_url,
             "bundle_url": public_url + latest[1]["review_bundle"]["url"]
                 if latest and latest[1].get("review_bundle", {}).get("status") == "READY" else None,
-            "limitations": ["Disposable demo source only; log_connections fix only",
+            "limitations": ["Disposable demo source only; supported reviewed configuration-setting policies",
                             "No production changes; DBA review required",
                             "RAG search is not exercised by fixture discovery"],
         }

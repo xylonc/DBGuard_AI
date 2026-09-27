@@ -1,5 +1,7 @@
 # Unified live demo
 
+Launch branch: **`melvin/live-demo-package`**. Start Docker Desktop, then follow [the startup instructions](docs/LOCAL_DEMO.md). A [five-minute recording script](docs/FIVE_MINUTE_DEMO.md) and [remaining improvements](docs/REMAINING_IMPROVEMENTS.md) are included.
+
 For the packaged UI + live HERMES + disposable sandbox, see [the one-command demo guide](docs/LOCAL_DEMO.md). Copy `.env.demo.example` to `.env.demo`, set your own Ollama Cloud key, then run `python3 scripts/demo.py up`.
 
 # DBGuardAI
@@ -10,6 +12,10 @@ engineer to verify. It lowers the knowledge and coding barrier while keeping rea
 can be tested through the isolated sandbox service.
 
 ## Current implemented scope
+
+The packaged application now includes task-based Library forms, version review, LLM-assisted operational risk, additional setting policies, individual and combined sandbox tests, actual query-result screenshots, DBA verification scripts, durable local history and target reassessment. See [the improvement checklist](docs/IMPROVEMENTS.md) and [verification record](docs/PRODUCT_VERIFICATION.md).
+
+The command below remains the small standalone connection-logging demonstration.
 
 A standalone [local sandbox POC](services/sandbox_poc/README.md) implements
 the first spec-driven milestone: PostgreSQL 17 `log_connections`, a bounded
@@ -69,7 +75,7 @@ flowchart LR
 
 - `postgres`: PostgreSQL 16 with pgvector for knowledge and templates;
 - `api`: trusted FastAPI boundary for snapshots, retrieval and proposals;
-- `mcp`: a restricted HTTP MCP adapter exposing nine DBGuard operations;
+- `mcp`: a restricted HTTP MCP adapter exposing restricted DBGuard operations;
 - `hermes`: the official HERMES Agent v0.21.0 image, pinned by digest, with
   DBGuard instructions, its built-in ChatGPT-style dashboard, authentication,
   and persistent conversation state.
@@ -116,10 +122,12 @@ provider. Never send unredacted database secrets to either provider.
 ## What the chat can do
 
 HERMES receives the `dbguard-hardening` skill on every dashboard session. Its
-MCP allowlist contains only:
+MCP allowlist contains the following operations (the local package explicitly routes demo and Main API):
 
 | HERMES operation | What it does |
 |---|---|
+| `get_demo_workflow_context` | Discovers the explicitly labelled disposable demo and its fixture references |
+| `get_fix_risk_plan` | Returns operational risk, prerequisites and recommended fix ordering |
 | `get_snapshot_context` | Reads normalized, redacted facts from one uploaded collector snapshot |
 | `get_snapshot_assessment` | Evaluates snapshot against control rules, returns pass/fail/gap findings |
 | `search_approved_knowledge` | Finds only active, effective and applicable PostgreSQL guidance |

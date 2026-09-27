@@ -124,7 +124,9 @@ class TemplateIngestResponse(BaseModel):
     status: str
     template_name: str
     id: Optional[int] = None
-    lifecycle_status: Literal["draft", "active"]
+    lifecycle_status: Literal["draft", "active", "archived"]
+    version: Optional[int] = None
+    created: bool = False
 
 
 class TemplateApprovalRequest(BaseModel):
@@ -389,7 +391,7 @@ class SetConfigTemplateParams(BaseModel):
         """Validate parameter name against allowed config parameters."""
         # Allowed config parameters - extend as needed
         allowed_params = {
-            "log_connections",
+            "log_connections", "debug_print_parse", "ssl_min_protocol_version", "logging_collector",
             "log_checkpoints",
             "log_disconnections",
             "log_lock_waits",

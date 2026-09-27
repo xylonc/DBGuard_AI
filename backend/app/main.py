@@ -230,6 +230,29 @@ def validate_and_render_proposal(request: RemediationProposalRequest):
     )
 
 
+@app.get("/api/v1/library/{kind}")
+def library_catalogue(kind: str, status: str | None = None, search: str = "",
+                      offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
+    from app.services.library_catalog import catalogue
+    import psycopg2
+    if kind not in ("templates", "knowledge") or status not in (None, "draft", "active", "archived", "superseded"):
+        raise HTTPException(422, "Invalid catalogue or lifecycle status")
+    try:
+        return catalogue(settings.database_url, kind, status, search, offset, limit)
+    except psycopg2.Error:
+        raise HTTPException(503, "Library registry unavailable; no catalogue was loaded") from None
+
+
+@app.get("/api/v1/library/knowledge/{document_id}/content")
+def library_document_content(document_id: str):
+    from app.services.library_catalog import document_content
+    import psycopg2
+    try:
+        return {"chunks": document_content(settings.database_url, document_id)}
+    except psycopg2.Error:
+        raise HTTPException(503, "Document content unavailable") from None
+
+
 @app.post("/api/v1/templates/ingest-all")
 def ingest_all():
     """Manually trigger re-ingestion of all templates."""
@@ -259,6 +282,7 @@ def ingest_single_template(request: TemplateIngestRequest):
         template_name=result["template_name"],
         id=result["id"],
         lifecycle_status=result["status"],
+        version=result.get("version"), created=result.get("created", False),
     )
 
 

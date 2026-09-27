@@ -32,5 +32,5 @@ def test_standard_keeps_existing_tools_and_invalid_mode_fails():
     original = copy.deepcopy(value)
     configure.configure_workflow(value, "standard")
     assert value == original
-    with pytest.raises(ValueError, match="standard or demo"):
+    with pytest.raises(ValueError, match="standard, demo or unified"):
         configure.configure_workflow(value, "typo")

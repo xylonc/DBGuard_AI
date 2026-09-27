@@ -14,9 +14,11 @@ _tier_b_check_result = None
 
 
 @pytest.fixture(scope="session", autouse=True)
-def setup_test_env():
+def setup_test_env(tmp_path_factory):
     """Set up test environment variables."""
     os.environ["MSYS_NO_PATHCONV"] = "1"
+    os.environ["DBGUARD_HISTORY_DIR"] = str(tmp_path_factory.mktemp("run-history"))
+    os.environ["DBGUARD_CATALOG_DIR"] = str(tmp_path_factory.mktemp("benchmark-catalog"))
     os.environ["DATABASE_URL"] = "postgresql://dbguard:***@127.0.0.1:5433/dbguard_test"
     os.environ["EMBEDDING_MODEL"] = "nomic-embed-text"
     os.environ["EMBEDDING_DIM"] = "768"

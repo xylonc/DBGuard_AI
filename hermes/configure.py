@@ -17,8 +17,10 @@ DEMO_TOOLS = [
 
 
 def configure_workflow(config: dict, mode: str) -> None:
-    if mode not in ("standard", "demo"):
-        raise ValueError("HERMES_WORKFLOW_MODE must be standard or demo")
+    if mode not in ("standard", "demo", "unified"):
+        raise ValueError("HERMES_WORKFLOW_MODE must be standard, demo or unified")
+    if mode == "unified":
+        config["mcp_servers"]["dbguard"]["tools"]["include"] = DEMO_TOOLS + ["search_approved_templates", "search_approved_knowledge", "get_fix_risk_plan", "get_snapshot_context"]
     if mode == "demo":
         # Hide legacy proposal tools entirely, instead of relying on model routing.
         config["mcp_servers"]["dbguard"]["tools"]["include"] = list(DEMO_TOOLS)

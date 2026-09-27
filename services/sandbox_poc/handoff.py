@@ -17,7 +17,7 @@ class EvidenceReference(StrictModel):
 
 
 class TemplateReference(StrictModel):
-    registry_name: Literal["set_config_parameter"] = "set_config_parameter"
+    registry_name: str = Field(default="set_config_parameter", pattern=r"^set_config_parameter(?:__[a-z0-9_]+)?$")
     version: int = Field(ge=1)
     sha256: Hash
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=20)
@@ -39,6 +39,7 @@ class SandboxHandoff(StrictModel):
     snapshot: dict
     assessment: dict
     template_ref: TemplateReference
+    control_id: str = "cis-pg17-v1.1.0:3.1.20"
     retry_mode: Literal["repeat", "adaptive"] = "repeat"
     retry_template_refs: list[TemplateReference] = Field(default_factory=list, max_length=2)
 
@@ -47,7 +48,7 @@ class SandboxHandoff(StrictModel):
         refs = [self.template_ref, *self.retry_template_refs]
         if any(ref.environment != self.template_ref.environment for ref in refs):
             raise ValueError('All candidate approvals must apply to the same environment')
-        identities = [(ref.version, ref.sha256) for ref in refs]
+        identities = [(ref.registry_name, ref.version, ref.sha256) for ref in refs]
         if len(identities) != len(set(identities)):
             raise ValueError('Candidate template identities must be unique')
         if self.retry_template_refs and self.retry_mode != 'adaptive':

@@ -1,5 +1,5 @@
 import { LiveHome, LiveWorkflow, LiveChat, LiveSettings } from "@/live/LiveUI"
-import { EndpointPanel } from "@/live/EndpointPanel"
+import { Library } from "@/live/Library"
 import { useState } from "react"
 import { useWorkflow } from "@/store/workflowStore"
 import { LeftNav } from "./LeftNav"
@@ -19,7 +19,7 @@ function ActiveView() {
     case "workflows":
       return state.mode === "connected" ? <LiveWorkflow /> : <WorkflowsView />
     case "library":
-      return state.mode === "connected" ? <EndpointPanel /> : <KnowledgeView />
+      return state.mode === "connected" ? <Library /> : <KnowledgeView />
     case "settings":
       return state.mode === "connected" ? <LiveSettings /> : <SettingsView />
     default:

@@ -16,7 +16,7 @@ services:
       HERMES_DASHBOARD: "1"
       HERMES_DASHBOARD_USERNAME: dbguard
       HERMES_DASHBOARD_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:?launcher required}
-      HERMES_WORKFLOW_MODE: demo
+      HERMES_WORKFLOW_MODE: unified
       HERMES_MCP_URL: http://mcp:${DEMO_MCP_PORT}/mcp
       HERMES_TUI_SKILLS: dbguard-hardening
       HERMES_MODEL: ${HERMES_MODEL:-gpt-oss:20b}

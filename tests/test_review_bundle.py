@@ -34,7 +34,7 @@ def test_bundle_is_bound_and_escapes_report(recorded, engine):
     request = SandboxHandoff(**recorded['handoff'])
     data = build_review_bundle(request, recorded['result'], engine)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        assert set(archive.namelist()) == {'harden.sh','runner.py','fix.json','manifest.json','evidence.json','report.html','README.txt'}
+        assert set(archive.namelist()) == {'harden.sh','runner.py','fix.json','manifest.json','evidence.json','report.html','README.txt','risk-review.json','visual_evidence.py','verify.sh'}
         manifest = json.loads(archive.read('manifest.json'))
         assert manifest['demo_fixture_approval'] is True
         assert b'NOT PERFORMED' in archive.read('report.html')

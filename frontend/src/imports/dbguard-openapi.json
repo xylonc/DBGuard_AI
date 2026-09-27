@@ -261,6 +261,535 @@
         }
       }
     },
+    "/api/v1/snapshots/{snapshot_id}/fix-plan": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Fix Plan",
+        "operationId": "fix_plan_api_v1_snapshots__snapshot_id__fix_plan_get",
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Snapshot Id"
+            }
+          },
+          {
+            "name": "benchmark_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+              "default": "cis-pg17-v1.1.0",
+              "title": "Benchmark Id"
+            }
+          },
+          {
+            "name": "review_with_llm",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Review With Llm"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Run History",
+        "operationId": "run_history_api_v1_history_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{run_id}": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Run History Detail",
+        "operationId": "run_history_detail_api_v1_history__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{run_id}/events": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Operator Event",
+        "operationId": "operator_event_api_v1_history__run_id__events_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorEvent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{run_id}/reassess": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Reassess Run",
+        "operationId": "reassess_run_api_v1_history__run_id__reassess_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassessmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{run_id}/evidence": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Manual Evidence",
+        "operationId": "manual_evidence_api_v1_history__run_id__evidence_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_manual_evidence_api_v1_history__run_id__evidence_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sandbox/batches": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Sandbox Batch",
+        "operationId": "sandbox_batch_api_v1_sandbox_batches_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/benchmarks/import": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Import Benchmark",
+        "operationId": "import_benchmark_api_v1_benchmarks_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_benchmark_api_v1_benchmarks_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/benchmarks/{benchmark_id}/package": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Benchmark Package",
+        "operationId": "benchmark_package_api_v1_benchmarks__benchmark_id__package_get",
+        "parameters": [
+          {
+            "name": "benchmark_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Benchmark Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/benchmarks/{benchmark_id}/approve": {
+      "post": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Approve Benchmark",
+        "operationId": "approve_benchmark_api_v1_benchmarks__benchmark_id__approve_post",
+        "parameters": [
+          {
+            "name": "benchmark_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Benchmark Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BenchmarkApproval"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/snapshots/{snapshot_id}/runs": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Snapshot Runs",
+        "operationId": "snapshot_runs_api_v1_snapshots__snapshot_id__runs_get",
+        "parameters": [
+          {
+            "name": "snapshot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Snapshot Id"
+            }
+          },
+          {
+            "name": "benchmark_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+              "default": "cis-pg17-v1.1.0",
+              "title": "Benchmark Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history/{run_id}/evidence-bundle": {
+      "get": {
+        "tags": [
+          "sandbox-poc"
+        ],
+        "summary": "Complete Evidence Bundle",
+        "operationId": "complete_evidence_bundle_api_v1_history__run_id__evidence_bundle_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "summary": "Health Check",
@@ -427,6 +956,129 @@
                 "schema": {
                   "$ref": "#/components/schemas/HardenResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/{kind}": {
+      "get": {
+        "summary": "Library Catalogue",
+        "operationId": "library_catalogue_api_v1_library__kind__get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Search"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/library/knowledge/{document_id}/content": {
+      "get": {
+        "summary": "Library Document Content",
+        "operationId": "library_document_content_api_v1_library_knowledge__document_id__content_get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -900,6 +1552,27 @@
   },
   "components": {
     "schemas": {
+      "AlternativeTemplate": {
+        "properties": {
+          "registry_name": {
+            "type": "string",
+            "pattern": "^set_config_parameter__[a-z0-9_]+$",
+            "title": "Registry Name"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "registry_name",
+          "version"
+        ],
+        "title": "AlternativeTemplate"
+      },
       "AssessmentReport": {
         "properties": {
           "snapshot_id": {
@@ -972,6 +1645,98 @@
         ],
         "title": "AssessmentSummary",
         "description": "Summary counts for an assessment report."
+      },
+      "BatchRequest": {
+        "properties": {
+          "fixes": {
+            "items": {
+              "$ref": "#/components/schemas/PrepareRequest"
+            },
+            "type": "array",
+            "maxItems": 6,
+            "minItems": 2,
+            "title": "Fixes"
+          },
+          "requested_order": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 6
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fixes"
+        ],
+        "title": "BatchRequest"
+      },
+      "BenchmarkApproval": {
+        "properties": {
+          "reviewer": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Reviewer"
+          },
+          "spec_set_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Spec Set Hash"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reviewer",
+          "spec_set_hash"
+        ],
+        "title": "BenchmarkApproval"
+      },
+      "Body_import_benchmark_api_v1_benchmarks_import_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_benchmark_api_v1_benchmarks_import_post"
+      },
+      "Body_manual_evidence_api_v1_history__run_id__evidence_post": {
+        "properties": {
+          "control_id": {
+            "type": "string",
+            "title": "Control Id"
+          },
+          "operator": {
+            "type": "string",
+            "title": "Operator"
+          },
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "control_id",
+          "operator",
+          "file"
+        ],
+        "title": "Body_manual_evidence_api_v1_history__run_id__evidence_post"
       },
       "Body_upload_knowledge_xlsx_api_v1_knowledge_upload_post": {
         "properties": {
@@ -1614,6 +2379,52 @@
         ],
         "title": "KnowledgeSearchResult"
       },
+      "OperatorEvent": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "DBA_REPORTS_APPLIED",
+              "DBA_REPORTS_ROLLED_BACK",
+              "REVIEW_NOTE",
+              "MANUAL_EVIDENCE_ACCEPTED",
+              "MANUAL_EVIDENCE_REJECTED"
+            ],
+            "title": "Kind"
+          },
+          "operator": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Operator"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Note"
+          },
+          "evidence_sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Sha256"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "operator",
+          "note"
+        ],
+        "title": "OperatorEvent"
+      },
       "PrepareRequest": {
         "properties": {
           "snapshot_id": {
@@ -1664,6 +2475,19 @@
             "title": "Environment",
             "default": "dev"
           },
+          "alternative_templates": {
+            "items": {
+              "$ref": "#/components/schemas/AlternativeTemplate"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "title": "Alternative Templates"
+          },
+          "control_id": {
+            "type": "string",
+            "title": "Control Id",
+            "default": "cis-pg17-v1.1.0:3.1.20"
+          },
           "retry_mode": {
             "type": "string",
             "enum": [
@@ -1690,6 +2514,26 @@
           "evidence_ids"
         ],
         "title": "PrepareRequest"
+      },
+      "ReassessmentRequest": {
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "pattern": "^snap-[a-zA-Z0-9]+$",
+            "title": "Snapshot Id"
+          },
+          "benchmark_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+$",
+            "title": "Benchmark Id",
+            "default": "cis-pg17-v1.1.0"
+          }
+        },
+        "type": "object",
+        "required": [
+          "snapshot_id"
+        ],
+        "title": "ReassessmentRequest"
       },
       "RedactionRecord": {
         "properties": {
@@ -1850,6 +2694,11 @@
           },
           "template_ref": {
             "$ref": "#/components/schemas/TemplateReference"
+          },
+          "control_id": {
+            "type": "string",
+            "title": "Control Id",
+            "default": "cis-pg17-v1.1.0:3.1.20"
           },
           "retry_mode": {
             "type": "string",
@@ -2335,9 +3184,26 @@
             "type": "string",
             "enum": [
               "draft",
-              "active"
+              "active",
+              "archived"
             ],
             "title": "Lifecycle Status"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created",
+            "default": false
           }
         },
         "type": "object",
@@ -2352,7 +3218,7 @@
         "properties": {
           "registry_name": {
             "type": "string",
-            "const": "set_config_parameter",
+            "pattern": "^set_config_parameter(?:__[a-z0-9_]+)?$",
             "title": "Registry Name",
             "default": "set_config_parameter"
           },

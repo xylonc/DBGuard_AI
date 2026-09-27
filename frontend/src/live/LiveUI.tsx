@@ -1,3 +1,6 @@
+import { BenchmarkImport } from "./BenchmarkImport"
+import { FixPlan, RunHistory } from "./ReviewPanel"
+import { EndpointPanel } from "./EndpointPanel"
 import { useEffect, useState, type ReactNode } from "react"
 import { useLive } from "@/store/liveStore"
 import { useWorkflow } from "@/store/workflowStore"
@@ -255,6 +258,7 @@ export function LiveWorkflow() {
           </p>
         )}
         <Feedback />
+        {step === 1 && <BenchmarkImport />}
         {step === 1 && (
           <Card title="Installed benchmark">
             <label className="block text-sm">
@@ -267,10 +271,9 @@ export function LiveWorkflow() {
               />
             </label>
             <p>
-              The six installed sample specs are resolved by the backend during
-              assessment. Workbook knowledge ingestion is available in Library;
-              automatic workbook-to-spec generation has no endpoint in this
-              backend.
+              Use the six installed sample specs, or an approved imported
+              release. Workbook import creates a spec for every control and
+              explicitly marks unsupported checks.
             </p>
             {s.assessment?.specs && (
               <Raw value={s.assessment.specs} label="Exact returned specs" />
@@ -287,9 +290,9 @@ export function LiveWorkflow() {
               configured. Do not use DBGuard's pgvector database as the target.
             </p>
             <pre className="overflow-auto p-3 bg-slate-900 text-slate-100 text-xs rounded">
-              {
-                "python scripts/build_check_manifest.py --specs catalog/specs/cis-pg17-v1.1.0 --out checks.json\nbash collector/dbguard-collect.sh -m checks.json -t dev-pg17 -o snapshot.json"
-              }
+              {s.benchmark.includes("-import-")
+                ? "# In the extracted benchmark review package\nbash dbguard-collect.sh -m checks.json -t dev-pg17 -o snapshot.json"
+                : "python scripts/build_check_manifest.py --specs catalog/specs/cis-pg17-v1.1.0 --out checks.json\nbash collector/dbguard-collect.sh -m checks.json -t dev-pg17 -o snapshot.json"}
             </pre>
             <p className="text-sm">
               The live demo collects its own disposable source when it starts.
@@ -380,22 +383,17 @@ export function LiveWorkflow() {
                 <Results assessment={s.assessment} />
                 <Raw value={s.assessment} />
                 <p className="text-sm text-slate-500">
-                  This milestone supports the connection-logging fix (3.1.20).
-                  Other findings remain visible.
+                  Supported setting fixes appear in the next step. Controls
+                  needing manual review remain visible.
                 </p>
                 <button
                   className={button}
                   disabled={
-                    !findings(s.assessment).some(
-                      (r) =>
-                        (String(r.id).endsWith(":3.1.20") ||
-                          r.id === "3.1.20") &&
-                        r.status === "FAIL",
-                    )
+                    !findings(s.assessment).some((r) => r.status === "FAIL")
                   }
                   onClick={() => setWorkflowStep(5)}
                 >
-                  Test connection-logging fix
+                  Review available fixes
                 </button>
               </>
             )}
@@ -403,7 +401,9 @@ export function LiveWorkflow() {
         )}
         {step === 5 && (
           <>
+            <FixPlan />
             <Card title="Reviewed fix references">
+              <p>Selected control: {s.controlId}</p>
               <label className="block text-sm">
                 Environment
                 <input
@@ -451,10 +451,23 @@ export function LiveWorkflow() {
                   <option value="repeat">Repeat approved candidate</option>
                 </select>
               </label>
+              <label className="block text-sm">
+                Approved alternative templates (optional: name:version, comma
+                separated)
+                <input
+                  className={input}
+                  value={s.alternativeTemplates}
+                  disabled={busy || !!s.handoffId || s.retryMode !== "adaptive"}
+                  placeholder="set_config_parameter__alternative:1"
+                  onChange={(e) =>
+                    live.configure({ alternativeTemplates: e.target.value })
+                  }
+                />
+              </label>
               <p className="text-xs text-slate-500">
                 Maximum three attempts. Each test uses a fresh baseline.
                 Adaptive execution is limited to approved candidates; a
-                first-attempt success does not invoke the reviewer.
+                first-attempt success does not invoke the failure reviewer.
               </p>
               <button
                 className={button}
@@ -514,7 +527,12 @@ export function LiveWorkflow() {
               <p>Run a sandbox test in step 5 first.</p>
             </Card>
           ))}
-        {step === 7 && <Verification />}
+        {step === 7 && (
+          <>
+            <Verification />
+            <RunHistory />
+          </>
+        )}
       </div>
     </div>
   )
@@ -568,6 +586,16 @@ export function RunResult() {
               />
             </span>
           </div>
+          {a.functional_checks?.screenshot?.status === "CAPTURED" && (
+            <img
+              alt="Actual sandbox database query results after fix"
+              className="w-full border rounded"
+              src={
+                "data:image/png;base64," +
+                a.functional_checks.screenshot.png_base64
+              }
+            />
+          )}
           <Raw value={a} />
         </div>
       ))}
@@ -582,6 +610,16 @@ export function RunResult() {
         LLM review records: {(r.revisions ?? []).length}. The reviewer is
         invoked after a failed attempt; first-attempt success needs no revision.
       </p>
+      {r.risk_review && (
+        <Raw
+          value={r.risk_review}
+          label="Risk, prerequisites and functional test plan"
+        />
+      )}
+      <Raw
+        value={r.revisions ?? []}
+        label="LLM retry decisions (empty means no retry review)"
+      />
       <Raw value={r} label="Complete returned run evidence" />
     </Card>
   )
@@ -675,7 +713,7 @@ function Verification() {
                     assessment: a,
                     matched:
                       sameTarget(s.snapshot, snapshot) &&
-    isFreshSnapshot(s.snapshot, snapshot) &&
+                      isFreshSnapshot(s.snapshot, snapshot) &&
                       !!s.assessment?.assessment?.spec_set_hash &&
                       s.assessment.assessment.spec_set_hash ===
                         a.assessment?.spec_set_hash,
@@ -693,7 +731,20 @@ function Verification() {
                   ? "Newer collection from the same target and exact spec set confirmed."
                   : "Comparison not verified: target/spec identity must match and collection must be newer."}
               </p>
-              {matching ? <Results assessment={s.assessment} after={Object.fromEntries(findings(assessment).map(f=>[f.id,f.status]))} afterLabel="Fresh target assessment"/> : <Results assessment={assessment} label="Uploaded target assessment (unmatched)"/>}
+              {matching ? (
+                <Results
+                  assessment={s.assessment}
+                  after={Object.fromEntries(
+                    findings(assessment).map((f) => [f.id, f.status]),
+                  )}
+                  afterLabel="Fresh target assessment"
+                />
+              ) : (
+                <Results
+                  assessment={assessment}
+                  label="Uploaded target assessment (unmatched)"
+                />
+              )}
               <Raw value={{ snapshot, assessment }} />
             </>
           )}
@@ -838,8 +889,8 @@ export function LiveSettings() {
           </option>
         </select>
         <p>
-          Changing backend starts an empty workflow. HERMES must point to the
-          same backend through MCP.
+          Changing backend starts an empty workflow. The packaged HERMES
+          connection routes its tools to the selected backend.
         </p>
         <button
           className={button}
@@ -865,6 +916,11 @@ export function LiveSettings() {
           </>
         )}
       </Card>
+      <RunHistory />
+      <details className="border rounded">
+        <summary className="p-3 cursor-pointer">Advanced API tools</summary>
+        <EndpointPanel />
+      </details>
       <Card title="Local gateway">
         <p>
           Provider keys stay on the local server. Configure DBGUARD_API_URL,

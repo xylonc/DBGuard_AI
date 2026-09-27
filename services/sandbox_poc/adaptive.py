@@ -56,17 +56,17 @@ class LLMReviser:
             raise ContractError('LLM revision unavailable or malformed; no further fix was executed') from exc
 
 
-def feedback_for(attempts, candidates, current_id, tested_sql):
+def feedback_for(attempts, candidates, current_id, tested_sql, name="log_connections", value="on"):
     latest = attempts[-1]
     # Only expose this control's operational metadata, not the raw settings rows.
     def scoped_setting(snapshot):
         row = next((row for row in snapshot.get('baseline', {}).get('settings', [])
-                    if row.get('name') == 'log_connections'), {})
+                    if row.get('name') == name), {})
         return {key: row[key] for key in ('setting', 'context', 'pending_restart') if key in row}
 
     # Exclude raw SQL errors, source identities, role data and configuration paths.
     return {
-        'control': 'log_connections', 'required_value': 'on',
+        'control': name, 'required_value': value,
         'attempt_number': len(attempts), 'maximum_attempts': 3,
         'current_candidate_id': current_id,
         'tested_sql': tested_sql,

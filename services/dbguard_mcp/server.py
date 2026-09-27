@@ -1,7 +1,7 @@
 """Restricted proposal and local sandbox operations for HERMES."""
 
 import os
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 import requests
 from mcp.server.mcpserver import MCPServer
@@ -31,11 +31,11 @@ mcp = MCPServer(
 )
 
 
-def _request_json(method: str, path: str, *, timeout=REQUEST_TIMEOUT_SECONDS, **kwargs: Any) -> Any:
+def _request_json(method: str, path: str, *, timeout=REQUEST_TIMEOUT_SECONDS, base_url=None, **kwargs: Any) -> Any:
     try:
         response = requests.request(
             method,
-            f"{DBGUARD_API_URL}{path}",
+            f"{base_url or DBGUARD_API_URL}{path}",
             timeout=timeout,
             **kwargs,
         )
@@ -51,6 +51,20 @@ def _request_json(method: str, path: str, *, timeout=REQUEST_TIMEOUT_SECONDS, **
     return response.json()
 
 
+def _request_for(backend, method, path, **kwargs):
+    if backend == 'default': return _request_json(method,path,**kwargs)
+    if backend not in ('demo','main'): raise ToolError('Unknown backend')
+    url=os.getenv('DBGUARD_'+backend.upper()+'_API_URL')
+    if not url: raise ToolError('Requested backend is not configured')
+    return _request_json(method,path,base_url=url.rstrip('/'),**kwargs)
+
+
+@mcp.tool()
+def get_fix_risk_plan(snapshot_id: str, benchmark_id: str = 'cis-pg17-v1.1.0', backend: Literal['default','demo','main'] = 'default') -> dict[str,Any]:
+    """Get recommended fix order, risk and checks from actual backend policy and LLM review."""
+    return _request_for(backend,'GET',f'/api/v1/snapshots/{quote(snapshot_id,safe="")}/fix-plan',params={'benchmark_id':benchmark_id,'review_with_llm':True},timeout=300)
+
+
 @mcp.tool()
 def get_demo_workflow_context() -> dict[str, Any]:
     """Discover the connected local demo's snapshot and fixture references.
@@ -64,21 +78,22 @@ def get_demo_workflow_context() -> dict[str, Any]:
 
 
 @mcp.tool()
-def get_snapshot_spec_assessment(snapshot_id: str, benchmark_id: str = 'cis-pg17-v1.1.0') -> dict[str, Any]:
+def get_snapshot_spec_assessment(snapshot_id: str, benchmark_id: str = 'cis-pg17-v1.1.0', backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Get the exact pinned specs and their assessment for the local sandbox.
 
     This scope differs from the legacy assessment. Use these findings when
     preparing a sandbox handoff; do not translate legacy control IDs yourself.
     """
-    return _request_json('GET', f'/api/v1/snapshots/{quote(snapshot_id, safe="")}/spec-assessment',
+    return _request_for(backend, 'GET', f'/api/v1/snapshots/{quote(snapshot_id, safe="")}/spec-assessment',
                          params={'benchmark_id': benchmark_id})
+
 
 
 @mcp.tool()
 def prepare_sandbox_handoff(snapshot_id: str, template_version: int,
                              evidence_ids: list[str], environment: str,
                              benchmark_id: str = 'cis-pg17-v1.1.0',
-                             retry_template_versions: list[int] | None = None) -> dict[str, Any]:
+                             retry_template_versions: list[int] | None = None, control_id: str = "cis-pg17-v1.1.0:3.1.20", alternative_templates: list[dict[str, Any]] | None = None, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Pin existing approved references to an uploaded snapshot, using exact specs.
 
     Always pass environment explicitly from discovery/search results; never guess
@@ -86,48 +101,53 @@ def prepare_sandbox_handoff(snapshot_id: str, template_version: int,
     (or explicit demo discovery). No SQL or approvals are
     accepted from the agent. Adaptive testing is enabled for this handoff.
     """
-    return _request_json('POST', '/api/v1/sandbox/handoffs', json={
+    return _request_for(backend, 'POST', '/api/v1/sandbox/handoffs', json={
         'snapshot_id': snapshot_id, 'template_version': template_version,
         'evidence_ids': evidence_ids, 'environment': environment, 'benchmark_id': benchmark_id,
-        'retry_mode': 'adaptive', 'retry_template_versions': retry_template_versions or []})
+        'control_id':control_id, 'alternative_templates':alternative_templates or [], 'retry_mode': 'adaptive', 'retry_template_versions': retry_template_versions or []})
+
 
 
 @mcp.tool()
-def run_sandbox_handoff(handoff_id: str) -> dict[str, Any]:
+def run_sandbox_handoff(handoff_id: str, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Run up to three isolated attempts with LLM failure review and exact rollback.
 
     Reusing this handle returns its saved result; it does not restart testing.
     On a timeout, inspect this handle's status before taking another action.
     Returned bundle URLs are relative to the user-facing DBGuard API host.
     """
-    return _request_json('POST', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}/run',
+    return _request_for(backend, 'POST', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}/run',
                          timeout=SANDBOX_TIMEOUT_SECONDS)
 
 
+
 @mcp.tool()
-def get_sandbox_handoff_status(handoff_id: str) -> dict[str, Any]:
+def get_sandbox_handoff_status(handoff_id: str, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Retrieve pending/completed testing status and the bundle link, if available."""
-    return _request_json('GET', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}')
+    return _request_for(backend, 'GET', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}')
+
 
 
 @mcp.tool()
-def get_snapshot_context(snapshot_id: str) -> dict[str, Any]:
+def get_snapshot_context(snapshot_id: str, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Read normalized, redacted context for an uploaded collector snapshot."""
-    return _request_json("GET", f"/api/v1/snapshots/{snapshot_id}")
+    return _request_for(backend, "GET", f"/api/v1/snapshots/{snapshot_id}")
+
 
 
 @mcp.tool()
-def get_snapshot_assessment(snapshot_id: str) -> dict[str, Any]:
+def get_snapshot_assessment(snapshot_id: str, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Evaluate a snapshot against control rules and return findings.
-    
+
     This tool retrieves the assessment report for a snapshot, including:
     - findings: pass/fail/gap status for each control
     - summary: counts by status
     - rationale and evidence for each finding
-    
+
     Use this to understand the current security state before proposing fixes.
     """
-    return _request_json("GET", f"/api/v1/snapshots/{snapshot_id}/assessment")
+    return _request_for(backend, "GET", f"/api/v1/snapshots/{snapshot_id}/assessment")
+
 
 
 @mcp.tool()
@@ -135,10 +155,9 @@ def search_approved_knowledge(
     query: str,
     pg_version: str | None = None,
     environment: str = "all",
-    top_k: int = 5,
-) -> dict[str, Any]:
+    top_k: int = 5, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Search only active, effective and applicable hardening guidance."""
-    return _request_json(
+    return _request_for(backend,
         "GET",
         "/api/v1/knowledge/search",
         params={
@@ -150,39 +169,40 @@ def search_approved_knowledge(
     )
 
 
+
 @mcp.tool()
-def search_approved_templates(query: str, top_k: int = 5) -> dict[str, Any]:
+def search_approved_templates(query: str, top_k: int = 5, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Search human-approved SQL templates by semantic similarity."""
-    return _request_json(
+    return _request_for(backend,
         "GET",
         "/api/v1/templates/search",
         params={"search_query": query, "top_k": max(1, min(top_k, 20))},
     )
 
 
+
 @mcp.tool()
 def validate_and_render_proposal(
     snapshot_id: str,
     proposal: dict[str, Any],
-    environment: str = "all",
-) -> dict[str, Any]:
+    environment: str = "all", backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Validate a template-driven proposal and render SQL.
-    
+
     The agent submits:
     1. template_id: approved template ID from search_approved_templates
     2. parameters: template parameters matching the template schema
     3. reasoning: agent reasoning for why this template applies
     4. evidence_refs: list of approved RAG document IDs
-    
+
     The API validates and returns rendered SQL for human DBA review.
     No SQL is generated - only rendered from approved templates.
-    
+
     Returns:
     - ai_plan: rendered SQL string
     - evidence: citations from approved knowledge
     - reasoning: agent's justification
     """
-    return _request_json(
+    return _request_for(backend,
         "POST",
         "/api/v1/proposals/validate-and-render",
         json={
@@ -191,6 +211,7 @@ def validate_and_render_proposal(
             "environment": environment,
         },
     )
+
 
 
 @mcp.custom_route("/health", methods=["GET"])

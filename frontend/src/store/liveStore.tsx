@@ -18,6 +18,8 @@ type LiveState = {
   environment: string
   templateVersion: number
   evidenceIds: string
+  alternativeTemplates: string
+  controlId: string
   retryMode: string
   messages: { role: string; content: string }[]
   chatJob: string
@@ -36,6 +38,8 @@ const fresh = (): LiveState => ({
   environment: "test",
   templateVersion: 1,
   evidenceIds: "",
+  alternativeTemplates: "",
+  controlId: "cis-pg17-v1.1.0:3.1.20",
   retryMode: "adaptive",
   messages: [],
   chatJob: "",
@@ -62,7 +66,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const generation = useRef(0)
   const patch = (value: Partial<LiveState>) => set((s) => ({ ...s, ...value }))
   useEffect(() => {
-    try { sessionStorage.setItem("dbguard-live-v1", JSON.stringify(state)) } catch { /* Keep oversized evidence in memory; the backend retains the run. */ }
+    try {
+      sessionStorage.setItem("dbguard-live-v1", JSON.stringify(state))
+    } catch {
+      /* Keep oversized evidence in memory; the backend retains the run. */
+    }
   }, [state])
   async function action(label: string, fn: () => Promise<void>) {
     if (lock.current) throw new Error("An operation is already running")
@@ -85,13 +93,27 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       if (gen !== generation.current) return
       if (context.workflow.snapshot_id !== s.snapshot?.snapshot_id) {
         generation.current++
-        patch({snapshot: null, assessment: null, result: null, handoffId: "", verification: null, error: "The demo session changed. Load the current live demo again."})
+        patch({
+          snapshot: null,
+          assessment: null,
+          result: null,
+          handoffId: "",
+          verification: null,
+          error: "The demo session changed. Load the current live demo again.",
+        })
         return
       }
       patch({
         demo: context.workflow,
         ...(context.last_result ? { result: context.last_result } : {}),
       })
+    } else if (!s.handoffId && s.snapshot) {
+      const record = await api(
+        "main",
+        `/api/v1/snapshots/${encodeURIComponent(s.snapshot.snapshot_id)}/runs?benchmark_id=${encodeURIComponent(s.benchmark)}`,
+      )
+      if (gen === generation.current && record.result)
+        patch({ result: record.result })
     } else if (s.handoffId) {
       const h = await api(
         "main",
@@ -100,8 +122,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       if (
         gen === generation.current &&
         h.snapshot_id === s.snapshot?.snapshot_id
-      )
-        patch({ result: h.result ?? null })
+      ) {
+        const detail = h.result?.run_id
+          ? await api("main", `/api/v1/history/${h.result.run_id}`)
+          : null
+        if (gen === generation.current)
+          patch({ result: detail?.result ?? h.result ?? null })
+      }
     }
   }
   async function loadDemo() {
@@ -197,8 +224,17 @@ export function LiveProvider({ children }: { children: ReactNode }) {
             .split(",")
             .map((x) => x.trim())
             .filter(Boolean),
+          control_id: s.controlId,
           retry_mode: s.retryMode,
           retry_template_versions: [],
+          alternative_templates: s.alternativeTemplates
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .map((x) => {
+              const [registry_name, version] = x.split(":")
+              return { registry_name, version: Number(version) }
+            }),
         })
         id = prep.handoff_id
         patch({ handoffId: id })
@@ -301,7 +337,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     generation.current++
     patch({
       ...value,
-      ...(value.benchmark !== undefined ? {assessment: null} : {}),
+      ...(value.benchmark !== undefined ? { assessment: null } : {}),
       result: null,
       handoffId: "",
       verification: null,

@@ -12,36 +12,44 @@ from .runtime import DisposablePostgres
 from .shared import ContractError, ROOT, SpecEngine
 from .templates import from_registry
 from .workflow import CONTROL, RemediationLoop
+from .planning import fix_scope, risk_review
 
 
 class SandboxService:
     def __init__(self, registry_url: str, image: str = "postgres:17-bookworm",
-                 registry_loader=from_registry, runtime_factory=None, reviser=None):
+                 registry_loader=from_registry, runtime_factory=None, reviser=None, risk_reviewer=None):
         self.registry_url = registry_url
         self.image = image
         self.registry_loader = registry_loader
         self.runtime_factory = runtime_factory or (lambda: DisposablePostgres(image))
         self.reviser = reviser
+        self.risk_reviewer = risk_reviewer
 
     def record_result(self, request, result):
         """Optional local UI integration; called after bundle generation finishes."""
 
     def validate_handoff(self, request: SandboxHandoff) -> SpecEngine:
         try:
-            records_path = ROOT / "catalog/benchmarks" / request.benchmark_id / "records.json"
+            from .benchmarks import paths
+            _, records_path = paths(request.benchmark_id)
             if not records_path.is_file():
                 raise ContractError("Benchmark records are not installed on this server")
             validator = Draft202012Validator(json.loads((ROOT / "catalog/specs/schema.json").read_text()))
             for spec in request.specs:
                 validator.validate(spec)
             engine = SpecEngine(request.specs, RecordsIndex.load(records_path))
+            if "-import-" in request.benchmark_id:
+                approved = SpecEngine.load(records_path.parent/"specs",records_path)
+                if engine.spec_set_hash != approved.spec_set_hash:
+                    raise ContractError("Handoff differs from the approved imported spec set")
             if engine.spec_set_hash != request.spec_set_hash:
                 raise ContractError("Spec-set hash does not match supplied specs")
             assessment = engine.bind_assessment(request.snapshot, request.assessment)
-            if assessment["findings"].get(CONTROL, {}).get("status") != "FAIL":
-                raise ContractError("The supported log_connections control must be FAIL")
+            if assessment["findings"].get(request.control_id, {}).get("status") != "FAIL":
+                raise ContractError("The selected supported control must be FAIL")
             if any(f["status"] == "GAPPED" for f in assessment["findings"].values()):
                 raise ContractError("Gapped controls cannot establish regression coverage")
+            fix_scope(engine, request.control_id)
             reconstruction_plan(request.snapshot, engine.specs)
             return engine
         except ContractError:
@@ -55,7 +63,8 @@ class SandboxService:
         return self.registry_loader(
             self.registry_url, ref.version, ref.sha256,
             [entry.document_id for entry in ref.evidence], ref.environment,
-            evidence_pins=[entry.model_dump() for entry in ref.evidence])
+            evidence_pins=[entry.model_dump() for entry in ref.evidence],
+            **({"registry_name":ref.registry_name} if ref.registry_name != "set_config_parameter" else {}))
 
     def run(self, request: SandboxHandoff) -> dict:
         # Validate before opening the registry or allocating any Docker resource.
@@ -67,13 +76,15 @@ class SandboxService:
 
         def refresh(candidate):
             ref = next(ref for ref in request.retry_template_refs
-                       if ref.version == candidate.version and ref.sha256 == candidate.sha256)
+                       if ref.registry_name == candidate.registry_name and ref.version == candidate.version and ref.sha256 == candidate.sha256)
             return self.resolve_template(request, ref)
 
+        review = risk_review(engine, request.snapshot, request.control_id, self.risk_reviewer, template.risk_level)
         result = RemediationLoop(engine, template, self.runtime_factory,
             reviser=self.reviser if request.retry_mode == 'adaptive' else None,
-            alternatives=alternatives, refresh_template=refresh).run(
+            alternatives=alternatives, refresh_template=refresh, control_id=request.control_id).run(
             request.snapshot, request.assessment)
+        result["risk_review"] = review
         result.update(run_id=str(uuid.uuid4()), approval_source="registry",
                       requires_dba_review=True, handoff_version=request.schema_version)
         return result

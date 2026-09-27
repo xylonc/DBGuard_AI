@@ -161,6 +161,9 @@ class Demo:
             self.run([str(python), '-m', 'pip', 'install', '-r', 'requirements-demo.lock'], 'python-install')
             self.run([str(python), '-m', 'pip', 'check'], 'python-check')
             stamp.write_text(fingerprint)
+        self.run([str(python), '-m', 'playwright', 'install', 'chromium'], 'evidence-browser')
+        self.env['DBGUARD_SCREENSHOTS'] = 'true'
+        self.env['DBGUARD_HISTORY_DIR'] = str(STATE/'history')
         self.run(['npm', 'ci', '--ignore-scripts'], 'npm-install', ROOT / 'frontend')
         self.run(['npm', 'run', 'typecheck'], 'ui-typecheck', ROOT / 'frontend')
         self.run(['npm', 'run', 'build'], 'ui-build', ROOT / 'frontend')
@@ -171,7 +174,7 @@ class Demo:
         context = self.ready('Disposable demo', f'http://127.0.0.1:{self.base+1}/api/v1/demo/workflow')
         self.start('mcp', [str(python), '-m', 'services.dbguard_mcp.server'], env={**self.env,
             'DBGUARD_MCP_HOST': self.config.get('DEMO_MCP_BIND', '0.0.0.0'), 'DBGUARD_MCP_PORT': str(self.base+5),
-            'DBGUARD_API_URL': f'http://127.0.0.1:{self.base+1}', 'DBGUARD_MCP_SANDBOX_TIMEOUT_SECONDS': '600'})
+            'DBGUARD_API_URL': f'http://127.0.0.1:{self.base+1}', 'DBGUARD_DEMO_API_URL':f'http://127.0.0.1:{self.base+1}', 'DBGUARD_MAIN_API_URL':f'http://127.0.0.1:{self.base+2}', 'DBGUARD_MCP_SANDBOX_TIMEOUT_SECONDS': '600'})
         self.ready('MCP', f'http://127.0.0.1:{self.base+5}/health')
         print('Starting HERMES and embedding services.', flush=True)
         self.compose_started = True

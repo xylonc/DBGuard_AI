@@ -39,7 +39,8 @@ class SandboxHandoff(StrictModel):
     snapshot: dict
     assessment: dict
     template_ref: TemplateReference
-    control_id: str = "cis-pg17-v1.1.0:3.1.20"
+    control_id: str = Field(default="cis-pg17-v1.1.0:3.1.20",
+                            description="Exact selected spec ID; defaults to cis-pg17-v1.1.0:3.1.20 for older callers")
     retry_mode: Literal["repeat", "adaptive"] = "repeat"
     retry_template_refs: list[TemplateReference] = Field(default_factory=list, max_length=2)
 

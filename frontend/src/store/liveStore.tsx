@@ -14,6 +14,8 @@ type LiveState = {
   demo: any
   handoffId: string
   result: any
+  // Latest combined (multi-fix) test, tied to the snapshot and benchmark it ran on.
+  batch: { snapshot_id: string benchmark: string data: any } | null
   benchmark: string
   environment: string
   templateVersion: number
@@ -21,7 +23,7 @@ type LiveState = {
   alternativeTemplates: string
   controlId: string
   retryMode: string
-  messages: { role: string; content: string }[]
+  messages: { role: string content: string }[]
   chatJob: string
   busy: string
   error: string
@@ -34,6 +36,7 @@ const fresh = (): LiveState => ({
   demo: null,
   handoffId: "",
   result: null,
+  batch: null,
   benchmark: "cis-pg17-v1.1.0",
   environment: "test",
   templateVersion: 1,
@@ -97,6 +100,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           snapshot: null,
           assessment: null,
           result: null,
+          batch: null,
           handoffId: "",
           verification: null,
           error: "The demo session changed. Load the current live demo again.",
@@ -169,6 +173,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         snapshot,
         assessment: null,
         result: null,
+        batch: null,
         handoffId: "",
         verification: null,
         messages: [],
@@ -191,6 +196,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         snapshot,
         assessment: null,
         result: null,
+        batch: null,
         handoffId: "",
         verification: null,
         messages: [],
@@ -339,6 +345,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       ...value,
       ...(value.benchmark !== undefined ? { assessment: null } : {}),
       result: null,
+      batch: null,
       handoffId: "",
       verification: null,
       messages: [],

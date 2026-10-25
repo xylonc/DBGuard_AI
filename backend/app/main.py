@@ -78,8 +78,9 @@ def get_assessment_report(snapshot_id: str):
     """Evaluate a snapshot against the control registry and return findings.
     
     This endpoint performs deterministic assessment of a snapshot using the
-    offline ASSESS evaluation engine. It returns pass/fail/gap status for
-    each control.
+    offline ASSESS evaluation engine. CIS findings are generated from the
+    installed spec catalog (IDs such as cis-pg17-v1.1.0:3.1.20); DBGUARD-*
+    findings are DBGuard's own supplementary checks, not CIS recommendations.
     """
     try:
         bundle = snapshot_store.load(snapshot_id)
@@ -425,7 +426,7 @@ class SandboxValidationRequest(BaseModel):
     snapshot_id: str = Field(min_length=1, max_length=64)
     control_id: str = Field(
         min_length=1,
-        description="CIS control ID (e.g., 'CIS-3.1.2')"
+        description="Control ID from the assessment (e.g., 'cis-pg17-v1.1.0:3.1.20'); legacy CIS-3.1.2 is still accepted"
     )
     template_id: str = Field(
         min_length=1,

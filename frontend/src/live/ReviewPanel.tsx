@@ -8,12 +8,12 @@ export function FixPlan() {
     s = live.state
   const [customOrder, setCustomOrder] = useState(false)
   const [plan, setPlan] = useState<any>(null),
-    [selected, setSelected] = useState<string[]>([]),
-    [batch, setBatch] = useState<any>(null)
+    [selected, setSelected] = useState<string[]>([])
+  // The combined result lives in the shared store so DBA review (step 6) shows it too.
+  const batch = currentBatch(s)
   useEffect(() => {
     setPlan(null)
     setSelected([])
-    setBatch(null)
   }, [s.snapshot?.snapshot_id, s.benchmark])
   async function load(llm = false) {
     await live.action("Reviewing proposed fixes", async () => {
@@ -165,7 +165,7 @@ export function FixPlan() {
               void live.action(
                 "Testing fixes individually and together",
                 async () => {
-                  setBatch(null)
+                  live.patch({ batch: null })
                   const b = await api(s.service, "/api/v1/sandbox/batches", {
                     requested_order: customOrder
                       ? selected.map(
@@ -189,7 +189,13 @@ export function FixPlan() {
                       control_id,
                     })),
                   })
-                  setBatch(b)
+                  live.patch({
+                    batch: {
+                      snapshot_id: s.snapshot.snapshot_id,
+                      benchmark: s.benchmark,
+                      data: b,
+                    },
+                  })
                 },
               )
             }
@@ -218,6 +224,112 @@ export function FixPlan() {
           />
         </>
       )}
+    </Card>
+  )
+}
+
+export function currentBatch(s: any) {
+  return s.batch &&
+    s.batch.snapshot_id === s.snapshot?.snapshot_id &&
+    s.batch.benchmark === s.benchmark
+    ? s.batch.data
+    : null
+}
+
+function fixIdOf(run: any) {
+  return run?.fix_id ?? run?.fix_unit?.fix_id
+}
+
+// One row per selected fix, so the DBA sees every fix from a combined test in step 6.
+export function CombinedReview() {
+  const s = useLive().state
+  const batch = currentBatch(s)
+  if (!batch) return null
+  const runs: any[] = batch.individual_runs ?? []
+  const units: any[] =
+    batch.fix_units ?? runs.map((r) => r.fix_unit).filter(Boolean)
+  const order: string[] = batch.recommended_order ?? units.map((u) => u.fix_id)
+  const combinedOk = batch.combined_test?.status === "VERIFIED"
+  const after = batch.sandbox_after_findings ?? {}
+  const rows = order
+    .map((fid) => units.find((u) => u.fix_id === fid))
+    .filter(Boolean)
+  const untested = runs
+    .map(fixIdOf)
+    .filter((fid) => fid && !rows.some((u: any) => u.fix_id === fid))
+  return (
+    <Card title="Combined fixes for DBA review">
+      <p>
+        Combined test: <strong>{batch.status}</strong>
+        {batch.order_source && (
+          <span className="text-slate-500">
+            {" "}
+            · order{" "}
+            {batch.order_source === "DBA_SELECTED"
+              ? "chosen by DBA"
+              : "recommended"}
+          </span>
+        )}
+      </p>
+      {batch.reason && <p className="text-amber-800">{batch.reason}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left">
+              <th className="py-2 pr-3">#</th>
+              <th className="py-2 pr-3">Control</th>
+              <th className="py-2 pr-3">Change</th>
+              <th className="py-2 pr-3">Tested alone</th>
+              <th className="py-2 pr-3">After combined test</th>
+              <th className="py-2">DBA action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((u: any, i: number) => {
+              const alone =
+                runs.find((r) => fixIdOf(r) === u.fix_id)?.status ?? "NOT RUN"
+              const ok = alone === "VERIFIED" && combinedOk
+              return (
+                <tr
+                  key={u.fix_id}
+                  className="border-t border-slate-200 align-top"
+                >
+                  <td className="py-2 pr-3">{i + 1}</td>
+                  <td className="py-2 pr-3">{u.spec_id}</td>
+                  <td className="py-2 pr-3">
+                    {u.params?.param_name}: {u.prior_state?.value} →{" "}
+                    {u.params?.param_value} · {u.requires}
+                  </td>
+                  <td className="py-2 pr-3">{alone}</td>
+                  <td className="py-2 pr-3">{after[u.spec_id] ?? "NOT RUN"}</td>
+                  <td className="py-2">
+                    {ok
+                      ? "Review, then apply with the combined bundle"
+                      : "Needs manual DBA review; not in a bundle"}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {untested.length > 0 && (
+        <p className="text-amber-800">
+          Stopped before combined testing: {untested.join(", ")}
+        </p>
+      )}
+      {batch.review_bundle?.status === "READY" ? (
+        <a
+          className={`${button} inline-block`}
+          href={`/bridge/${s.service}/api/v1/sandbox/runs/${encodeURIComponent(batch.run_id)}/bundle`}
+          download
+        >
+          Download combined DBA bundle
+        </a>
+      ) : (
+        <p>No combined bundle: every fix must pass alone and together first.</p>
+      )}
+      <Raw value={batch} label="Combined test, rollback and cleanup evidence" />
     </Card>
   )
 }

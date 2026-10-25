@@ -126,3 +126,23 @@ def test_check_only_cli_writes_report_without_registry_or_docker(handoff, tmp_pa
     original = output.read_bytes()
     assert subprocess.run(command, env=env, capture_output=True).returncode != 0
     assert output.read_bytes() == original
+
+
+def test_readiness_checks_the_selected_controls_own_setting(handoff):
+    """A 3.1.25 handoff is checked against log_statement, not the log_connections default."""
+    request = SandboxHandoff(**handoff)
+    template = approved(request.template_ref)
+    rendered = []
+    original = type(template).render
+
+    def spy(self, name="UNSET", value="UNSET"):
+        rendered.append((name, value))
+        return original(self, name, value)
+    service = SandboxService('not-a-real-dsn', registry_loader=Mock(return_value=template),
+                             runtime_factory=Mock(side_effect=AssertionError('Docker forbidden')))
+    request.control_id = 'cis-pg17-v1.1.0:3.1.25'
+    with patch.object(type(template), 'render', spy):
+        report = check_readiness(service, request, check_registry=True)
+    assert ('log_statement', 'ddl') in rendered
+    assert ('UNSET', 'UNSET') not in rendered
+    assert report['registry'] != 'REJECTED', report

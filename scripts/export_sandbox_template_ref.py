@@ -12,13 +12,17 @@ sys.path[:0] = [str(ROOT), str(ROOT / "backend")]
 def main():
     from services.sandbox_poc.templates import export_reference
     from services.sandbox_poc.review_bundle import canonical_apply, is_fixture
-    from services.sandbox_poc.shared import ContractError
+    from services.sandbox_poc.shared import ContractError, ROOT as REPO, SpecEngine
+    from services.sandbox_poc.planning import fix_scope
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--template-version", type=int, required=True)
     parser.add_argument("--evidence-id", action="append", required=True)
     parser.add_argument("--environment", choices=["dev", "test", "prod"], default="dev")
     parser.add_argument("--registry-env", default="DATABASE_URL", help="Environment variable holding the registry DSN")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--benchmark-id", default="cis-pg17-v1.1.0")
+    parser.add_argument("--control-id", default="cis-pg17-v1.1.0:3.1.20",
+                        help="Exact spec the template must be able to fix")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output already exists; choose a new file")
@@ -27,7 +31,10 @@ def main():
         parser.error("The selected registry environment variable is not set")
     try:
         ref, template = export_reference(dsn, args.template_version, args.evidence_id, args.environment)
-        canonical_apply(template.render())
+        engine = SpecEngine.load(REPO / "catalog/specs" / args.benchmark_id,
+                                 REPO / "catalog/benchmarks" / args.benchmark_id / "records.json")
+        _, name, value = fix_scope(engine, args.control_id)
+        canonical_apply(template.render(name, value), name)
         if is_fixture({"template": template.identity()}):
             raise ContractError("Demo/test records are not team approvals")
     except ContractError as exc:

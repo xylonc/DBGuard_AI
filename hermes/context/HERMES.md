@@ -42,7 +42,7 @@ For a legacy proposal request (not a demo or sandbox test):
 4. Call `search_approved_templates` using the analyst's requirement.
 5. Select only template IDs returned by that search.
 6. Call `validate_and_render_proposal` with a `proposal` object containing:
-   - `control_id`: CIS control identifier (e.g., 'CIS-3.1.2')
+   - `control_id`: the finding's exact `control_id` (e.g., 'cis-pg17-v1.1.0:3.1.20')
    - `template_id`: approved template ID from search_approved_templates
    - `parameters`: template parameters matching the template schema
    - `reasoning`: agent reasoning for why this template applies

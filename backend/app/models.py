@@ -18,7 +18,7 @@ class RemediationProposal(BaseModel):
     """
     
     control_id: str = Field(
-        description="CIS Control identifier (e.g., 'CIS-3.1.2')"
+        description="Control identifier (e.g., 'cis-pg17-v1.1.0:3.1.20' or 'DBGUARD-MD5-PASSWORDS')"
     )
     finding_id: Optional[str] = Field(
         default=None,
@@ -258,7 +258,7 @@ class Finding(BaseModel):
     """
 
     control_id: str = Field(
-        description="Unique control identifier (e.g., CIS-3.1.2)"
+        description="Unique control identifier (e.g., cis-pg17-v1.1.0:3.1.20 or DBGUARD-MD5-PASSWORDS)"
     )
     status: FindingStatus = Field(
         description="Evaluation outcome: PASS, FAIL, GAPPED, or MANUAL_REVIEW"

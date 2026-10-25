@@ -144,6 +144,10 @@ def get_snapshot_assessment(snapshot_id: str, backend: Literal["default", "demo"
     - summary: counts by status
     - rationale and evidence for each finding
 
+    CIS findings use exact spec IDs (e.g. cis-pg17-v1.1.0:3.1.20), the same IDs
+    as get_snapshot_spec_assessment. DBGUARD-* findings are DBGuard's own
+    supplementary checks, not CIS recommendations; never relabel them as CIS.
+
     Use this to understand the current security state before proposing fixes.
     """
     return _request_for(backend, "GET", f"/api/v1/snapshots/{snapshot_id}/assessment")

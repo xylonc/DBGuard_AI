@@ -84,16 +84,3 @@ def reconstruct(runtime, plan: dict) -> None:
             lines.append(f"{entry['name']} = '{value}'")
         runtime.write_config(filename.rsplit("/", 1)[1], "\n".join(lines) + "\n")
     runtime.activate(plan["expected"])
-
-
-def rollback_sql(snapshot: dict) -> str:
-    row = setting_rows(snapshot)["log_connections"]
-    if row["sourcefile"] == FILES[1]:
-        # Restore the original textual file value, not just its effective alias.
-        original = next(r["setting"] for r in snapshot["baseline"]["file_settings"]
-                        if r["name"] == "log_connections" and r["sourcefile"] == FILES[1])
-        literal = original.replace("'", "''")
-        command = f"ALTER SYSTEM SET log_connections = '{literal}';"
-    else:
-        command = "ALTER SYSTEM RESET log_connections;"
-    return command + "\nSELECT pg_reload_conf();"

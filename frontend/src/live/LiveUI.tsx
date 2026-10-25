@@ -1,5 +1,10 @@
 import { BenchmarkImport } from "./BenchmarkImport"
-import { FixPlan, RunHistory } from "./ReviewPanel"
+import {
+  CombinedReview,
+  FixPlan,
+  RunHistory,
+  currentBatch,
+} from "./ReviewPanel"
 import { EndpointPanel } from "./EndpointPanel"
 import { useEffect, useState, type ReactNode } from "react"
 import { useLive } from "@/store/liveStore"
@@ -495,15 +500,16 @@ export function LiveWorkflow() {
           </>
         )}
         {step === 6 &&
-          (s.result ? (
+          (s.result || currentBatch(s) ? (
             <>
-              <RunResult />
+              <CombinedReview />
+              {s.result && <RunResult />}
               <Card title="DBA handoff">
                 <p>
                   The DBA reviews and runs harden.sh separately. Downloading the
                   bundle does not apply anything.
                 </p>
-                {bundlePath(s.service, s.result) ? (
+                {s.result && bundlePath(s.service, s.result) ? (
                   <a
                     className={`${button} inline-block`}
                     href={bundlePath(s.service, s.result)}
@@ -511,8 +517,12 @@ export function LiveWorkflow() {
                   >
                     Download DBA review bundle
                   </a>
-                ) : (
+                ) : s.result ? (
                   <p>No bundle is available for this result.</p>
+                ) : (
+                  <p>
+                    Use the combined bundle above for the fixes tested together.
+                  </p>
                 )}
                 <button
                   className="ml-3 text-teal-700"
@@ -630,6 +640,15 @@ function Verification() {
   const [snapshot, setSnapshot] = useState<any>(null)
   const [assessment, setAssessment] = useState<any>(null)
   const [source, setSource] = useState<any>(null)
+  // Name the controls actually tested, not a fixed example.
+  const tested: string[] = [
+    ...new Set<string>(
+      [
+        s.result?.fix_unit?.spec_id,
+        ...(currentBatch(s)?.fix_units ?? []).map((u: any) => u.spec_id),
+      ].filter(Boolean),
+    ),
+  ]
   const matching =
     sameTarget(s.snapshot, snapshot) &&
     isFreshSnapshot(s.snapshot, snapshot) &&
@@ -664,9 +683,10 @@ function Verification() {
             </>
           )}
           <p className="text-xs text-slate-500">
-            The source is expected to still fail connection logging because the
-            fix was tested only in the sandbox. Use Main API for a separate
-            post-DBA snapshot.
+            {tested.length
+              ? `The source is expected to still fail ${tested.join(", ")} because fixes were tested only in the sandbox.`
+              : "The source stays unchanged because fixes are tested only in the sandbox."}{" "}
+            Use Main API for a separate post-DBA snapshot.
           </p>
         </>
       ) : (

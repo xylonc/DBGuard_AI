@@ -1,0 +1,10 @@
+# Optional overlay: HERMES -> MCP -> host API with Docker CLI access.
+# Start scripts/local_sandbox_api.py on the host first. The main API container
+# stays separate; no Docker socket is mounted into HERMES or its MCP adapter.
+services:
+  mcp:
+    environment:
+      DBGUARD_API_URL: http://host.docker.internal:8011
+      DBGUARD_MCP_SANDBOX_TIMEOUT_SECONDS: 600
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -12,7 +12,7 @@ by immutable SHA-256 digest. It adds:
 - `config/config.yaml`: model, MCP allowlist and disabled toolsets;
 - `context/HERMES.md`: non-negotiable DBGuard operating rules;
 - `context/SOUL.md`: plain-language assistant identity;
-- `skills/dbguard-hardening/SKILL.md`: the complete proposal workflow;
+- `skills/dbguard-hardening/SKILL.md`: proposal and disposable sandbox workflows;
 - `configure.py`: creates runtime config and hashes the dashboard password;
 - `docker-entrypoint.sh`: seeds the persistent HERMES home, then delegates to
   the official image entrypoint.
@@ -54,13 +54,18 @@ rows can still be retrieved once query embeddings are available.
 
 ## Controlled tool surface
 
-HERMES connects to `http://mcp:8001/mcp` and is restricted to five operations:
+HERMES connects to `http://mcp:8001/mcp` and is restricted to ten operations:
 
 1. read one normalized snapshot;
 2. evaluate snapshot against control rules;
 3. search approved knowledge;
 4. search approved SQL templates;
 5. validate and render a proposal through the trusted API.
+6. assess an uploaded snapshot using exact installed specs;
+7. prepare an approved sandbox handoff;
+8. run the handoff in disposable PostgreSQL with bounded adaptive retries;
+9. retrieve its status and review-bundle link;
+10. discover the connected disposable demo and its explicitly labelled fixture references.
 
 The MCP server publishes no resources and no prompts. General browser, shell,
 file, process, code-execution, delegation, memory, scheduled-job and web
@@ -68,8 +73,8 @@ toolsets are disabled. The terminal backend is set to Docker as a second safety
 layer, and no Docker socket is mounted.
 
 The model may see HERMES's three deferred-tool facade functions
-(`tool_search`, `tool_describe`, `tool_call`) instead of five raw schemas. The
-facade's underlying registry contains only the five allowlisted DBGuard tools;
+(`tool_search`, `tool_describe`, `tool_call`) instead of ten raw schemas. The
+facade's underlying registry contains only the ten allowlisted DBGuard tools;
 it does not expand the agent's authority.
 
 ## User workflow
@@ -83,7 +88,11 @@ it does not expand the agent's authority.
    rollback considerations.
 6. A DBA or engineer decides whether to approve and apply it outside DBGuardAI.
 
-HERMES never claims that proposed SQL was tested or executed.
+For disposable sandbox testing, HERMES uses the exact-spec assessment and
+prepare/run/status tools. It reports a test outcome only from returned evidence,
+including rollback/cleanup and the bundle link. It never implies that a sandbox
+success changed the real target. See the [sandbox integration guide](../services/sandbox_poc/HERMES_INTEGRATION.md)
+for host API setup, live verification and remaining approval/RAG requirements.
 
 ## Local endpoints
 
@@ -94,3 +103,21 @@ HERMES never claims that proposed SQL was tested or executed.
 
 Both HERMES ports are bound to host loopback by Compose. The API requires
 `HERMES_API_SERVER_KEY`; the dashboard requires its own username and password.
+
+## Connected local demo
+
+The local demo UI and HERMES can share the same backend on port 8010. HERMES
+uses demo discovery followed by the existing exact-spec assessment and
+prepare/run/status endpoints; the UI retrieves the final result and bundle from
+that backend. See [connected demo setup](../services/sandbox_poc/HERMES_INTEGRATION.md#connected-disposable-demo).
+Demo references remain DEMO_FIXTURE_ONLY; this path does not prove approved RAG
+retrieval. For ordinary target requests, the normal approval workflow still applies.
+
+For this connected demo, set `HERMES_WORKFLOW_MODE=demo` when starting HERMES.
+Runtime configuration then exposes only discovery, exact-spec assessment,
+prepare, run and status (five tools). Legacy assessment and proposal/search tools
+are hidden to prevent selecting the incompatible assessment path. The default
+`standard` mode retains the full ten-tool surface for ordinary integration.
+Restart/recreate the container and start a fresh chat after changing modes.
+Tool errors must be reported as failures; a fictional transcript or placeholder
+handle is never execution evidence. Validate run IDs and bundle links against the UI.

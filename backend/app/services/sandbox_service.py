@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from catalog.controls.assess.registry import CONTROL_REGISTRY
+from catalog.controls.assess.registry import get_control, resolve_control_id
 from app.models import (
     AssessmentReport,
     ControlMetadata,
@@ -239,7 +239,7 @@ class SandboxValidationService:
 
     def _evaluate_control(self, snapshot: Dict[str, Any], control_id: str) -> Finding:
         """Evaluate a single control against a snapshot."""
-        control = CONTROL_REGISTRY.get(control_id)
+        control = get_control(control_id)
         if control is None:
             raise ValueError(f"Unknown control ID: {control_id}")
 
@@ -398,7 +398,7 @@ class SandboxValidationService:
 
             # Step 9: Execute rollback SQL
             if pre_finding.evidence_found and pre_finding.status == FindingStatus.FAIL:
-                if control_id in ("cis_postgres_16_log_connections", "CIS-3.1.2") and "log_connections" in pre_finding.evidence_found:
+                if resolve_control_id(control_id) == "cis-pg17-v1.1.0:3.1.20" and "log_connections" in pre_finding.evidence_found:
                     original_value = pre_finding.evidence_found["log_connections"]
                     rollback_sql = f"ALTER SYSTEM SET log_connections = '{original_value}';"
                     rollback_success, rollback_log = self._execute_sql_in_twin(

@@ -44,12 +44,12 @@ def ingest_template(
     pg_version: str = None,
 ) -> dict:
     """Ingest a single template into the templates table with embedding.
-    
+
     Templates are immutable: once stored, their content cannot be changed.
     - If the latest version for template_name has identical sql_template -> return it (no-op).
     - If it differs -> INSERT new version (max + 1) with status 'draft'.
     - Explicit version can be provided for first version of new template.
-    
+
     Approval must happen separately through the template approval flow.
     """
     tags = tags or []
@@ -60,7 +60,7 @@ def ingest_template(
     conn = psycopg2.connect(settings.database_url)
     try:
         cur = conn.cursor()
-        
+
         # Find the latest version for this template_name
         cur.execute("""
             SELECT id, version, sql_template, template_hash, status
@@ -70,10 +70,10 @@ def ingest_template(
             LIMIT 1
         """, (template_name,))
         latest = cur.fetchone()
-        
+
         if latest:
             latest_id, latest_version, latest_sql, latest_hash, latest_status = latest
-            
+
             # If content hash matches, this is a no-op - return the existing row
             if latest_hash == template_hash:
                 conn.commit()
@@ -86,13 +86,13 @@ def ingest_template(
                 }
                 print(f"   ⏭️  {template_name} v{latest_version} unchanged (hash match)")
                 return result
-            
+
             # Content differs -> create new version (latest + 1)
             new_version = latest_version + 1
         else:
             # No existing template -> create version 1
             new_version = version if version is not None else 1
-        
+
         # INSERT new version (never UPDATE)
         cur.execute("""
             INSERT INTO templates
@@ -122,7 +122,7 @@ def ingest_template(
 
 def search_templates(query: str, top_k: int = 5) -> list[dict]:
     """Search templates by semantic similarity to the query.
-    
+
     Returns only active templates with version info for exact identification.
     """
     query_embedding = get_embedding(query)
@@ -184,7 +184,7 @@ def approve_template(template_name: str, version: int, approved_by: str) -> bool
 
 def get_active_template_version(template_name: str) -> dict | None:
     """Get the active version of a template by name.
-    
+
     Returns None if no active version exists.
     """
     conn = psycopg2.connect(settings.database_url)
@@ -245,7 +245,7 @@ def _auto_generate_tags(description: str) -> list[str]:
     """Generate tags from keywords in the description."""
     desc_lower = description.lower()
     tags = []
-    
+
     if any(word in desc_lower for word in ["read-only", "select-only", "auditor", "auditing"]):
         tags.append("access-control")
         tags.append("read-only")
@@ -258,7 +258,7 @@ def _auto_generate_tags(description: str) -> list[str]:
         tags.append("identity")
     if not tags:
         tags.append("general")
-    
+
     return tags
 
 
@@ -294,7 +294,7 @@ def ingest_all_templates(templates_dir: str = None):
 
         # Auto-generate tags
         tags = _auto_generate_tags(description)
-        
+
         # Default values
         risk_level = "medium"
         pg_version = "12+"

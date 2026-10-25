@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 
 # Import directly to avoid circular dependency through app package
 from app.services.spec_engine.records import RecordsIndex
-from app.services.spec_engine.manifest import build_manifest  # noqa: E402
+from app.services.spec_engine.manifest import build_manifest, manifest_text  # noqa: E402
 
 RECORDS_PATH = REPO_ROOT / "catalog" / "benchmarks" / "cis-pg17-v1.1.0" / "records.json"
 
@@ -65,7 +65,7 @@ def main() -> int:
     # Write as UTF-8 JSON with sorted keys, 2-space indent, trailing newline
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(
-        __import__("json").dumps(manifest, sort_keys=True, indent=2, ensure_ascii=False) + "\n",
+        manifest_text(manifest),
         encoding="utf-8",
     )
     print(f"Wrote manifest to {args.out}")

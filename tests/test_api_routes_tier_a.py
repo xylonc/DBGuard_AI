@@ -85,7 +85,7 @@ def test_compile_proposal_endpoint_exists(client):
 def test_routes_table_contains_validate_and_render():
     """Test that /api/v1/proposals/validate-and-render is in the FastAPI route table."""
     from backend.app.main import app
-    route_paths = [route.path for route in app.routes]
+    route_paths = app.openapi()["paths"]
     assert "/api/v1/proposals/validate-and-render" in route_paths, (
         "Expected /api/v1/proposals/validate-and-render in route table"
     )
@@ -94,7 +94,7 @@ def test_routes_table_contains_validate_and_render():
 def test_routes_table_does_not_contain_harden():
     """Test that /api/v1/harden is not in the FastAPI route table."""
     from backend.app.main import app
-    route_paths = [route.path for route in app.routes]
+    route_paths = app.openapi()["paths"]
     assert "/api/v1/harden" not in route_paths, (
         "Expected /api/v1/harden to be removed from route table"
     )

@@ -7,10 +7,12 @@ import json
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
 
 from app.collector_models import (
     CollectorBundleV020,
+    SnapshotV030,
+    parse_snapshot,
+    CollectionGap,
     SnapshotContextResponse,
     SnapshotUploadResponse,
 )
@@ -31,7 +33,7 @@ class SnapshotStore:
         self.storage_dir = Path(storage_dir).resolve()
 
     @staticmethod
-    def _canonical_bytes(bundle: CollectorBundleV020) -> bytes:
+    def _canonical_bytes(bundle: CollectorBundleV020 | SnapshotV030) -> bytes:
         payload = bundle.model_dump(mode="json", exclude_none=False)
         return json.dumps(
             payload,
@@ -40,7 +42,7 @@ class SnapshotStore:
             ensure_ascii=False,
         ).encode("utf-8")
 
-    def save(self, bundle: CollectorBundleV020) -> SnapshotUploadResponse:
+    def save(self, bundle: CollectorBundleV020 | SnapshotV030) -> SnapshotUploadResponse:
         data = self._canonical_bytes(bundle)
         digest = hashlib.sha256(data).hexdigest()
         snapshot_id = f"snap-{digest[:20]}"
@@ -61,42 +63,40 @@ class SnapshotStore:
                 temporary_path = Path(temporary.name)
             os.replace(temporary_path, destination)
 
-        envelope = bundle.envelope
+        raw = bundle.model_dump(mode="json", exclude_none=False)
+        envelope = raw["envelope"]
+        baseline = raw.get("baseline", raw)
         return SnapshotUploadResponse(
             snapshot_id=snapshot_id,
             snapshot_hash=digest,
-            target_id=envelope.target_id,
-            database=envelope.database,
-            schema_version=envelope.schema_version,
-            collected_at=envelope.collected_at,
-            gap_count=len(bundle.gaps),
+            target_id=envelope["target_id"],
+            database=envelope["database"],
+            schema_version=envelope["schema_version"],
+            collected_at=envelope.get("collected_at"),
+            gap_count=len(baseline.get("gaps") or []),
         )
 
-    def load(self, snapshot_id: str) -> CollectorBundleV020:
+    def load(self, snapshot_id: str) -> CollectorBundleV020 | SnapshotV030:
         if not snapshot_id.startswith("snap-") or not snapshot_id[5:].isalnum():
             raise SnapshotNotFoundError(snapshot_id)
         path = self.storage_dir / f"{snapshot_id}.json"
         if not path.is_file():
             raise SnapshotNotFoundError(snapshot_id)
-        return CollectorBundleV020.model_validate_json(path.read_text(encoding="utf-8"))
+        return parse_snapshot(json.loads(path.read_text(encoding="utf-8")))
 
     def context(self, snapshot_id: str) -> SnapshotContextResponse:
         bundle = self.load(snapshot_id)
         canonical = self._canonical_bytes(bundle)
         digest = hashlib.sha256(canonical).hexdigest()
         raw = bundle.model_dump(mode="json", exclude_none=False)
-        gaps = bundle.gaps
+        baseline = raw.get("baseline", raw)
+        envelope = raw["envelope"]
+        gaps = [CollectionGap.model_validate(gap) for gap in baseline.get("gaps") or []]
         unavailable = sorted({gap.section for gap in gaps})
+        settings = {item["name"]: item.get("setting") for item in baseline.get("settings") or []
+                    if isinstance(item, dict) and item.get("name")}
 
-        settings: dict[str, Any] = {}
-        if bundle.settings is not None:
-            settings = {
-                item["name"]: item.get("setting")
-                for item in bundle.settings
-                if isinstance(item, dict) and item.get("name")
-            }
-
-        version_number = bundle.identity.get("server_version_num")
+        version_number = baseline.get("identity", {}).get("server_version_num")
         try:
             pg_version = str(int(version_number) // 10000) if version_number else None
         except (TypeError, ValueError):
@@ -104,20 +104,20 @@ class SnapshotStore:
         known_metadata = {"envelope", "gaps", "redactions", "host_not_collected"}
         available = sorted(
             key
-            for key, value in raw.items()
+            for key, value in baseline.items()
             if key not in known_metadata and value is not None
         )
 
         return SnapshotContextResponse(
             snapshot_id=snapshot_id,
             snapshot_hash=digest,
-            target_id=bundle.envelope.target_id,
-            database=bundle.envelope.database,
+            target_id=envelope["target_id"],
+            database=envelope["database"],
             postgresql_version=pg_version,
-            deployment_type=bundle.envelope.deployment_type,
-            collected_at=bundle.envelope.collected_at,
+            deployment_type=envelope.get("deployment_type", "self-managed"),
+            collected_at=envelope.get("collected_at"),
             settings=settings,
-            roles=bundle.roles,
+            roles=baseline.get("roles"),
             gaps=gaps,
             available_sections=available,
             unavailable_sections=unavailable,

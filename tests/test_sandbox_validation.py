@@ -25,7 +25,7 @@ from app.models import (
     FindingStatus,
     TwinExecutionStatus,
 )
-from catalog.controls.assess.registry import CONTROL_REGISTRY
+from catalog.controls.assess.registry import get_control
 
 
 # ============================================================================
@@ -137,15 +137,19 @@ class TestSandboxValidationService:
 
     def test_control_registry_is_automatable(self):
         """Test that automatable controls have the correct metadata."""
-        control = CONTROL_REGISTRY.get("CIS-3.1.2")
+        # Legacy ID: log_connections now comes from the CIS PG17 3.1.20 spec.
+        control = get_control("CIS-3.1.2")
         assert control is not None
+        assert control.control_id == "cis-pg17-v1.1.0:3.1.20"
         assert control.is_automatable is True
         assert control.template_id == "SET_CONFIG_PARAMETER"
 
     def test_non_automatable_control_detection(self):
         """Test that non-automatable controls are properly identified."""
-        control = CONTROL_REGISTRY.get("CIS-2.1")
+        # Legacy ID: md5 detection is a DBGuard supplementary check, not CIS 2.1.
+        control = get_control("CIS-2.1")
         assert control is not None
+        assert control.control_id == "DBGUARD-MD5-PASSWORDS"
         assert control.is_automatable is False
         assert control.template_id == "MANUAL_PROCEDURE"
 

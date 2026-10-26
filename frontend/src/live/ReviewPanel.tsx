@@ -52,18 +52,6 @@ export function FixPlan() {
           {plan.recommended_order.map((f: any, i: number) => (
             <section className="border rounded p-4 space-y-2" key={f.fix_id}>
               <div className="flex gap-2 items-center">
-                <input
-                  aria-label={"Include " + f.setting + " in combined test"}
-                  type="checkbox"
-                  checked={selected.includes(f.spec_id)}
-                  onChange={(e) =>
-                    setSelected(
-                      e.target.checked
-                        ? [...selected, f.spec_id]
-                        : selected.filter((x) => x !== f.spec_id),
-                    )
-                  }
-                />
                 <h3 className="font-semibold">
                   {i + 1}. {f.title}
                 </h3>
@@ -110,22 +98,56 @@ export function FixPlan() {
                   }}
                 />
               </details>
-              <button
-                className={button}
-                disabled={!!s.busy || !!s.handoffId}
-                onClick={() => live.configure({ controlId: f.spec_id })}
-              >
-                {(s.controlId || "cis-pg17-v1.1.0:3.1.20") === f.spec_id
-                  ? "Selected for individual test"
-                  : "Select individual fix"}
-              </button>
+              <div className="flex flex-wrap gap-4 items-center border-t pt-3">
+                {(s.controlId || "cis-pg17-v1.1.0:3.1.20") === f.spec_id ? (
+                  <span className="rounded bg-teal-700 text-white px-4 py-2">
+                    ✓ This fix runs in the single-fix test below
+                  </span>
+                ) : (
+                  <button
+                    className="rounded border border-teal-700 text-teal-700 px-4 py-2 disabled:opacity-40"
+                    disabled={!!s.busy || !!s.handoffId}
+                    onClick={() => live.configure({ controlId: f.spec_id })}
+                  >
+                    Use for single-fix test
+                  </button>
+                )}
+                <label className="flex gap-2 items-center">
+                  <input
+                    aria-label={"Include " + f.setting + " in combined test"}
+                    type="checkbox"
+                    checked={selected.includes(f.spec_id)}
+                    onChange={(e) =>
+                      setSelected(
+                        e.target.checked
+                          ? [...selected, f.spec_id]
+                          : selected.filter((x) => x !== f.spec_id),
+                      )
+                    }
+                  />
+                  Add to combined test
+                </label>
+              </div>
             </section>
           ))}
-          {plan.manual_review.map((f: any) => (
-            <p className="text-amber-800" key={f.spec_id}>
-              {f.spec_id}: {f.reason}
-            </p>
-          ))}
+          {plan.manual_review.length > 0 && (
+            <section className="border border-amber-300 rounded p-4 space-y-2">
+              <h3 className="font-semibold">Not fixable automatically</h3>
+              <p className="text-sm">
+                These controls did not pass, but DBGuard will not propose a fix.
+                They stay in the assessment for a person to handle.
+              </p>
+              <ul className="list-disc pl-5">
+                {plan.manual_review.map((f: any) => (
+                  <li key={f.spec_id}>
+                    <strong>{f.title || f.spec_id}</strong>{" "}
+                    <span className="text-sm">({f.spec_id})</span>:{" "}
+                    {manualReason(f)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {selected.length > 1 && (
             <div className="border rounded p-3 space-y-2">
               <label className="flex gap-2">
@@ -200,7 +222,9 @@ export function FixPlan() {
               )
             }
           >
-            Test selected fixes together ({selected.length})
+            {selected.length < 2
+              ? "Combined test: tick at least two fixes"
+              : `Test ${selected.length} selected fixes together`}
           </button>
         </>
       )}
@@ -234,6 +258,16 @@ export function currentBatch(s: any) {
     s.batch.benchmark === s.benchmark
     ? s.batch.data
     : null
+}
+
+// Plain-language reason a non-passing control gets no automatic fix.
+export function manualReason(f: any) {
+  if (f.tier === "manual_checklist" || f.tier === "parameterised")
+    return "a person must check this; the CIS text gives no value DBGuard can test automatically."
+  if (f.tier === "needs_capability")
+    return "DBGuard cannot check this automatically yet."
+  if (f.status === "FAIL") return "no reviewed fix exists for this setting yet."
+  return "the evidence is missing or out of date; collect a new snapshot before fixing."
 }
 
 function fixIdOf(run: any) {

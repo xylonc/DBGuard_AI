@@ -8,7 +8,7 @@ The September product package includes the implemented features listed in IMPROV
 4. Make combined runs the selected result across Sandbox, DBA review and chat. Currently download the combined bundle in step 5 or retrieve its exact run in history.
 5. Expand the combined HTML report beyond its index/per-fix reports; combined-state evidence currently resides in JSON.
 6. Add a live reproduce/apply/reassess/rollback/cleanup timeline and clearer model activity.
-7. Correct workflow completion markers and clarify manual/needs-capability outcomes.
+7. Correct workflow completion markers and clarify manual/needs-capability outcomes. *Partly done (Wave 1 F1 branch): step 5 now lists them under "Not fixable automatically" with title and a plain reason per tier, and the fix-card buttons are relabelled. Completion markers still pending.*
 8. Add an explicit new-test action preserving the snapshot/history; current handoff button retrieves/resumes that handoff.
 9. Move Prototype mode out of the customer path and label Main-only Library clearly.
 10. Improve safe Markdown chat, evidence readability, screenshot viewing and icon labels.

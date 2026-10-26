@@ -417,9 +417,9 @@ class TestValidateSpecsScript:
     def test_cli_reports_ok_for_every_committed_spec(self):
         result = self.run_cli(SPEC_DIR)
         spec_files = sorted(SPEC_DIR.glob("*.yaml"))
-        assert len(spec_files) == 6, [p.name for p in spec_files]
+        assert len(spec_files) == 15, [p.name for p in spec_files]
         ok_lines = [line for line in result.stdout.splitlines() if line.startswith("OK ")]
-        assert len(ok_lines) == 6, result.stdout
+        assert len(ok_lines) == 15, result.stdout
         assert result.returncode == 0, result.stdout
 
     def test_cli_fails_on_empty_directory(self, tmp_path):

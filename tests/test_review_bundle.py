@@ -55,7 +55,12 @@ def test_rejects_unbound_or_unsafe_bundle(recorded, engine, fault):
         result['fix_unit']['apply']['param'] = 'unsafe'
         result['fix_unit_hash'] = digest(result['fix_unit'])
     if fault == 'evidence': result['template']['evidence'][0]['sha256'] = '0'*64
-    if fault == 'assessment': result['attempts'][0]['after_assessment']['findings'][next(iter(engine.hashes))]['status'] = 'PASS'
+    if fault == 'assessment':
+        # Was next(iter(engine.hashes)), i.e. 3.1.14 with the original spec set. Pin it:
+        # with 3.1.11 sorted first, that choice already PASSed and the tamper was a no-op.
+        findings = result['attempts'][0]['after_assessment']['findings']
+        assert findings['cis-pg17-v1.1.0:3.1.14']['status'] != 'PASS'
+        findings['cis-pg17-v1.1.0:3.1.14']['status'] = 'PASS'
     if fault == 'provenance': result['attempts'][0]['rollback']['baseline']['file_settings'] = []
     with pytest.raises(ContractError):
         build_review_bundle(SandboxHandoff(**recorded['handoff']), result, engine)

@@ -20,8 +20,14 @@ def engine():
 @pytest.fixture
 def snapshot(engine):
     settings, checks, files = [], {}, []
+    # 3.1.20 (log_connections) and 3.1.25 (log_statement) FAIL; every other
+    # automated spec setting holds its compliant value so regressions are visible.
     values = {"log_connections": "off", "debug_print_parse": "off", "log_disconnections": "on",
-              "log_statement": "none", "ssl_min_protocol_version": "TLSv1.2"}
+              "log_statement": "none", "ssl_min_protocol_version": "TLSv1.2",
+              "log_truncate_on_rotation": "on", "syslog_sequence_numbers": "on",
+              "debug_print_rewritten": "off", "debug_print_plan": "off",
+              "debug_pretty_print": "on", "log_error_verbosity": "verbose",
+              "log_hostname": "off"}
     for spec in engine.specs:
         sid = spec["spec_id"]
         entry = {"spec_hash": engine.hashes[sid], "query": "not applicable", "status": "not_collected"}

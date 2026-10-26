@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.19"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.19"
+  title: "Ensure 'debug_pretty_print' is enabled"
+  source_sha256: "3fe0a52236f002623dadbfc205a11b785eafe79ffefd9629b473967907257daf"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: debug_pretty_print
+  query: "SHOW debug_pretty_print"
+  operator: equals
+  expected: "on"
+  pass_condition_quote: "If not configured to `on`, this is a fail."
+proof:
+  break:
+    setting_name: debug_pretty_print
+    value: "off"
+  fix:
+    setting_name: debug_pretty_print
+    value: "on"

@@ -154,7 +154,10 @@ def fix_plan(snapshot_id: str, benchmark_id: str = Query(default='cis-pg17-v1.1.
             try:
                 if finding['status']!='FAIL': raise ContractError('Control requires capability or manual evidence')
                 fixes.append(risk_review(engine,snapshot,sid,service.risk_reviewer if review_with_llm else None))
-            except ContractError as exc: manual.append({'spec_id':sid,'reason':str(exc)})
+            except ContractError as exc:
+                spec=next((s for s in engine.specs if s['spec_id']==sid),{})
+                manual.append({'spec_id':sid,'title':spec.get('ref',{}).get('title',sid),'tier':spec.get('tier'),
+                               'status':finding['status'],'reason':str(exc)})
         if not review_with_llm:
             for fix in fixes: fix['llm']={'status':'NOT_REQUESTED'}
         return {'snapshot_id':snapshot_id,'spec_set_hash':engine.spec_set_hash,'recommended_order':recommend_order(fixes),'manual_review':manual,

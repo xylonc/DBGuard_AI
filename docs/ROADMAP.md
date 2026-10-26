@@ -35,7 +35,10 @@ Notes: CIS wording such as "at least `warning`" (3.1.14) needs a named human rul
 | Generalised loop, batch tests, restart settings, rendered screenshots | Done (live-demo-package) |
 | One rulebook; selected control respected; combined fixes in DBA review | Done (PR #30, merged to main) |
 | Spec schema v2 operators (F2) and coverage report of all 72 | Wave 0 remainder |
-| F1 + F3 specs, policy profile, policy entries, live tests (27 controls) | Wave 1 |
+| F1 + F3 specs, policy profile, policy entries, live tests (27 controls) | Wave 1 — in progress |
+| F1: 9 new specs (3.1.7, 3.1.11, 3.1.12, 3.1.17, 3.1.18, 3.1.19, 3.1.22, 3.1.23, 7.2); 7 automated + sandbox-fixable, 3.1.12 and 7.2 `manual_checklist` | Branch `melvin/wave1-f1`, awaiting Melvin's spec approval. Proof: `tests/test_wave1_setting_controls.py`, live `test_additional_setting_policies`, `test_default_sourced_setting_rolls_back_to_default_source`, `test_three_new_fixes_combined` |
+| F1 status | 14 of 14 have specs: 12 automated and sandbox-fixable (3.1.16, 3.1.20, 3.1.21, 3.1.25, 6.9 earlier + 7 new), 2 `manual_checklist` (3.1.12, 7.2). Remaining: Melvin's approval of the 9 agent-drafted specs |
+| Schema follow-ups found in Wave 1 | `applies_when` (3.1.7 needs `logging_collector`; 3.1.11/3.1.12 need syslog in `log_destination`) so non-applicable controls report N/A, not FAIL; optionally allow description text as a value source (would let 3.1.12 be automated). Wave 0 schema work |
 | VHS real-terminal screenshots next to rendered capture | Task 2 |
 | F4, F5, F7 (extension image, hba, TLS) | Wave 2 |
 | F6, F8, F9 assessed and reported (no auto-fix) | Wave 3–4 (assessment only by 16 Nov) |

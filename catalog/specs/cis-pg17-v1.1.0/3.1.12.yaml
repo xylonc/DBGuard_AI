@@ -1,0 +1,12 @@
+spec_id: "cis-pg17-v1.1.0:3.1.12"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.12"
+  title: "Ensure Syslog messages are not lost due to size"
+  source_sha256: "d149b6d804af7487573b199ccf659039e860f199710d6d521bb675cfcf1ec2ec"
+tier: manual_checklist
+reason: "the audit states the pass condition as behaviour ('long log messages are split when logging to Syslog') with no quotable value, so a human confirms syslog_split_messages is on; applies only when log_destination includes syslog"

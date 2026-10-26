@@ -50,6 +50,56 @@ POLICIES = {
             "Log shipping configuration",
         ],
     ),
+    "log_truncate_on_rotation": (
+        "on",
+        "high",
+        "Only has an effect when logging_collector is on. If log_rotation_age is shorter "
+        "than the time pattern in log_filename (e.g. hourly rotation with a daily "
+        "filename), on overwrites the current file at each rotation and loses log data.",
+        [
+            "Confirm logging_collector is on",
+            "Check log_filename pattern against log_rotation_age",
+            "Check log_rotation_size (size-based rotation does not truncate)",
+            "Retention policy and log shipping",
+        ],
+    ),
+    "syslog_sequence_numbers": (
+        "on",
+        "low",
+        "Only matters when log_destination includes syslog; prefixes each syslog "
+        "message with a sequence number so repeated messages are not suppressed.",
+        ["Check whether log_destination includes syslog", "Syslog parsers accept the prefix"],
+    ),
+    "debug_print_rewritten": (
+        "off",
+        "low",
+        "Disables rewritten query tree logging; troubleshooting procedures may rely on it.",
+        ["Confirm no active troubleshooting depends on rewritten query logs"],
+    ),
+    "debug_print_plan": (
+        "off",
+        "low",
+        "Disables execution plan tree logging; troubleshooting procedures may rely on it.",
+        ["Confirm no active troubleshooting depends on plan logs"],
+    ),
+    "debug_pretty_print": (
+        "on",
+        "low",
+        "Indents debug_print_* output; it only changes format, and only when those are on.",
+        ["Log parsers accept multi-line debug output"],
+    ),
+    "log_error_verbosity": (
+        "verbose",
+        "medium",
+        "Verbose increases log volume and adds source file, function and line detail to each message.",
+        ["Log storage capacity", "Rotation and retention", "Log parsers accept the extra fields"],
+    ),
+    "log_hostname": (
+        "off",
+        "low",
+        "Connection logs show client IP addresses instead of resolved host names.",
+        ["Confirm log reviews and alerts do not rely on client host names"],
+    ),
 }
 CHECKS = {
     "connect": {

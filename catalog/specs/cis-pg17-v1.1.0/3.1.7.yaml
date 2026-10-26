@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.7"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.7"
+  title: "Ensure 'log_truncate_on_rotation' is enabled"
+  source_sha256: "8e57af00625d927122cab3fafcc84351cca86e2f6180845245e22958e9f9a518"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: log_truncate_on_rotation
+  query: "SHOW log_truncate_on_rotation"
+  operator: equals
+  expected: "on"
+  pass_condition_quote: "If it is not set to `on`, this is a fail (depending on your organization's logging policy)."
+proof:
+  break:
+    setting_name: log_truncate_on_rotation
+    value: "off"
+  fix:
+    setting_name: log_truncate_on_rotation
+    value: "on"

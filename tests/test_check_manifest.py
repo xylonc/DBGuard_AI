@@ -2,7 +2,8 @@
 
 Conventions:
 - Marked tier_a for automated test suite.
-- Tests verify the 6 committed specs produce 5 checks (3.1.14 is needs_capability).
+- Tests verify the 15 committed specs produce 12 checks (3.1.14 is needs_capability;
+  3.1.12 and 7.2 are manual_checklist).
 - Golden file at tests/fixtures/phase1/checks-cis-pg17-v1.1.0.json is the source of truth.
 """
 import copy
@@ -52,25 +53,35 @@ def validate_against_schema(manifest, schema):
 class TestCheckManifest:
     """Test rules for the check manifest contract."""
 
-    def test_six_specs_give_exactly_five_checks_and_3114_is_absent(self):
-        """The 6 committed specs give exactly 5 checks, and 3.1.14 is absent."""
+    def test_fifteen_specs_give_exactly_twelve_checks_and_non_automated_are_absent(self):
+        """The 15 committed specs give exactly 12 checks; 3.1.14, 3.1.12 and 7.2 are absent."""
         records = RecordsIndex.load(RECORDS_PATH)
         manifest = build_manifest(SPEC_DIR, records)
 
         assert manifest["manifest_version"] == 1
         assert manifest["benchmark_id"] == "cis-pg17-v1.1.0"
-        assert len(manifest["checks"]) == 5
+        assert len(manifest["checks"]) == 12
 
         # 3.1.14 is needs_capability, not automated, so it should be absent
         spec_ids = [c["spec_id"] for c in manifest["checks"]]
         assert "cis-pg17-v1.1.0:3.1.14" not in spec_ids
+        # 3.1.12 and 7.2 are manual_checklist, so they are absent too
+        assert "cis-pg17-v1.1.0:3.1.12" not in spec_ids
+        assert "cis-pg17-v1.1.0:7.2" not in spec_ids
 
-        # Expected automated specs
+        # Expected automated specs (sorted by spec_id string, so 3.1.7 follows 3.1.25)
         expected = [
+            "cis-pg17-v1.1.0:3.1.11",
             "cis-pg17-v1.1.0:3.1.16",
+            "cis-pg17-v1.1.0:3.1.17",
+            "cis-pg17-v1.1.0:3.1.18",
+            "cis-pg17-v1.1.0:3.1.19",
             "cis-pg17-v1.1.0:3.1.20",
             "cis-pg17-v1.1.0:3.1.21",
+            "cis-pg17-v1.1.0:3.1.22",
+            "cis-pg17-v1.1.0:3.1.23",
             "cis-pg17-v1.1.0:3.1.25",
+            "cis-pg17-v1.1.0:3.1.7",
             "cis-pg17-v1.1.0:6.9",
         ]
         assert spec_ids == expected

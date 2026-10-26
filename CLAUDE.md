@@ -15,7 +15,7 @@ and `docs/ROADMAP.md` for the current plan (internship ends 16 Nov 2026).
 | `backend/app/services/spec_engine/` | Spec validation, operators, Phase 1 assessment engine |
 | `catalog/controls/assess/` | ASSESS registry: CIS controls generated from specs (`spec_controls.py`) + two `DBGUARD-*` checks |
 | `services/sandbox_poc/` | Sandbox loop (`workflow.py`), policy allowlist (`planning.py`), batch tests (`batch.py`), evidence capture, review bundle |
-| `collector/` | Read-only evidence collector (`collect.sql`). Owned by Xylon: coordinate before changing |
+| `collector/` | Read-only evidence collector (`collect.sql`). Subagents only propose changes; the main session applies them after db-security-reviewer and Melvin's approval |
 | `frontend/` | React UI (Vite). `src/live/` holds the connected workflow |
 | `hermes/`, `services/dbguard_mcp/` | HERMES agent config and its restricted MCP tool surface |
 
@@ -56,7 +56,7 @@ Run the live tests before calling sandbox work done: unit tests use fake runtime
 
 ## Working rules
 
-- One reviewed change per commit; branch from `main` (or the open PR branch) and open PRs to `main`. Xylon reviews.
+- One reviewed change per commit; branch from `main` (or the open PR branch) and open PRs to `main`. Melvin is the sole engineer and reviews.
 - Never weaken an existing assertion to make a test pass; fix the code or ask.
 - Keep `docs/ROADMAP.md` honest: update status when a wave item lands, with the test that proves it.
 - `docs/REMAINING_IMPROVEMENTS.md` lists known UI/product gaps; tick items off there when fixed.
@@ -69,7 +69,7 @@ The main session plans each wave and hands work out. No agent both writes someth
 | --- | --- | --- |
 | `spec-author` | spec YAML | approves, invents pass conditions |
 | `benchmark-fidelity-reviewer` | nothing (read-only) | edits specs |
-| `engine-implementer` | spec engine, operators, fix units, loop, collector | touches approvals or HERMES allowlists |
+| `engine-implementer` | spec engine, operators, fix units, loop (proposes collector changes) | touches approvals, HERMES allowlists or `collect.sql` |
 | `sandbox-runtime-engineer` | sandbox runtime, images, restart/hba/TLS, later VM backends | adds network/mounts/raw SQL |
 | `evidence-capture-engineer` | screenshot evidence (rendered + VHS), bundle/report wiring | renders from model output |
 | `test-writer` | tests | weakens assertions |

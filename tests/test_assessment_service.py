@@ -29,8 +29,11 @@ from catalog.controls.assess.registry import CONTROL_REGISTRY, LEGACY_CONTROL_ID
 LOG_CONNECTIONS = "cis-pg17-v1.1.0:3.1.20"
 PUBLIC_SCHEMA = "DBGUARD-PUBLIC-SCHEMA-CREATE"
 MD5 = "DBGUARD-MD5-PASSWORDS"
-# 6 installed CIS PG17 specs (5 automated, 1 needs_capability) + 2 supplementary checks.
-TOTAL_CONTROLS = 8
+# 15 installed CIS PG17 specs (12 automated, 1 needs_capability, 2 manual_checklist)
+# + 2 supplementary checks.
+TOTAL_CONTROLS = 17
+# Specs without an automated check: 3.1.14 (needs_capability), 3.1.12 and 7.2 (manual_checklist).
+NON_AUTOMATED_SPECS = 3
 # Passing values for every automated spec setting.
 PASSING_SETTINGS = [
     {"name": "log_connections", "setting": "on"},
@@ -38,6 +41,13 @@ PASSING_SETTINGS = [
     {"name": "debug_print_parse", "setting": "off"},
     {"name": "log_statement", "setting": "ddl"},
     {"name": "ssl_min_protocol_version", "setting": "TLSv1.2"},
+    {"name": "log_truncate_on_rotation", "setting": "on"},
+    {"name": "syslog_sequence_numbers", "setting": "on"},
+    {"name": "debug_print_rewritten", "setting": "off"},
+    {"name": "debug_print_plan", "setting": "off"},
+    {"name": "debug_pretty_print", "setting": "on"},
+    {"name": "log_error_verbosity", "setting": "verbose"},
+    {"name": "log_hostname", "setting": "off"},
 ]
 
 
@@ -378,11 +388,12 @@ class TestAssessmentSummary:
         report = assessment_service.evaluate(base_snapshot)
 
         assert report.summary.total == TOTAL_CONTROLS
-        assert report.summary.pass_count == 7
+        assert report.summary.pass_count == 14  # 12 automated specs + public schema + md5
         assert report.summary.fail_count == 0
         assert report.summary.gapped_count == 0
-        # 3.1.14 has no automated check yet (needs an ordered comparison).
-        assert report.summary.manual_review_count == 1
+        # 3.1.14 has no automated check yet (needs an ordered comparison);
+        # 3.1.12 and 7.2 are manual_checklist.
+        assert report.summary.manual_review_count == NON_AUTOMATED_SPECS
 
     def test_summary_counts_mixed_results(self, assessment_service, base_snapshot):
         """Test summary counts with mixed PASS/FAIL/MANUAL_REVIEW results."""
@@ -394,10 +405,10 @@ class TestAssessmentSummary:
         report = assessment_service.evaluate(base_snapshot)
 
         assert report.summary.total == TOTAL_CONTROLS
-        assert report.summary.pass_count == 5
+        assert report.summary.pass_count == 12  # 11 automated specs + public schema
         assert report.summary.fail_count == 1
         assert report.summary.gapped_count == 0
-        assert report.summary.manual_review_count == 2  # md5 passwords + 3.1.14
+        assert report.summary.manual_review_count == 4  # md5 passwords + 3.1.14, 3.1.12, 7.2
 
     def test_summary_counts_gapped_results(self, assessment_service, base_snapshot):
         """Test summary counts with GAPPED findings."""
@@ -417,8 +428,8 @@ class TestAssessmentSummary:
         assert report.summary.total == TOTAL_CONTROLS
         assert report.summary.pass_count == 0
         assert report.summary.fail_count == 0
-        assert report.summary.gapped_count == 6  # 5 automated specs + public schema
-        assert report.summary.manual_review_count == 2
+        assert report.summary.gapped_count == 13  # 12 automated specs + public schema
+        assert report.summary.manual_review_count == 4  # md5 + 3.1.14, 3.1.12, 7.2
 
 
 # ============================================================================

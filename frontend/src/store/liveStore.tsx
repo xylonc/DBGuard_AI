@@ -15,7 +15,11 @@ type LiveState = {
   handoffId: string
   result: any
   // Latest combined (multi-fix) test, tied to the snapshot and benchmark it ran on.
-  batch: { snapshot_id: string benchmark: string data: any } | null
+  batch: {
+    snapshot_id: string
+    benchmark: string
+    data: any
+  } | null
   benchmark: string
   environment: string
   templateVersion: number
@@ -23,7 +27,10 @@ type LiveState = {
   alternativeTemplates: string
   controlId: string
   retryMode: string
-  messages: { role: string content: string }[]
+  messages: {
+    role: string
+    content: string
+  }[]
   chatJob: string
   busy: string
   error: string

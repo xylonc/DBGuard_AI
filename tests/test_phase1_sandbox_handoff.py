@@ -21,7 +21,8 @@ def test_shared_engine_retains_authoritative_phase1_report(engine, snapshot):
     native = assess(engine.specs, snapshot, engine.records)
     calculated = engine.assess(snapshot)
     assert calculated['upstream_report'] == native
-    assert native['summary'] == dict(PASS=3, FAIL=2, MANUAL=0, NEEDS_CAPABILITY=1,
+    # 10 compliant automated specs, 3.1.20 and 3.1.25 FAIL, 3.1.12 and 7.2 manual, 3.1.14 capability.
+    assert native['summary'] == dict(PASS=10, FAIL=2, MANUAL=2, NEEDS_CAPABILITY=1,
                                      NOT_COLLECTED=0, STALE=0, ERROR=0)
     ref = TemplateReference(version=1, sha256='a'*64,
         evidence=[dict(document_id='test', version='1', sha256='b'*64)])

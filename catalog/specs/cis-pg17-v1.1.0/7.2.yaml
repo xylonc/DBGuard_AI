@@ -1,0 +1,12 @@
+spec_id: "cis-pg17-v1.1.0:7.2"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "7.2"
+  title: "Ensure logging of replication commands is configured"
+  source_sha256: "b2cb0dc53c34ab30aade13f0058d2e756c1e09c1d4843dc7213bb171a1aaa395"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and the audit gives no pass/fail sentence; per the rationale and remediation, a human confirms log_replication_commands is on"

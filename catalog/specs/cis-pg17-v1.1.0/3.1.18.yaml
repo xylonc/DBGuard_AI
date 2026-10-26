@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.18"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.18"
+  title: "Ensure 'debug_print_plan' is disabled"
+  source_sha256: "d783abd9350d5dc1af2bacb9537f74130c19d11e2655662013bcf1247c18ea92"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: debug_print_plan
+  query: "SHOW debug_print_plan"
+  operator: equals
+  expected: "off"
+  pass_condition_quote: "If not configured to `off`, this is a fail."
+proof:
+  break:
+    setting_name: debug_print_plan
+    value: "on"
+  fix:
+    setting_name: debug_print_plan
+    value: "off"

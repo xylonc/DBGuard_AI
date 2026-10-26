@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.23"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.23"
+  title: "Ensure 'log_hostname' is set correctly"
+  source_sha256: "11e69c0c8a6a8f91f349d45a45e4843d571855cb1d333a7832bc6ab975c81a72"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: log_hostname
+  query: "SHOW log_hostname"
+  operator: equals
+  expected: "off"
+  pass_condition_quote: "If not configured to `off`, this is a fail."
+proof:
+  break:
+    setting_name: log_hostname
+    value: "on"
+  fix:
+    setting_name: log_hostname
+    value: "off"

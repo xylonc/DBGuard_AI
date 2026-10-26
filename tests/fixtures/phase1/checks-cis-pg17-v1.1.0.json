@@ -3,10 +3,38 @@
   "checks": [
     {
       "kind": "setting",
+      "query": "SHOW syslog_sequence_numbers",
+      "setting_name": "syslog_sequence_numbers",
+      "spec_hash": "ade1f3c9ba50073636768af51b51d63ee1160da8f524721038f46b9a85350fbe",
+      "spec_id": "cis-pg17-v1.1.0:3.1.11"
+    },
+    {
+      "kind": "setting",
       "query": "SHOW debug_print_parse",
       "setting_name": "debug_print_parse",
       "spec_hash": "99a35fe36ce3a7ef2b656cc1b41053e40f2539fe091f4779be8c86f9bd5f0769",
       "spec_id": "cis-pg17-v1.1.0:3.1.16"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW debug_print_rewritten",
+      "setting_name": "debug_print_rewritten",
+      "spec_hash": "ca810ad50c5a9c2af4c611b3faf386601b809cfb60c6f2c38a880663bfa9e622",
+      "spec_id": "cis-pg17-v1.1.0:3.1.17"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW debug_print_plan",
+      "setting_name": "debug_print_plan",
+      "spec_hash": "66292efce851608e3941add46443dad14c1587e6b800e386ea834771883f73ba",
+      "spec_id": "cis-pg17-v1.1.0:3.1.18"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW debug_pretty_print",
+      "setting_name": "debug_pretty_print",
+      "spec_hash": "02a4e5fc82be40a645c8a0e524694dd44de010228b9dafb59e22a3c08fd610ed",
+      "spec_id": "cis-pg17-v1.1.0:3.1.19"
     },
     {
       "kind": "setting",
@@ -24,10 +52,31 @@
     },
     {
       "kind": "setting",
+      "query": "SHOW log_error_verbosity",
+      "setting_name": "log_error_verbosity",
+      "spec_hash": "83e2c9aae084208bda1d17e4008ea3dd84d4f0305eb57bb47302f17a18b63f05",
+      "spec_id": "cis-pg17-v1.1.0:3.1.22"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_hostname",
+      "setting_name": "log_hostname",
+      "spec_hash": "7e652c4ed1aed8a6f86d9b197040c8ef06a2027ec70f334378714cb17e14db84",
+      "spec_id": "cis-pg17-v1.1.0:3.1.23"
+    },
+    {
+      "kind": "setting",
       "query": "SHOW log_statement",
       "setting_name": "log_statement",
       "spec_hash": "3b4d97ea5cfaba24215e66bc1c2628b6dfb194f4b5fc8bb34d89cb1178e625f0",
       "spec_id": "cis-pg17-v1.1.0:3.1.25"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_truncate_on_rotation",
+      "setting_name": "log_truncate_on_rotation",
+      "spec_hash": "5122df74f337042afdc3e67504f733440b130b20496266e15142157b43c526ae",
+      "spec_id": "cis-pg17-v1.1.0:3.1.7"
     },
     {
       "kind": "setting",

@@ -223,30 +223,192 @@ def test_live_llm_revises_using_separately_approved_named_template(
         r.close()
 
 
+def _labelled(label, value):
+    return docker("ps", "-aq", "--filter", f"label={label}={value}")
+
+
+def _assert_no_leftovers(resources, sandbox_run_ids):
+    """Every container this test created (demo registry, source, sandboxes) is gone."""
+    from services.sandbox_poc.demo import DEMO_LABEL
+
+    assert not _labelled(DEMO_LABEL, resources.run_id)
+    assert not _labelled(LABEL, resources.target.run_id)
+    for run_id in sandbox_run_ids:
+        assert run_id and not _labelled(LABEL, run_id), run_id
+
+
+def _row(snapshot, name):
+    from services.sandbox_poc.provenance import setting_rows
+
+    return setting_rows(snapshot)[name]
+
+
 @pytest.mark.parametrize(
-    "control,name,broken",
+    "control,name,broken,fixed",
     [
-        ("cis-pg17-v1.1.0:3.1.16", "debug_print_parse", "on"),
-        ("cis-pg17-v1.1.0:3.1.21", "log_disconnections", "off"),
-        ("cis-pg17-v1.1.0:6.9", "ssl_min_protocol_version", "TLSv1.1"),
+        ("cis-pg17-v1.1.0:3.1.16", "debug_print_parse", "on", "off"),
+        ("cis-pg17-v1.1.0:3.1.21", "log_disconnections", "off", "on"),
+        ("cis-pg17-v1.1.0:6.9", "ssl_min_protocol_version", "TLSv1.1", "TLSv1.2"),
+        ("cis-pg17-v1.1.0:3.1.7", "log_truncate_on_rotation", "off", "on"),
+        ("cis-pg17-v1.1.0:3.1.11", "syslog_sequence_numbers", "off", "on"),
+        ("cis-pg17-v1.1.0:3.1.17", "debug_print_rewritten", "on", "off"),
+        ("cis-pg17-v1.1.0:3.1.18", "debug_print_plan", "on", "off"),
+        ("cis-pg17-v1.1.0:3.1.19", "debug_pretty_print", "off", "on"),
+        ("cis-pg17-v1.1.0:3.1.22", "log_error_verbosity", "terse", "verbose"),
+        ("cis-pg17-v1.1.0:3.1.23", "log_hostname", "on", "off"),
     ],
 )
-def test_additional_setting_policies(control, name, broken):
+def test_additional_setting_policies(control, name, broken, fixed):
     r = DemoResources()
+    sandbox_runs = []
     try:
         r.start()
         r.target.sql(f"ALTER SYSTEM SET {name}='{broken}';")
         r.target.activate({name: broken})
         snapshot = r.engine.collect(r.target)
+        original = _row(snapshot, name)
+        assert original["setting"] == broken
+        assert original["source"] == "configuration file"
+        assert original["sourcefile"].endswith("/postgresql.auto.conf")
+        # break -> FAIL
+        assert r.engine.assess(snapshot)["findings"][control]["status"] == "FAIL"
         result = RemediationLoop(r.engine, demo_template(), control_id=control).run(
             snapshot, r.engine.assess(snapshot)
         )
+        sandbox_runs = [a["run_id"] for a in result["attempts"]]
+        print(f"LIVE-RUN {control} demo={r.run_id} source={r.target.run_id} "
+              f"sandbox={','.join(sandbox_runs)} status={result['status']}")
         assert result["status"] == "VERIFIED", result
-        assert result["attempts"][-1]["rollback_verified"]
-        assert result["attempts"][-1]["cleanup"]["verified"]
+        attempt = result["attempts"][-1]
+        assert result["fix_unit"]["requires"] == "reload"
+        assert result["fix_unit"]["apply"] == {"action": "set_config", "param": name, "value": fixed}
+        assert result["fix_unit"]["prior_state"]["value"] == broken
+        assert result["fix_unit"]["prior_state"]["source"] == original["source"]
+        # the sandbox reproduced the FAIL with the same provenance
+        assert attempt["before_assessment"]["findings"][control]["status"] == "FAIL"
+        before = _row(attempt["before"], name)
+        assert (before["setting"], before["source"], before["sourcefile"]) == (
+            broken, original["source"], original["sourcefile"])
+        # fix -> PASS
+        assert attempt["after_assessment"]["findings"][control]["status"] == "PASS"
+        assert _row(attempt["after"], name)["setting"] == fixed
+        assert attempt["regressions"] == []
+        # rollback -> original value and source
+        assert attempt["rollback_verified"]
+        restored = _row(attempt["rollback"], name)
+        assert (restored["setting"], restored["source"], restored["sourcefile"]) == (
+            broken, original["source"], original["sourcefile"])
+        assert attempt["rollback_assessment"]["findings"] == attempt["before_assessment"]["findings"]
+        assert attempt["cleanup"]["verified"]
         assert r.target.sql("SHOW " + name + ";") == broken
     finally:
         r.close()
+    _assert_no_leftovers(r, sandbox_runs)
+
+
+@pytest.mark.parametrize(
+    "control,name,default,fixed",
+    [
+        ("cis-pg17-v1.1.0:3.1.7", "log_truncate_on_rotation", "off", "on"),
+        ("cis-pg17-v1.1.0:3.1.22", "log_error_verbosity", "default", "verbose"),
+    ],
+)
+def test_default_sourced_setting_rolls_back_to_default_source(control, name, default, fixed):
+    """The PG17 default already fails: rollback must return to source=default, not a file entry."""
+    r = DemoResources()
+    sandbox_runs = []
+    try:
+        r.start()
+        snapshot = r.engine.collect(r.target)
+        original = _row(snapshot, name)
+        assert (original["setting"], original["source"], original["sourcefile"]) == (
+            default, "default", None)
+        assert r.engine.assess(snapshot)["findings"][control]["status"] == "FAIL"
+        result = RemediationLoop(r.engine, demo_template(), control_id=control).run(
+            snapshot, r.engine.assess(snapshot)
+        )
+        sandbox_runs = [a["run_id"] for a in result["attempts"]]
+        print(f"LIVE-RUN default-{control} demo={r.run_id} source={r.target.run_id} "
+              f"sandbox={','.join(sandbox_runs)} status={result['status']}")
+        assert result["status"] == "VERIFIED", result
+        attempt = result["attempts"][-1]
+        assert attempt["after_assessment"]["findings"][control]["status"] == "PASS"
+        assert _row(attempt["after"], name)["setting"] == fixed
+        assert attempt["rollback_verified"]
+        restored = _row(attempt["rollback"], name)
+        assert (restored["setting"], restored["source"], restored["sourcefile"]) == (
+            default, "default", None)
+        assert not [f for f in attempt["rollback"]["baseline"]["file_settings"] if f["name"] == name]
+        assert attempt["cleanup"]["verified"]
+        assert r.target.sql("SHOW " + name + ";") == default
+    finally:
+        r.close()
+    _assert_no_leftovers(r, sandbox_runs)
+
+
+def test_three_new_fixes_combined(tmp_path, monkeypatch):
+    from services.sandbox_poc.handoff import build_handoff
+
+    monkeypatch.setenv("DBGUARD_HISTORY_DIR", str(tmp_path / "history"))
+    broken = {"debug_print_rewritten": "on", "log_error_verbosity": "terse", "log_hostname": "on"}
+    fixed = {"debug_print_rewritten": "off", "log_error_verbosity": "verbose", "log_hostname": "off"}
+    controls = {"debug_print_rewritten": "cis-pg17-v1.1.0:3.1.17",
+                "log_error_verbosity": "cis-pg17-v1.1.0:3.1.22",
+                "log_hostname": "cis-pg17-v1.1.0:3.1.23"}
+    r = DemoResources()
+    combined_run = None
+    try:
+        r.start()
+        for name, value in broken.items():
+            r.target.sql(f"ALTER SYSTEM SET {name}='{value}';")
+        r.target.activate(broken)
+        snapshot = r.engine.collect(r.target)
+        findings = r.engine.assess(snapshot)["findings"]
+        assert all(findings[c]["status"] == "FAIL" for c in controls.values())
+        base = build_handoff(r.engine, snapshot, r.handoff.template_ref)
+        base.retry_mode = "repeat"
+        requests = []
+        for control in controls.values():
+            request = base.model_copy(deep=True)
+            request.control_id = control
+            requests.append(request)
+        result, data = run_batch(requests, SandboxService(r.registry_url))
+        combined = result["combined_test"]
+        combined_run = combined["run_id"]
+        print(f"LIVE-RUN batch demo={r.run_id} source={r.target.run_id} combined={combined_run} "
+              f"batch={result['run_id']} individual="
+              f"{','.join(i['run_id'] for i in result['individual_runs'])} status={result['status']}")
+        assert result["status"] == "VERIFIED", result
+        assert all(i["status"] == "VERIFIED" for i in result["individual_runs"])
+        assert sorted(i["fix_id"] for i in result["individual_runs"]) == sorted(
+            "fix-" + n for n in controls)
+        assert len(combined["steps"]) == 3
+        # each fix PASSes in the combined sandbox with the earlier ones still applied
+        applied = {}
+        for step in combined["steps"]:
+            name = step["fix_id"][len("fix-"):]
+            applied[name] = fixed[name]
+            assert step["assessment"]["findings"][controls[name]]["status"] == "PASS"
+            assert step["functional_checks"]["passed"]
+            for done, value in applied.items():
+                assert _row(step["after"], done)["setting"] == value
+        assert all(result["sandbox_after_findings"][c] == "PASS" for c in controls.values())
+        # per-fix rollback in reverse order, each exact
+        assert [x["fix_id"] for x in combined["rollback"]] == [
+            s["fix_id"] for s in reversed(combined["steps"])]
+        assert all(x["verified"] for x in combined["rollback"])
+        assert combined["cleanup"]["verified"]
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            assert z.testzip() is None
+            names = z.namelist()
+            assert all(f"fix-{n}/fix.json" in names for n in controls)
+            assert "combined-evidence.json" in names
+        # the source target was never changed
+        assert all(r.target.sql(f"SHOW {n};") == v for n, v in broken.items())
+        assert r.source_evidence()["registry_unchanged"]
+    finally:
+        r.close()
+    _assert_no_leftovers(r, [combined_run])
 
 
 def test_exported_restart_fix_waits_for_dba_restart(tmp_path):

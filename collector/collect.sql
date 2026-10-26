@@ -370,6 +370,7 @@ SELECT jsonb_pretty(jsonb_build_object(
             'log_min_duration_statement','log_error_verbosity','log_truncate_on_rotation',
             'log_rotation_age','log_rotation_size','log_checkpoints','log_lock_waits',
             'log_temp_files','log_autovacuum_min_duration','syslog_facility','syslog_ident',
+            'syslog_sequence_numbers','syslog_split_messages','log_replication_commands',
             'password_encryption','ssl','ssl_cert_file','ssl_key_file','ssl_ca_file',
             'ssl_crl_file','ssl_ciphers','ssl_min_protocol_version','ssl_prefer_server_ciphers',
             'listen_addresses','port','unix_socket_directories','unix_socket_permissions',

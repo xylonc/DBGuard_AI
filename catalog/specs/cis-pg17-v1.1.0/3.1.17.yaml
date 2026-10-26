@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.17"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.17"
+  title: "Ensure 'debug_print_rewritten' is disabled"
+  source_sha256: "a65df406d2efbdac82e80803d102ad5be0f2eb06a6276160f87b50887840e6b6"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: debug_print_rewritten
+  query: "SHOW debug_print_rewritten"
+  operator: equals
+  expected: "off"
+  pass_condition_quote: "If not configured to `off`, this is a fail."
+proof:
+  break:
+    setting_name: debug_print_rewritten
+    value: "on"
+  fix:
+    setting_name: debug_print_rewritten
+    value: "off"

@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.22"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.22"
+  title: "Ensure 'log_error_verbosity' is set correctly"
+  source_sha256: "426f570f32609173e9181fb964c3b2c3cbb554a7b4027bbaa2ae2abf6c05cec1"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: log_error_verbosity
+  query: "SHOW log_error_verbosity"
+  operator: equals
+  expected: "verbose"
+  pass_condition_quote: "If not configured to `verbose`, this is a fail."
+proof:
+  break:
+    setting_name: log_error_verbosity
+    value: "terse"
+  fix:
+    setting_name: log_error_verbosity
+    value: "verbose"

@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:3.1.11"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.11"
+  title: "Ensure Syslog messages are not suppressed"
+  source_sha256: "12d9dfcb26b89c5027d7f762cdb7f30eb342e1f22695c26c5a78ead90fbb4ed4"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: syslog_sequence_numbers
+  query: "SHOW syslog_sequence_numbers"
+  operator: equals
+  expected: "on"
+  pass_condition_quote: "Execute the following SQL statement and confirm that the `syslog_sequence_numbers` is enabled (on):"
+proof:
+  break:
+    setting_name: syslog_sequence_numbers
+    value: "off"
+  fix:
+    setting_name: syslog_sequence_numbers
+    value: "on"

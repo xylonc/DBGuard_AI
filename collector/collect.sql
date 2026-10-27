@@ -16,6 +16,19 @@
 \pset tuples_only on
 \pset format unaligned
 
+-- Pin name resolution before running anything. A target can set search_path
+-- per role or database; without this, objects it creates could shadow the
+-- built-ins called below. pg_temp goes last so temporary objects cannot
+-- shadow pg_catalog either; the helpers are always called as pg_temp.*.
+-- Side effect: the search_path row in "settings" shows source 'session'
+-- with this value; its reset_val holds the target's configured search_path.
+SET search_path = pg_catalog, pg_temp;
+-- A target can also turn standard_conforming_strings off per role or
+-- database. Backslashes in '...' literals would then become escapes and break
+-- the masking patterns below (\s, \S+, \1), leaking secrets. Same side effect
+-- on the settings row as search_path.
+SET standard_conforming_strings = on;
+
 -- ---------------------------------------------------------------------------
 -- 0. Refuse managed platforms before collecting anything.
 -- ---------------------------------------------------------------------------

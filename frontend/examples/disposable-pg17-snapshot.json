@@ -319,7 +319,7 @@
       "lc_ctype": "en_US.utf8",
       "server_encoding": "UTF8",
       "server_version_num": 170011,
-      "system_identifier": "7700862845114277919",
+      "system_identifier": "7701394244939485209",
       "version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
       "wal_segment_size": "16MB"
     },
@@ -1627,6 +1627,21 @@
         "vartype": "bool"
       },
       {
+        "boot_val": "\"$user\", public",
+        "category": "Client Connection Defaults / Statement Behavior",
+        "context": "user",
+        "name": "search_path",
+        "pending_restart": false,
+        "reset_val": "\"$user\", public",
+        "sanitised": false,
+        "setting": "pg_catalog, pg_temp",
+        "source": "session",
+        "sourcefile": null,
+        "sourceline": null,
+        "unit": null,
+        "vartype": "string"
+      },
+      {
         "boot_val": "",
         "category": "Client Connection Defaults / Shared Library Preloading",
         "context": "superuser",
@@ -1786,6 +1801,21 @@
         "sanitised": false,
         "setting": "on",
         "source": "default",
+        "sourcefile": null,
+        "sourceline": null,
+        "unit": null,
+        "vartype": "bool"
+      },
+      {
+        "boot_val": "on",
+        "category": "Version and Platform Compatibility / Previous PostgreSQL Versions",
+        "context": "user",
+        "name": "standard_conforming_strings",
+        "pending_restart": false,
+        "reset_val": "on",
+        "sanitised": false,
+        "setting": "on",
+        "source": "session",
         "sourcefile": null,
         "sourceline": null,
         "unit": null,
@@ -2137,7 +2167,7 @@
       }
     ],
     "uptime": {
-      "postmaster_start_time": "2026-10-26T06:40:53.394888+00:00",
+      "postmaster_start_time": "2026-10-27T17:02:59.507936+00:00",
       "uptime_seconds": 1
     }
   },
@@ -2217,9 +2247,9 @@
   },
   "envelope": {
     "can_read_pg_authid": true,
-    "collected_at": "2026-10-26T06:40:54Z",
+    "collected_at": "2026-10-27T17:03:00Z",
     "collected_by": "dbguard_poc",
-    "collector_sha256": "f6802eaef2449d8e528b106ac265fed1f01bcb2a309fbed764f397eea4e5733a",
+    "collector_sha256": "3af9ede9222fd43292cf6da901c3f38008630917b3746ca389c40a39aa7ce998",
     "collector_version": "2.0.0-sql",
     "database": "dbguard_sandbox",
     "deployment_type": "self-managed",
@@ -2233,6 +2263,6 @@
       "sha256": "3b97fd4db242c5e69deed6aca196647063d6e48b3d16f525447b1c25e136ff10"
     },
     "schema_version": "0.3.0",
-    "target_id": "dbguard-poc-dd6ac9c3872840b88fcd3388daccf2bb"
+    "target_id": "dbguard-poc-eecf721401204894b6a1cd2463d28466"
   }
 }

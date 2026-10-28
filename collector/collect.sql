@@ -70,49 +70,140 @@ $$;
 -- Mask credentials inside a shell command or connection string, preserving
 -- structure. "pgbackrest --stanza=main archive-push %p" survives intact;
 -- "cp %p rclone://tok:s3cr3t@bucket" has the secret replaced.
+-- Like libpq, backslash escapes apply in quoted and unquoted values (\', \ ),
+-- a URI may carry a password with an empty user name (postgresql://:pw@host),
+-- and a URI password may contain '/', '?' or '#'. Over-redaction is preferred.
 CREATE FUNCTION pg_temp.mask_secrets(v text) RETURNS text AS $$
     SELECT CASE WHEN $1 IS NULL THEN NULL ELSE
         regexp_replace(
         regexp_replace(
         regexp_replace(
+        regexp_replace(
         regexp_replace($1,
-            '(password\s*=\s*)(''[^'']*''|"[^"]*"|\S+)', '\1***REDACTED***', 'gi'),
+            '(password\s*=\s*)(''(?:[^''\\]|\\.)*''|"(?:[^"\\]|\\.)*"|(?:[^\s\\]|\\.)+)', '\1***REDACTED***', 'gi'),
             '(passfile\s*=\s*)(\S+)',                    '\1***REDACTED***', 'gi'),
             '(--password[= ])(\S+)',                     '\1***REDACTED***', 'gi'),
-            '://([^:/@\s]+):([^@/\s]+)@',                '://\1:***REDACTED***@', 'g')
+            '://([^:/@\s]*):([^@\s]+)@',                 '://\1:***REDACTED***@', 'g'),
+            -- libpq percent-decodes URI keywords, so pass%77ord= is a password:
+            -- mask the value of any query parameter whose name contains '%'.
+            '([?&][^=&\s]*%[^=&\s]*=)[^&\s]*',          '\1***REDACTED***', 'g')
     END;
 $$ LANGUAGE sql IMMUTABLE;
 
 -- Settings whose raw value can carry a secret.
+-- Their text is never shipped: only whether a value is set and its length.
+-- Masking free text was shown to miss real credential formats (spaces in URI
+-- passwords, cloud keys in commands), so nothing is guessed. Names compare
+-- case-insensitively, as current_setting() does.
+-- Also every custom or extension setting (a dotted name such as
+-- pgrst.jwt_secret or app.jwt_key) except an exact list of reviewed extension
+-- settings whose values CIS checks need and which carry no secrets. Exact
+-- names, not prefixes: a planted pgaudit.jwt_secret is still redacted. Names are
+-- lower-cased under the C collation, as PostgreSQL compares setting names, so
+-- look-alike characters (U+212A, U+0130) cannot match a reviewed name.
+CREATE FUNCTION pg_temp.is_secret_setting(p_name text) RETURNS boolean AS $$
+    SELECT lower($1 COLLATE "C") IN ('archive_command','restore_command','archive_cleanup_command',
+                         'recovery_end_command','primary_conninfo',
+                         'ssl_passphrase_command','krb_server_keyfile')
+        OR (position('.' in $1) > 0
+            AND lower($1 COLLATE "C") NOT IN (
+                'pgaudit.log','pgaudit.log_catalog','pgaudit.log_client',
+                'pgaudit.log_level','pgaudit.log_parameter',
+                'pgaudit.log_parameter_max_size','pgaudit.log_relation',
+                'pgaudit.log_rows','pgaudit.log_statement',
+                'pgaudit.log_statement_once','pgaudit.role',
+                'set_user.block_alter_system','set_user.block_copy_program',
+                'set_user.block_log_statement','set_user.exit_on_error',
+                'set_user.nosuperuser_target_allowlist',
+                'set_user.superuser_allowlist','set_user.superuser_audit_tag',
+                'pg_stat_statements.max','pg_stat_statements.track',
+                'pg_stat_statements.track_utility','pg_stat_statements.track_planning',
+                'pg_stat_statements.save',
+                'plpgsql.variable_conflict','plpgsql.print_strict_params',
+                'plpgsql.check_asserts','plpgsql.extra_warnings','plpgsql.extra_errors'))
+        -- A plain name the server does not know (a config-file line such as
+        -- jwt_secret = '...' or a typo like restore_comand) is unreviewed text.
+        OR (position('.' in $1) = 0
+            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_settings p
+                            WHERE lower(p.name COLLATE "C") = lower($1 COLLATE "C")));
+$$ LANGUAGE sql STABLE;
+
 CREATE FUNCTION pg_temp.sanitise_setting(p_name text, p_value text)
 RETURNS text AS $$
     SELECT CASE
-        WHEN $1 IN ('archive_command','restore_command','archive_cleanup_command',
-                    'recovery_end_command','primary_conninfo',
-                    'ssl_passphrase_command','krb_server_keyfile')
-        THEN pg_temp.mask_secrets($2)
+        -- A missing name fails closed.
+        WHEN coalesce(pg_temp.is_secret_setting($1), true)
+        THEN CASE
+            WHEN $2 IS NULL THEN NULL
+            WHEN $2 IN ('', '(disabled)') THEN $2
+            ELSE '***REDACTED*** (set, ' || length($2) || ' characters)'
+        END
         ELSE $2
     END;
-$$ LANGUAGE sql IMMUTABLE;
+$$ LANGUAGE sql STABLE;
 
 -- Parse a libpq conninfo string into keys, dropping "password" entirely.
 CREATE FUNCTION pg_temp.parse_conninfo(v text) RETURNS jsonb AS $$
 DECLARE
-    kv   text[];
-    part text;
-    k    text;
-    val  text;
-    out  jsonb := '{}'::jsonb;
+    m      text[];
+    k      text;
+    val    text;
+    out    jsonb := '{}'::jsonb;
+    -- Keys that carry secrets are never returned, in either form.
+    secret text[] := ARRAY['password','passfile','sslpassword'];
+    -- Only these known connection keys are returned; anything else is dropped.
+    allowed text[] := ARRAY['host','hostaddr','port','user','dbname','application_name',
+        'sslmode','sslrootcert','sslcert','sslkey','sslcrl','sslcrldir','sslsni',
+        'gssencmode','channel_binding','target_session_attrs','load_balance_hosts',
+        'connect_timeout','keepalives','keepalives_idle','keepalives_interval',
+        'keepalives_count','tcp_user_timeout','krbsrvname','service','requiressl',
+        'replication','ssl_min_protocol_version','ssl_max_protocol_version',
+        'require_auth','sslcertmode','sslnegotiation','sslcompression',
+        'gssdelegation','fallback_application_name'];
 BEGIN
     IF v IS NULL OR v = '' THEN RETURN NULL; END IF;
-    kv := regexp_split_to_array(v, '\s+');
-    FOREACH part IN ARRAY kv LOOP
-        IF position('=' in part) > 0 THEN
-            k   := lower(split_part(part, '=', 1));
-            val := substring(part from position('=' in part) + 1);
-            IF k NOT IN ('password','passfile') THEN
-                out := out || jsonb_build_object(k, trim(both '''"' from val));
-            END IF;
+    IF v ~* '^postgres(ql)?://' THEN
+        -- URI form: postgresql://[user[:password]@][hostspec][/dbname][?k=v&...]
+        -- Like libpq, the userinfo ends only at '@' or '/', so a password may
+        -- contain '?' or '#'. Only the user name is kept from it.
+        m := regexp_match(v, '^[A-Za-z]+://(?:([^@/]*)@)?([^/?#]*)(?:/([^?#]*))?(?:\?([^#]*))?');
+        -- An '@' left anywhere after the userinfo means the URI cannot be read
+        -- safely (e.g. a '/' inside the password); report it, never guess.
+        -- Whitespace or '=' in the user, host or dbname means a mixed or
+        -- malformed string (e.g. '.../postgres password=x'): also unparsed.
+        IF m IS NULL
+           OR position('@' in coalesce(m[2], '') || coalesce(m[3], '') || coalesce(m[4], '')) > 0
+           OR coalesce(split_part(m[1], ':', 1), '') || coalesce(m[2], '') || coalesce(m[3], '') ~ '[\s=]'
+           -- A query parameter with whitespace or a second '=' is malformed too.
+           OR coalesce(m[4], '') ~ '\s|=[^&]*=' THEN
+            RETURN jsonb_build_object('unparsed', true);
+        END IF;
+        IF m[1] IS NOT NULL AND split_part(m[1], ':', 1) <> '' THEN
+            out := out || jsonb_build_object('user', split_part(m[1], ':', 1));
+        END IF;
+        IF m[2] <> '' THEN out := out || jsonb_build_object('host', m[2]); END IF;
+        IF coalesce(m[3], '') <> '' THEN out := out || jsonb_build_object('dbname', m[3]); END IF;
+        IF m[4] IS NOT NULL THEN
+            FOREACH val IN ARRAY string_to_array(m[4], '&') LOOP
+                k := lower(split_part(val, '=', 1));
+                -- libpq percent-decodes keywords too, so an encoded key could
+                -- name a secret: drop any key containing '%'.
+                IF k = ANY (allowed) AND k <> ALL (secret) AND position('%' in k) = 0 THEN
+                    out := out || jsonb_build_object(k,
+                        pg_temp.mask_secrets(substring(val from position('=' in val) + 1)));
+                END IF;
+            END LOOP;
+        END IF;
+        RETURN out;
+    END IF;
+    -- Keyword/value form. Like libpq, backslash escapes apply in quoted and
+    -- unquoted values, so a value containing spaces, quotes or '=' is consumed
+    -- whole. Returned values still pass through mask_secrets.
+    FOR m IN SELECT regexp_matches(v,
+            '([A-Za-z_]+)\s*=\s*(''(?:[^''\\]|\\.)*''|(?:[^\s''\\]|\\.)(?:[^\s\\]|\\.)*)', 'g') LOOP
+        k := lower(m[1]);
+        IF k = ANY (allowed) AND k <> ALL (secret) THEN
+            out := out || jsonb_build_object(k, pg_temp.mask_secrets(trim(both '''' from m[2])));
         END IF;
     END LOOP;
     RETURN out;
@@ -366,13 +457,10 @@ SELECT jsonb_pretty(jsonb_build_object(
         'source',          s.source,
         'sourcefile',      s.sourcefile,
         'sourceline',      s.sourceline,
-        'boot_val',        s.boot_val,
+        'boot_val',        pg_temp.sanitise_setting(s.name, s.boot_val),
         'reset_val',       pg_temp.sanitise_setting(s.name, s.reset_val),
         'pending_restart', s.pending_restart,
-        'sanitised',       s.name IN ('archive_command','restore_command',
-                                      'archive_cleanup_command','recovery_end_command',
-                                      'primary_conninfo','ssl_passphrase_command',
-                                      'krb_server_keyfile')
+        'sanitised',       pg_temp.is_secret_setting(s.name)
     ) ORDER BY s.name), '[]'::jsonb)
     FROM pg_settings s
     WHERE s.source <> 'default'
@@ -447,7 +535,14 @@ SELECT jsonb_pretty(jsonb_build_object(
     SELECT coalesce(jsonb_agg(jsonb_build_object(
         'role',     coalesce(r.rolname,'ALL'),
         'database', coalesce(d.datname,'ALL'),
-        'settings', s.setconfig
+        -- Each name=value entry keeps its name; its value goes through
+        -- sanitise_setting like every other setting value.
+        'settings', (SELECT jsonb_agg(
+                        split_part(c, '=', 1) || '=' ||
+                        pg_temp.sanitise_setting(split_part(c, '=', 1),
+                                                 substring(c from position('=' in c) + 1))
+                        ORDER BY ord)
+                     FROM unnest(s.setconfig) WITH ORDINALITY AS u(c, ord))
     )), '[]'::jsonb)
     FROM pg_db_role_setting s
     LEFT JOIN pg_roles r    ON r.oid = s.setrole
@@ -516,7 +611,12 @@ SELECT jsonb_pretty(jsonb_build_object(
     SELECT coalesce(jsonb_agg(jsonb_build_object(
         'schema', schemaname, 'table', tablename, 'policy', policyname,
         'permissive', permissive, 'roles', roles, 'cmd', cmd,
-        'qual', qual, 'with_check', with_check
+        -- Policy expressions can embed literals (USING (api_key = 'x')):
+        -- only whether one is set and its length ship.
+        'qual',       CASE WHEN qual IS NULL THEN NULL
+                           ELSE '***REDACTED*** (set, ' || length(qual) || ' characters)' END,
+        'with_check', CASE WHEN with_check IS NULL THEN NULL
+                           ELSE '***REDACTED*** (set, ' || length(with_check) || ' characters)' END
     ) ORDER BY schemaname, tablename, policyname), '[]'::jsonb)
     FROM pg_policies
 ),
@@ -669,12 +769,16 @@ SELECT jsonb_pretty(jsonb_build_object(
 'redactions', jsonb_build_array(
     jsonb_build_object('field','pg_authid.rolpassword','class','S0',
         'note','Password verifiers are never selected. Only the derived type is returned.'),
-    jsonb_build_object('field','pg_settings.archive_command','class','S2',
-        'note','Command structure preserved; embedded credentials masked.'),
-    jsonb_build_object('field','pg_settings.primary_conninfo','class','S2',
-        'note','Parsed to keys; password and passfile dropped.'),
+    jsonb_build_object('field','pg_settings.archive_command','class','S0',
+        'note','Never shipped (also restore_command, archive_cleanup_command, recovery_end_command, ssl_passphrase_command, krb_server_keyfile): only whether a value is set and its length.'),
+    jsonb_build_object('field','pg_settings.primary_conninfo','class','S0',
+        'note','Raw value never shipped (only whether it is set and its length). Parsed to allowlisted connection keys only (host, port, user, dbname, sslmode and similar), values masked; anything that cannot be read safely is reported as unparsed.'),
     jsonb_build_object('field','pg_subscription.subconninfo','class','S2',
-        'note','Parsed to keys; password and passfile dropped.'),
+        'note','Parsed to allowlisted connection keys only, values masked; never password, passfile or sslpassword; anything that cannot be read safely is reported as unparsed.'),
+    jsonb_build_object('field','custom and extension settings','class','S0',
+        'note','Values of dotted settings (e.g. pgrst.jwt_secret) are never shipped in settings, file_settings or role_settings, except an exact list of reviewed pgaudit, set_user, pg_stat_statements and plpgsql settings.'),
+    jsonb_build_object('field','pg_policies.qual and with_check','class','S0',
+        'note','Policy expressions can embed literals: only whether one is set and its length.'),
     jsonb_build_object('field','pg_hba_file_rules.options','class','S2',
         'note','ldapbindpasswd and radiussecret masked; rule structure preserved.'),
     jsonb_build_object('field','pg_stat_activity.query','class','S0',

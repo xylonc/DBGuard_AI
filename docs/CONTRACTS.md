@@ -30,7 +30,7 @@ The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.jso
 
 1. **No EXECUTE of manifest text**: The `pg_temp.run_checks()` function never uses `EXECUTE` on any text derived from the manifest. It only reads known fields (`spec_id`, `kind`, `setting_name`, `query`) and uses them directly in controlled operations.
 
-2. **Secret redaction**: The `pg_temp.sanitise_setting()` function masks credentials in sensitive settings (`archive_command`, `restore_command`, `archive_cleanup_command`, `recovery_end_command`, `primary_conninfo`, `ssl_passphrase_command`, `krb_server_keyfile`) before returning them.
+2. **Secret redaction**: The `pg_temp.sanitise_setting()` function never returns the text of a setting that can carry a secret. `pg_temp.is_secret_setting()` marks as secret: the seven built-in settings (`archive_command`, `restore_command`, `archive_cleanup_command`, `recovery_end_command`, `primary_conninfo`, `ssl_passphrase_command`, `krb_server_keyfile`); every dotted custom or extension setting except an exact list of 28 reviewed pgaudit, set_user, pg_stat_statements and plpgsql names; and any plain name the server does not recognise (e.g. a config-file typo). Names compare lower-cased under the C collation, and a missing name fails closed. For those settings `setting`, `reset_val`, `boot_val`, `file_settings`, `role_settings` entries and manifest check results read `***REDACTED*** (set, N characters)`; NULL, '' and `(disabled)` pass through. Connection strings are additionally parsed to an allowlist of safe keys (`*_conninfo_parsed`), and `rls_policies` expressions are redacted the same way.
 
 #
 ## check manifest v1

@@ -319,7 +319,7 @@
       "lc_ctype": "en_US.utf8",
       "server_encoding": "UTF8",
       "server_version_num": 170011,
-      "system_identifier": "7701394244939485209",
+      "system_identifier": "7701745034808315936",
       "version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
       "wal_segment_size": "16MB"
     },
@@ -338,19 +338,29 @@
         "note": "Password verifiers are never selected. Only the derived type is returned."
       },
       {
-        "class": "S2",
+        "class": "S0",
         "field": "pg_settings.archive_command",
-        "note": "Command structure preserved; embedded credentials masked."
+        "note": "Never shipped (also restore_command, archive_cleanup_command, recovery_end_command, ssl_passphrase_command, krb_server_keyfile): only whether a value is set and its length."
       },
       {
-        "class": "S2",
+        "class": "S0",
         "field": "pg_settings.primary_conninfo",
-        "note": "Parsed to keys; password and passfile dropped."
+        "note": "Raw value never shipped (only whether it is set and its length). Parsed to allowlisted connection keys only (host, port, user, dbname, sslmode and similar), values masked; anything that cannot be read safely is reported as unparsed."
       },
       {
         "class": "S2",
         "field": "pg_subscription.subconninfo",
-        "note": "Parsed to keys; password and passfile dropped."
+        "note": "Parsed to allowlisted connection keys only, values masked; never password, passfile or sslpassword; anything that cannot be read safely is reported as unparsed."
+      },
+      {
+        "class": "S0",
+        "field": "custom and extension settings",
+        "note": "Values of dotted settings (e.g. pgrst.jwt_secret) are never shipped in settings, file_settings or role_settings, except an exact list of reviewed pgaudit, set_user, pg_stat_statements and plpgsql settings."
+      },
+      {
+        "class": "S0",
+        "field": "pg_policies.qual and with_check",
+        "note": "Policy expressions can embed literals: only whether one is set and its length."
       },
       {
         "class": "S2",
@@ -1012,14 +1022,14 @@
         "vartype": "integer"
       },
       {
-        "boot_val": "FILE:/etc/postgresql-common/krb5.keytab",
+        "boot_val": "***REDACTED*** (set, 39 characters)",
         "category": "Connections and Authentication / Authentication",
         "context": "sighup",
         "name": "krb_server_keyfile",
         "pending_restart": false,
-        "reset_val": "FILE:/etc/postgresql-common/krb5.keytab",
+        "reset_val": "***REDACTED*** (set, 39 characters)",
         "sanitised": true,
-        "setting": "FILE:/etc/postgresql-common/krb5.keytab",
+        "setting": "***REDACTED*** (set, 39 characters)",
         "source": "default",
         "sourcefile": null,
         "sourceline": null,
@@ -2167,7 +2177,7 @@
       }
     ],
     "uptime": {
-      "postmaster_start_time": "2026-10-27T17:02:59.507936+00:00",
+      "postmaster_start_time": "2026-10-28T15:44:14.197828+00:00",
       "uptime_seconds": 1
     }
   },
@@ -2247,9 +2257,9 @@
   },
   "envelope": {
     "can_read_pg_authid": true,
-    "collected_at": "2026-10-27T17:03:00Z",
+    "collected_at": "2026-10-28T15:44:14Z",
     "collected_by": "dbguard_poc",
-    "collector_sha256": "3af9ede9222fd43292cf6da901c3f38008630917b3746ca389c40a39aa7ce998",
+    "collector_sha256": "79f5422c42ef53a53c36cb4581cd6e28cf6de4681db8786b7d53c9ea7e857319",
     "collector_version": "2.0.0-sql",
     "database": "dbguard_sandbox",
     "deployment_type": "self-managed",
@@ -2263,6 +2273,6 @@
       "sha256": "3b97fd4db242c5e69deed6aca196647063d6e48b3d16f525447b1c25e136ff10"
     },
     "schema_version": "0.3.0",
-    "target_id": "dbguard-poc-eecf721401204894b6a1cd2463d28466"
+    "target_id": "dbguard-poc-88a942d8e8954e48a6537cfdcddc84db"
   }
 }

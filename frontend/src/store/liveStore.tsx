@@ -7,6 +7,22 @@ import {
   type ReactNode,
 } from "react"
 import { api, request, type Service } from "@/adapters/live"
+import { profileRefQuery } from "@/live/profileForm"
+// The approved policy profile the user chose for assessments (default none). Only
+// its hash is sent; the backend resolves it from the profile store.
+export type ChosenProfile = {
+  profile_ref: string
+  profile_id: string
+  approved_by: string | null
+  approved_at: string | null
+}
+export function assessmentPath(
+  snapshotId: string,
+  benchmark: string,
+  profile: ChosenProfile | null,
+) {
+  return `/api/v1/snapshots/${encodeURIComponent(snapshotId)}/spec-assessment?benchmark_id=${encodeURIComponent(benchmark)}${profileRefQuery(profile?.profile_ref)}`
+}
 type LiveState = {
   service: Service
   snapshot: any
@@ -35,6 +51,7 @@ type LiveState = {
   busy: string
   error: string
   verification: any
+  policyProfile: ChosenProfile | null
 }
 const fresh = (): LiveState => ({
   service: "demo",
@@ -56,6 +73,7 @@ const fresh = (): LiveState => ({
   busy: "",
   error: "",
   verification: null,
+  policyProfile: null,
 })
 function restore() {
   try {
@@ -146,9 +164,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     await action("Loading live demo", async () => {
       const d = await api("demo", "/api/v1/demo/workflow")
       const snapshot = await api("demo", `/api/v1/snapshots/${d.snapshot_id}`)
+      // Keep the chosen profile only while it belongs to the same benchmark.
+      const profile =
+        current.current.benchmark === d.benchmark_id
+          ? current.current.policyProfile
+          : null
       const assessment = await api(
         "demo",
-        `/api/v1/snapshots/${d.snapshot_id}/spec-assessment?benchmark_id=${d.benchmark_id}`,
+        assessmentPath(d.snapshot_id, d.benchmark_id, profile),
       )
       const context = await api("demo", "/review/context")
       generation.current++
@@ -166,6 +189,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         handoffId: "",
         verification: null,
         messages: [],
+        policyProfile: profile,
       })
     })
   }
@@ -216,7 +240,30 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       if (!s.snapshot) throw new Error("Import a snapshot first")
       const assessment = await api(
         s.service,
-        `/api/v1/snapshots/${s.snapshot.snapshot_id}/spec-assessment?benchmark_id=${encodeURIComponent(s.benchmark)}`,
+        assessmentPath(s.snapshot.snapshot_id, s.benchmark, s.policyProfile),
+      )
+      patch({ assessment })
+    })
+  }
+  // A different profile changes every policy result, so earlier results and
+  // handoffs are cleared and the snapshot is reassessed with the new choice.
+  async function choosePolicyProfile(profile: ChosenProfile | null) {
+    const s = current.current
+    if (s.busy || s.chatJob) return
+    generation.current++
+    patch({
+      policyProfile: profile,
+      assessment: null,
+      result: null,
+      batch: null,
+      handoffId: "",
+      verification: null,
+    })
+    if (!s.snapshot) return
+    await action("Assessing with the chosen policy profile", async () => {
+      const assessment = await api(
+        s.service,
+        assessmentPath(s.snapshot.snapshot_id, s.benchmark, profile),
       )
       patch({ assessment })
     })
@@ -240,6 +287,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           control_id: s.controlId,
           retry_mode: s.retryMode,
           retry_template_versions: [],
+          policy_profile: s.policyProfile?.profile_ref ?? null,
           alternative_templates: s.alternativeTemplates
             .split(",")
             .map((x) => x.trim())
@@ -310,7 +358,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         if (s.snapshot) {
           const assessment = await api(
             s.service,
-            `/api/v1/snapshots/${s.snapshot.snapshot_id}/spec-assessment?benchmark_id=${encodeURIComponent(s.benchmark)}`,
+            assessmentPath(
+              s.snapshot.snapshot_id,
+              s.benchmark,
+              s.policyProfile,
+            ),
           )
           if (!cancelled) patch({ assessment })
         }
@@ -350,7 +402,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     generation.current++
     patch({
       ...value,
-      ...(value.benchmark !== undefined ? { assessment: null } : {}),
+      ...(value.benchmark !== undefined
+        ? { assessment: null, policyProfile: null }
+        : {}),
       result: null,
       batch: null,
       handoffId: "",
@@ -370,6 +424,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         loadSnapshot,
         upload,
         assess,
+        choosePolicyProfile,
         run,
         sync,
         send,
@@ -390,6 +445,7 @@ export function useLive() {
     loadSnapshot: (id: string) => Promise<void>
     upload: (f: File) => Promise<void>
     assess: () => Promise<void>
+    choosePolicyProfile: (p: ChosenProfile | null) => Promise<void>
     run: () => Promise<void>
     sync: () => Promise<void>
     send: (s: string) => Promise<void>

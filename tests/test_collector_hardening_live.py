@@ -182,7 +182,12 @@ def hardening_failures(db: DisposablePostgres, proc, raw: str | None, collector_
         failures.append("checks do not answer exactly the manifest")
     for c in manifest["checks"]:
         got = snapshot["checks"].get(c["spec_id"], {})
-        real = db.sql(f"SHOW {c['setting_name']};")
+        # db.sql trims output, which would drop a real trailing space (the PG17
+        # default log_line_prefix is '%m [%p] '), so read the exact bytes as hex
+        # through schema-qualified built-ins the hostile search_path cannot shadow.
+        real = bytes.fromhex(db.sql(
+            "SELECT pg_catalog.encode(pg_catalog.convert_to("
+            f"pg_catalog.current_setting('{c['setting_name']}'), 'UTF8'), 'hex');")).decode()
         if got.get("status") != "ok" or got.get("result") != real:
             failures.append(f"{c['spec_id']}: got {got!r}, real {real!r}")
 
@@ -562,7 +567,10 @@ def plant_archive_command(db: DisposablePostgres, command: str, secret: str) -> 
     # exercise the redaction at all. Turn archiving on first (postmaster
     # setting: a controlled restart of the owned container).
     db.sql("ALTER SYSTEM SET archive_mode = on;")
-    db.activate({"archive_mode": "on"})
+    # Test setup, not a fix: activate() only restarts for the reviewed restart
+    # allowlist, so restart this owned container explicitly and confirm it.
+    db.restart()
+    assert db.sql("SHOW archive_mode;") == "on"
     plant_setting(db, "archive_command", command, secret)
     assert db.sql("SELECT setting FROM pg_settings WHERE name = 'archive_command';") == command
 

@@ -2,7 +2,9 @@
 """Assessment CLI: assess specs against a snapshot.
 
 Usage:
-    python scripts/assess.py --specs DIR --records PATH --snapshot PATH [--out PATH]
+    python scripts/assess.py --specs DIR --records PATH --snapshot PATH [--policy PATH] [--out PATH]
+
+Without --policy, specs with expected_from: policy are MANUAL (policy_missing).
 
 Exit codes:
     0: Report written successfully
@@ -22,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from app.services.spec_engine import RecordsIndex, load_spec, assess  # noqa: E402
+from app.services.spec_engine import RecordsIndex, load_spec, load_profile, assess  # noqa: E402
 
 
 def main() -> int:
@@ -46,6 +48,11 @@ def main() -> int:
         required=True,
         type=Path,
         help="Path to snapshot JSON file",
+    )
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        help="Policy profile YAML for parameterised specs (default: none)",
     )
     parser.add_argument(
         "--out",
@@ -97,9 +104,17 @@ def main() -> int:
             print(f"FAIL: cannot load spec from {spec_path}: {exc}", file=sys.stderr)
             return 2
 
+    policy = None
+    if args.policy is not None:
+        try:
+            policy = load_profile(args.policy, records)
+        except (OSError, ValueError) as exc:
+            print(f"FAIL: cannot load policy profile from {args.policy}: {exc}", file=sys.stderr)
+            return 2
+
     # Run assessment (includes all validation)
     try:
-        report = assess(specs, snapshot, records)
+        report = assess(specs, snapshot, records, policy)
     except ValueError as exc:
         print(f"FAIL: assessment failed: {exc}", file=sys.stderr)
         return 2

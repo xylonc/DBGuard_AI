@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbguardai.local/schemas/spec-v1.json",
-  "title": "DBGuardAI control spec (schema_version 1)",
-  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id prefix (everything before ':') is derived from RecordsIndex.benchmark_id (the records.json directory name) plus pg_major and benchmark_version from ref; the recommendation number after ':' must match ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.kind is 'setting' or deferred kinds (needs_capability, manual_checklist); check.query == 'SHOW ' + check.setting_name for setting kind; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every expected value is a whole token in the quote; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
+  "title": "DBGuardAI control spec (schema_version 1 and 2)",
+  "description": "Documented contract for catalog/specs/<benchmark>/<rec>.yaml. validate.py enforces everything here PLUS rules JSON Schema cannot express: spec_id prefix (everything before ':') is derived from RecordsIndex.benchmark_id (the records.json directory name) plus pg_major and benchmark_version from ref; the recommendation number after ':' must match ref.recommendation; ref fields match records.json (benchmark, benchmark_version, title, source_sha256); check.query == 'SHOW ' + check.setting_name; pass_condition_quote is a whitespace-collapsed substring of the record's audit_procedure; every literal expected value is a whole token in the quote (waived for expected_from: policy, whose values live in the policy profile); severity expected values belong to the setting's reviewed scale; no_item_in is only allowed on a setting with a reviewed list grammar (listen_addresses); interpretation sentences contain no SQL; applies_when.condition_quote is a whitespace-collapsed substring of the record's audit_procedure, description or rationale; applies_when.setting_name differs from check.setting_name; proof step setting_name equals check.setting_name; break.value fails and fix.value passes the operator. schema_version is 2 exactly when applies_when or check.expected_from is used, otherwise 1. The operator list is exactly OPERATORS in backend/app/services/spec_engine/operators.py (a test pins this). There is deliberately no status field: proven/approved are derived from proof and approval records keyed by spec_sha256.",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec_id", "schema_version", "authored_by", "ref", "tier", "reason"],
@@ -11,30 +11,126 @@
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]+-pg[0-9]+-v[0-9]+\\.[0-9]+\\.[0-9]+:[0-9]+(\\.[0-9]+)*$"
     },
-    "schema_version": { "const": 1 },
+    "schema_version": { "enum": [1, 2] },
     "authored_by": { "enum": ["human", "agent"] },
     "ref": { "$ref": "#/$defs/ref" },
     "tier": { "enum": ["automated", "parameterised", "manual_checklist", "needs_capability"] },
     "reason": { "type": ["string", "null"] },
     "check": { "$ref": "#/$defs/check" },
-    "proof": { "$ref": "#/$defs/proof" }
+    "proof": { "$ref": "#/$defs/proof" },
+    "applies_when": { "$ref": "#/$defs/applies_when" },
+    "interpretation": { "$ref": "#/$defs/interpretation" }
   },
-  "if": {
-    "properties": { "tier": { "const": "automated" } },
-    "required": ["tier"]
-  },
-  "then": {
-    "required": ["check", "proof"],
-    "properties": { "reason": { "type": "null" } }
-  },
-  "else": {
-    "properties": { "reason": { "type": "string", "minLength": 1, "pattern": "\\S" } },
-    "not": { "anyOf": [ { "required": [ "check" ] }, { "required": [ "proof" ] } ] }
-  },
+  "allOf": [
+    {
+      "if": { "properties": { "tier": { "const": "automated" } }, "required": ["tier"] },
+      "then": {
+        "required": ["check", "proof"],
+        "properties": {
+          "reason": { "type": "null" },
+          "check": { "required": ["expected"], "not": { "required": ["expected_from"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "tier": { "const": "parameterised" } }, "required": ["tier"] },
+      "then": {
+        "properties": {
+          "reason": { "type": "string", "minLength": 1, "pattern": "\\S" },
+          "check": { "required": ["expected_from"], "not": { "required": ["expected"] } }
+        },
+        "not": { "required": ["proof"] }
+      }
+    },
+    {
+      "if": { "properties": { "tier": { "enum": ["manual_checklist", "needs_capability"] } }, "required": ["tier"] },
+      "then": {
+        "properties": { "reason": { "type": "string", "minLength": 1, "pattern": "\\S" } },
+        "not": { "anyOf": [ { "required": ["check"] }, { "required": ["proof"] }, { "required": ["applies_when"] } ] }
+      }
+    },
+    {
+      "if": { "required": ["applies_when"] },
+      "then": { "required": ["check"] }
+    },
+    {
+      "if": {
+        "anyOf": [
+          { "required": ["applies_when"] },
+          { "properties": { "check": { "required": ["expected_from"] } }, "required": ["check"] }
+        ]
+      },
+      "then": { "properties": { "schema_version": { "const": 2 } } },
+      "else": { "properties": { "schema_version": { "const": 1 } } }
+    }
+  ],
   "$defs": {
     "setting_name": {
       "type": "string",
       "pattern": "^[a-z_][a-z0-9_.]*$"
+    },
+    "readable_setting_name": {
+      "description": "A setting whose value the collector ships: not one of the secret-bearing built-ins, and not a dotted (custom or extension) name outside the reviewed list. Mirrors collector/collect.sql pg_temp.is_secret_setting and spec_engine/redaction.py (a test pins all three).",
+      "$ref": "#/$defs/setting_name",
+      "not": {
+        "anyOf": [
+          { "enum": ["archive_command", "restore_command", "archive_cleanup_command", "recovery_end_command", "primary_conninfo", "ssl_passphrase_command", "krb_server_keyfile"] },
+          { "pattern": "\\.", "not": { "enum": ["pgaudit.log", "pgaudit.log_catalog", "pgaudit.log_client", "pgaudit.log_level", "pgaudit.log_parameter", "pgaudit.log_parameter_max_size", "pgaudit.log_relation", "pgaudit.log_rows", "pgaudit.log_statement", "pgaudit.log_statement_once", "pgaudit.role", "set_user.block_alter_system", "set_user.block_copy_program", "set_user.block_log_statement", "set_user.exit_on_error", "set_user.nosuperuser_target_allowlist", "set_user.superuser_allowlist", "set_user.superuser_audit_tag", "pg_stat_statements.max", "pg_stat_statements.track", "pg_stat_statements.track_utility", "pg_stat_statements.track_planning", "pg_stat_statements.save", "plpgsql.variable_conflict", "plpgsql.print_strict_params", "plpgsql.check_asserts", "plpgsql.extra_warnings", "plpgsql.extra_errors"] } }
+        ]
+      }
+    },
+    "operator": {
+      "enum": ["equals", "not_equals", "in", "not_in", "contains_items", "contains_escapes", "severity", "no_item_in"]
+    },
+    "string_list": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "operator_rules": {
+      "description": "Shape of expected and operator parameters, shared by check and applies_when.",
+      "allOf": [
+        {
+          "if": { "properties": { "operator": { "enum": ["in", "not_in", "contains_items", "contains_escapes", "no_item_in"] } }, "required": ["operator"] },
+          "then": { "properties": { "expected": { "$ref": "#/$defs/string_list" } } },
+          "else": { "properties": { "expected": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "properties": { "operator": { "const": "contains_items" } }, "required": ["operator"] },
+          "then": { "properties": { "expected": { "items": { "pattern": "^[a-z0-9_]+$" } } } }
+        },
+        {
+          "if": { "properties": { "operator": { "const": "contains_escapes" } }, "required": ["operator"] },
+          "then": {
+            "properties": {
+              "expected": {
+                "items": { "enum": ["%a", "%u", "%d", "%r", "%h", "%L", "%b", "%p", "%P", "%t", "%m", "%n", "%i", "%e", "%c", "%l", "%s", "%v", "%x", "%Q"] }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "operator": { "const": "no_item_in" } }, "required": ["operator"] },
+          "then": {
+            "properties": {
+              "setting_name": { "enum": ["listen_addresses"] },
+              "expected": { "items": { "pattern": "^(\\*|[A-Za-z0-9.:%_-]+)$" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "operator": { "const": "severity" } }, "required": ["operator"] },
+          "then": {
+            "required": ["direction"],
+            "properties": {
+              "setting_name": { "enum": ["log_min_messages", "log_min_error_statement"] },
+              "expected": { "enum": ["debug5", "debug4", "debug3", "debug2", "debug1", "info", "notice", "warning", "error", "log", "fatal", "panic"] }
+            }
+          },
+          "else": { "not": { "required": ["direction"] } }
+        }
+      ]
     },
     "ref": {
       "type": "object",
@@ -52,34 +148,40 @@
     "check": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "setting_name", "query", "operator", "expected", "pass_condition_quote"],
+      "required": ["kind", "setting_name", "query", "operator", "pass_condition_quote"],
       "properties": {
         "kind": { "enum": ["setting"] },
-        "setting_name": { "$ref": "#/$defs/setting_name" },
+        "setting_name": { "$ref": "#/$defs/readable_setting_name" },
         "query": { "type": "string", "pattern": "^SHOW [a-z_][a-z0-9_.]*$" },
-        "operator": { "enum": ["equals", "not_equals", "in"] },
+        "operator": { "$ref": "#/$defs/operator" },
+        "direction": { "enum": ["at_or_more_verbose", "at_or_less_verbose"] },
         "expected": true,
+        "expected_from": { "const": "policy" },
         "pass_condition_quote": { "type": "string", "minLength": 1 }
       },
-      "if": {
-        "properties": { "operator": { "const": "in" } },
-        "required": ["operator"]
+      "oneOf": [ { "required": ["expected"] }, { "required": ["expected_from"] } ],
+      "$ref": "#/$defs/operator_rules"
+    },
+    "applies_when": {
+      "description": "Condition under which the control applies. Condition false on clean evidence gives NOT_APPLICABLE; missing or stale condition evidence is never PASS.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setting_name", "operator", "expected", "condition_quote"],
+      "properties": {
+        "setting_name": { "$ref": "#/$defs/readable_setting_name" },
+        "operator": { "$ref": "#/$defs/operator" },
+        "direction": { "enum": ["at_or_more_verbose", "at_or_less_verbose"] },
+        "expected": true,
+        "condition_quote": { "type": "string", "minLength": 1 }
       },
-      "then": {
-        "properties": {
-          "expected": {
-            "type": "array",
-            "minItems": 1,
-            "uniqueItems": true,
-            "items": { "type": "string", "minLength": 1 }
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "expected": { "type": "string", "minLength": 1 }
-        }
-      }
+      "$ref": "#/$defs/operator_rules"
+    },
+    "interpretation": {
+      "description": "Optional on any tier and schema_version: plain sentences recording where DBGuard reads the CIS text more strictly, more narrowly or more widely. Never SQL (validate.py also rejects ';', line breaks, code fences and upper-case SQL statement keywords). Part of the spec hash.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 600, "pattern": "^[^;\\n\\r]*\\S[^;\\n\\r]*$" }
     },
     "proof_step": {
       "type": "object",

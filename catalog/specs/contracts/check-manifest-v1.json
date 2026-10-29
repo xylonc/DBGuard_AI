@@ -17,7 +17,7 @@
       "type": "string"
     },
     "checks": {
-      "description": "List of check entries. Each check corresponds to one automated spec.",
+      "description": "List of check entries, sorted by spec_id: one per spec with a check (tier automated, or parameterised with expected_from: policy), plus one per applies_when condition keyed '<spec_id>#applies_when' and pinned to the same spec_hash.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/check_entry"
@@ -33,7 +33,7 @@
       "required": ["spec_id", "spec_hash", "kind", "setting_name", "query"],
       "properties": {
         "spec_id": {
-          "description": "The spec_id that this check corresponds to.",
+          "description": "The spec_id that this check corresponds to, or '<spec_id>#applies_when' for that spec's condition setting.",
           "type": "string"
         },
         "spec_hash": {

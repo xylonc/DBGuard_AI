@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.6"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.6"
+  title: "Ensure the log file permissions are set correctly"
+  source_sha256: "3647eafe029a597db2af3a67c12a9c4df257ad94772b87bd3f6fa27d507490eb"
+tier: parameterised
+reason: "the audit only requires log_file_mode to be consistent with organizational logging policy; the accepted modes come from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_file_mode
+  query: "SHOW log_file_mode"
+  operator: in
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement to verify that the setting is consistent with organizational logging policy:"

@@ -12,7 +12,7 @@ from .runtime import DisposablePostgres
 from .shared import ContractError, ROOT, SpecEngine
 from .templates import from_registry
 from .workflow import CONTROL, RemediationLoop
-from .planning import fix_scope, risk_review
+from .planning import fix_scope, risk_review, session_override_reason
 
 
 class SandboxService:
@@ -37,7 +37,10 @@ class SandboxService:
             validator = Draft202012Validator(json.loads((ROOT / "catalog/specs/schema.json").read_text()))
             for spec in request.specs:
                 validator.validate(spec)
-            engine = SpecEngine(request.specs, RecordsIndex.load(records_path))
+            from .profiles import resolve_profile
+            records = RecordsIndex.load(records_path)
+            engine = SpecEngine(request.specs, records,
+                                resolve_profile(records, request.specs, request.policy_profile_sha256))
             if "-import-" in request.benchmark_id:
                 approved = SpecEngine.load(records_path.parent/"specs",records_path)
                 if engine.spec_set_hash != approved.spec_set_hash:
@@ -48,7 +51,10 @@ class SandboxService:
             if assessment["findings"].get(request.control_id, {}).get("status") != "FAIL":
                 raise ContractError("The selected supported control must be FAIL")
             if any(f["status"] == "GAPPED" for f in assessment["findings"].values()):
-                raise ContractError("Gapped controls cannot establish regression coverage")
+                overrides = [reason for f in assessment["findings"].values()
+                             if (reason := session_override_reason(f))]
+                raise ContractError("Gapped controls cannot establish regression coverage"
+                                    + (f". {overrides[0]}" if overrides else ""))
             fix_scope(engine, request.control_id)
             reconstruction_plan(request.snapshot, engine.specs)
             return engine

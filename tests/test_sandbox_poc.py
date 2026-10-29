@@ -5,6 +5,7 @@ from unittest.mock import Mock, MagicMock
 import pytest
 
 from scripts.sandbox_poc import demo_template
+from app.services.spec_engine.manifest import condition_check_id
 from services.sandbox_poc.provenance import FILES, reconstruction_plan
 from services.sandbox_poc.shared import ContractError, ROOT, SpecEngine
 from services.sandbox_poc.templates import ApprovedTemplate
@@ -27,7 +28,17 @@ def snapshot(engine):
               "log_truncate_on_rotation": "on", "syslog_sequence_numbers": "on",
               "debug_print_rewritten": "off", "debug_print_plan": "off",
               "debug_pretty_print": "on", "log_error_verbosity": "verbose",
-              "log_hostname": "off"}
+              "log_hostname": "off",
+              # Wave 1b: compliant F2/F4 values; F3 policy values (MANUAL without an
+              # approved profile) hold the reference profile's fix values.
+              "log_min_messages": "warning", "log_min_error_statement": "error",
+              "log_line_prefix": "%m [%p]: [%l-1] db=%d,user=%u,app=%a,client=%h",
+              "logging_collector": "on", "listen_addresses": "localhost",
+              "log_destination": "stderr", "log_directory": "/var/log/postgresql",
+              "log_filename": "postgresql-%a.log", "log_file_mode": "0600",
+              "log_rotation_age": "1d", "log_rotation_size": "1GB",
+              "syslog_facility": "local0", "syslog_ident": "postgres", "log_timezone": "UTC"}
+    seen = set()
     for spec in engine.specs:
         sid = spec["spec_id"]
         entry = {"spec_hash": engine.hashes[sid], "query": "not applicable", "status": "not_collected"}
@@ -35,13 +46,22 @@ def snapshot(engine):
             name = spec["check"]["setting_name"]
             value = values[name]
             entry.update(query=spec["check"]["query"], status="ok", result=value)
-            settings.append({"name": name, "setting": value, "context": "superuser-backend",
-                             "source": "configuration file", "sourcefile": FILES[0],
-                             "pending_restart": False})
-            files.append({"name": name, "setting": value, "sourcefile": FILES[0],
-                          "applied": True, "error": None})
+            if name not in seen:
+                seen.add(name)
+                settings.append({"name": name, "setting": value, "context": "superuser-backend",
+                                 "source": "configuration file", "sourcefile": FILES[0],
+                                 "pending_restart": False})
+                files.append({"name": name, "setting": value, "sourcefile": FILES[0],
+                              "applied": True, "error": None})
         if "check" in spec:
             checks[sid] = entry
+        condition = spec.get("applies_when")
+        if condition is not None:
+            # The applies_when setting is collected under '<spec_id>#applies_when' with the
+            # spec's hash (log_destination 'stderr': the syslog controls are NOT_APPLICABLE).
+            cname = condition["setting_name"]
+            checks[condition_check_id(sid)] = {"spec_hash": engine.hashes[sid], "query": f"SHOW {cname}",
+                                               "status": "ok", "result": values[cname]}
     return {"envelope": {"schema_version": "0.3.0", "database": "test", "target_id": "test",
                          "collector_sha256": engine.collector_hash,
                          "manifest": {"sha256": engine.manifest_hash, "manifest_version": 1,
@@ -71,6 +91,15 @@ class FakeRuntime:
 
     def activate(self, expected):
         pass
+
+    def setting_sources(self, names):
+        # The fake sandbox reproduces the snapshot exactly, provenance included.
+        rows = {r["name"]: r for r in self.snapshot["baseline"]["settings"]}
+        return {n: {"source": rows[n]["source"], "sourcefile": rows[n]["sourcefile"]}
+                for n in names if n in rows}
+
+    def restart(self):
+        self.executed.append("RESTART")
 
     def health(self):
         return self.fault != "health"

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # Database
     database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "postgresql://dbguard:dbguard@localhost:5432/dbguard"))
     snapshot_storage_dir: str = "./data/snapshots"
+    # Draft and approved policy profiles created in the UI (content-addressed files)
+    policy_profile_storage_dir: str = "./data/policy-profiles"
     sandbox_poc_enabled: bool = False
     sandbox_poc_image: str = "postgres:17-bookworm"
     sandbox_llm_enabled: bool = False

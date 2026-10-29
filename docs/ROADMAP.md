@@ -34,14 +34,18 @@ Notes: CIS wording such as "at least `warning`" (3.1.14) needs a named human rul
 | --- | --- |
 | Generalised loop, batch tests, restart settings, rendered screenshots | Done (live-demo-package) |
 | One rulebook; selected control respected; combined fixes in DBA review | Done (PR #30, merged to main) |
-| Spec schema v2 operators (F2) and coverage report of all 72 | Wave 0 remainder |
-| F1 + F3 specs, policy profile, policy entries, live tests (27 controls) | Wave 1 — in progress |
-| F1: 9 new specs (3.1.7, 3.1.11, 3.1.12, 3.1.17, 3.1.18, 3.1.19, 3.1.22, 3.1.23, 7.2); 7 automated + sandbox-fixable, 3.1.12 and 7.2 `manual_checklist` | Branch `melvin/wave1-f1`, awaiting Melvin's spec approval. Proof: `tests/test_wave1_setting_controls.py`, live `test_additional_setting_policies`, `test_default_sourced_setting_rolls_back_to_default_source`, `test_three_new_fixes_combined` |
-| F1 status | 14 of 14 have specs: 12 automated and sandbox-fixable (3.1.16, 3.1.20, 3.1.21, 3.1.25, 6.9 earlier + 7 new), 2 `manual_checklist` (3.1.12, 7.2). Remaining: Melvin's approval of the 9 agent-drafted specs |
-| Schema follow-ups found in Wave 1 | `applies_when` (3.1.7 needs `logging_collector`; 3.1.11/3.1.12 need syslog in `log_destination`) so non-applicable controls report N/A, not FAIL; optionally allow description text as a value source (would let 3.1.12 be automated). Wave 0 schema work |
+| Spec schema v2 operators (F2), applies_when / NOT_APPLICABLE, policy profiles, interpretation notes | Done on `melvin/wave1b-f2-f3-f4`, awaiting Gate 2 approval. Proof: `tests/test_spec_engine_wave1b.py`, `tests/test_wave1b_fixability.py` |
+| Coverage report of all 72 | Not started (Wave 0 remainder) |
+| F1 fixed-value settings (15 specs, 12 fixable, 2 manual checklist, 1 F7-deferred) | Done, merged (PR #32) |
+| F2 + F3 + F4 (14 new specs; 3.1.14 now automated; 3.1.11/3.1.13 syslog applies_when; 6.10 moved to F7; Policy Profile screen; plain-language reasons) | Built on `melvin/wave1b-f2-f3-f4`, awaiting Melvin's spec + profile approval (Gate 2). Unit 1679 passed; live 32 passed / 1 skipped; combined 3.1.24 + 3.1.3 + 3.1.7 VERIFIED in the demo |
+| F6 + 7.4 (10 report-only catalog checks with evidence; catalog checks out of the sandbox) | Built on `melvin/wave1b-f6-catalog`, awaiting Gate 2. Unit 1124 passed; live 35 passed / 1 skipped |
+| Collector hardening (search_path/standard_conforming_strings pins; never ship secret-bearing setting text) | Done, merged (PR #33). Proof: `tests/test_collector_hardening.py`, `tests/test_collector_hardening_live.py` |
+| Session overrides never PASS; redaction marker never evaluated | Built on `melvin/wave1b-f2-f3-f4`. Proof: `tests/test_session_override*.py`, `tests/test_redacted_secret_setting.py` |
+| Production follow-ups | Real sign-in for approvals (approvals are DEMO-labelled); bind API port to localhost; persistent profile storage volume; retire legacy `/api/v1/sandbox/validate` + twin runner; MCP `snapshot_id` quoting; check `pg_hba_file_rules.error` for RADIUS secret echo; null sections without `gaps` entries |
+| F6 fix proposals (password-free skeleton copy; per-role connection limits from the profile) | Next week |
 | VHS real-terminal screenshots next to rendered capture | Task 2 |
-| F4, F5, F7 (extension image, hba, TLS) | Wave 2 |
-| F6, F8, F9 assessed and reported (no auto-fix) | Wave 3–4 (assessment only by 16 Nov) |
+| F5, F7 incl. 6.10 (extension image, hba, TLS) | Next week (Wave 2) |
+| F8, F9 assessed and reported with guided manual steps (no auto-fix) | 9–13 Nov |
 | Runtime interface + one RHEL-family image | Task 3 (if time) |
 
 ## Schedule

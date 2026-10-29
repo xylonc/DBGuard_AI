@@ -319,7 +319,7 @@
       "lc_ctype": "en_US.utf8",
       "server_encoding": "UTF8",
       "server_version_num": 170011,
-      "system_identifier": "7701745034808315936",
+      "system_identifier": "7701749458884481056",
       "version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
       "wal_segment_size": "16MB"
     },
@@ -2177,15 +2177,57 @@
       }
     ],
     "uptime": {
-      "postmaster_start_time": "2026-10-28T15:44:14.197828+00:00",
+      "postmaster_start_time": "2026-10-28T16:01:24.246134+00:00",
       "uptime_seconds": 1
     }
   },
   "checks": {
+    "cis-pg17-v1.1.0:3.1.10": {
+      "query": "SHOW syslog_facility",
+      "result": "local0",
+      "spec_hash": "0dd9363a7446362b9a0f8508429c630142fbff866e6d14f8aaca822236b50ff0",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.10#applies_when": {
+      "query": "SHOW log_destination",
+      "result": "stderr",
+      "spec_hash": "0dd9363a7446362b9a0f8508429c630142fbff866e6d14f8aaca822236b50ff0",
+      "status": "ok"
+    },
     "cis-pg17-v1.1.0:3.1.11": {
       "query": "SHOW syslog_sequence_numbers",
       "result": "on",
-      "spec_hash": "ade1f3c9ba50073636768af51b51d63ee1160da8f524721038f46b9a85350fbe",
+      "spec_hash": "27770c904752090b050723f5122e5c8f24bc139d5d7f36115985d32973bb9a1e",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.11#applies_when": {
+      "query": "SHOW log_destination",
+      "result": "stderr",
+      "spec_hash": "27770c904752090b050723f5122e5c8f24bc139d5d7f36115985d32973bb9a1e",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.13": {
+      "query": "SHOW syslog_ident",
+      "result": "postgres",
+      "spec_hash": "3cb3a4cff01abfe4b9db55d630e85d341eaf32f90cfc6bae2dd53285a10b9457",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.13#applies_when": {
+      "query": "SHOW log_destination",
+      "result": "stderr",
+      "spec_hash": "3cb3a4cff01abfe4b9db55d630e85d341eaf32f90cfc6bae2dd53285a10b9457",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.14": {
+      "query": "SHOW log_min_messages",
+      "result": "warning",
+      "spec_hash": "93166d9d05ecd4d23e220ff993c0a047c60c02817314d13be301b983dcd1ea17",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.15": {
+      "query": "SHOW log_min_error_statement",
+      "result": "error",
+      "spec_hash": "8007758865cfb7834a9b1ab04dedfda3ec7ccdb745b9444836ea524e353cc1d0",
       "status": "ok"
     },
     "cis-pg17-v1.1.0:3.1.16": {
@@ -2212,6 +2254,12 @@
       "spec_hash": "02a4e5fc82be40a645c8a0e524694dd44de010228b9dafb59e22a3c08fd610ed",
       "status": "ok"
     },
+    "cis-pg17-v1.1.0:3.1.2": {
+      "query": "SHOW log_destination",
+      "result": "stderr",
+      "spec_hash": "dbc763fa6afe4d9e1fc993a650375d66a2619d3adc323a37975c6cd912d7f6bf",
+      "status": "ok"
+    },
     "cis-pg17-v1.1.0:3.1.20": {
       "query": "SHOW log_connections",
       "result": "off",
@@ -2236,16 +2284,70 @@
       "spec_hash": "7e652c4ed1aed8a6f86d9b197040c8ef06a2027ec70f334378714cb17e14db84",
       "status": "ok"
     },
+    "cis-pg17-v1.1.0:3.1.24": {
+      "query": "SHOW log_line_prefix",
+      "result": "%m [%p] ",
+      "spec_hash": "7c11b2ab654baa0dc6f10ec2523e64d9165ef58a22a1c912c6bb440360f1e073",
+      "status": "ok"
+    },
     "cis-pg17-v1.1.0:3.1.25": {
       "query": "SHOW log_statement",
       "result": "none",
       "spec_hash": "3b4d97ea5cfaba24215e66bc1c2628b6dfb194f4b5fc8bb34d89cb1178e625f0",
       "status": "ok"
     },
+    "cis-pg17-v1.1.0:3.1.26": {
+      "query": "SHOW log_timezone",
+      "result": "Etc/UTC",
+      "spec_hash": "66da8fd1991f93d617f9000e50519cb827ebc83a57d9012957edea7dc4633292",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.3": {
+      "query": "SHOW logging_collector",
+      "result": "off",
+      "spec_hash": "44d371914587c57787fa33a6f1a15c906d95ca9a7ee6c932615900f6d870ba2f",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.4": {
+      "query": "SHOW log_directory",
+      "result": "log",
+      "spec_hash": "2030397a6836149e2b25f167a4a3ab1781315f4905287b10fc962c340e261f2f",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.5": {
+      "query": "SHOW log_filename",
+      "result": "postgresql-%Y-%m-%d_%H%M%S.log",
+      "spec_hash": "8240a207535c95b768aa7658d4ea5817089c748116fc5e4c1b44bc5745ae6dc0",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.6": {
+      "query": "SHOW log_file_mode",
+      "result": "0600",
+      "spec_hash": "af3087d4bfcd224e7dfa38a7276cf3d4743869770b8855e232963995ec108ca0",
+      "status": "ok"
+    },
     "cis-pg17-v1.1.0:3.1.7": {
       "query": "SHOW log_truncate_on_rotation",
       "result": "off",
       "spec_hash": "5122df74f337042afdc3e67504f733440b130b20496266e15142157b43c526ae",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.8": {
+      "query": "SHOW log_rotation_age",
+      "result": "1d",
+      "spec_hash": "e21ae3899bfb6010571249635aaed961ec14d0e688e83fa16adf099417bf1c32",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:3.1.9": {
+      "query": "SHOW log_rotation_size",
+      "result": "10MB",
+      "spec_hash": "e5b90acdcb04680e321e6ddaa334400a32b3c2b1e4ecd90ad78dfb0e246f2681",
+      "status": "ok"
+    },
+    "cis-pg17-v1.1.0:5.2": {
+      "query": "SHOW listen_addresses",
+      "result": "*",
+      "spec_hash": "471ec12a7161e86181192480e37088ff52b80395fd33b177cc6a46cd743565dd",
       "status": "ok"
     },
     "cis-pg17-v1.1.0:6.9": {
@@ -2257,7 +2359,7 @@
   },
   "envelope": {
     "can_read_pg_authid": true,
-    "collected_at": "2026-10-28T15:44:14Z",
+    "collected_at": "2026-10-28T16:01:24Z",
     "collected_by": "dbguard_poc",
     "collector_sha256": "79f5422c42ef53a53c36cb4581cd6e28cf6de4681db8786b7d53c9ea7e857319",
     "collector_version": "2.0.0-sql",
@@ -2268,11 +2370,11 @@
     "is_superuser": true,
     "manifest": {
       "benchmark_id": "cis-pg17-v1.1.0",
-      "check_count": 12,
+      "check_count": 29,
       "manifest_version": 1,
-      "sha256": "3b97fd4db242c5e69deed6aca196647063d6e48b3d16f525447b1c25e136ff10"
+      "sha256": "8d11cbcbc8f58c49f5d546ef5518dd1f66beae54cc3961c14ae3def4daa76ae0"
     },
     "schema_version": "0.3.0",
-    "target_id": "dbguard-poc-88a942d8e8954e48a6537cfdcddc84db"
+    "target_id": "dbguard-poc-fb310e8cabfa4fb097d018ba50fe3478"
   }
 }

@@ -1,0 +1,29 @@
+spec_id: "cis-pg17-v1.1.0:3.1.24"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.24"
+  title: "Ensure 'log_line_prefix' is set correctly"
+  source_sha256: "4fb4d630313cc6ba139beaa14026b2d5ece72c88b2df662103a300652c6f0156"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: log_line_prefix
+  query: "SHOW log_line_prefix"
+  operator: contains_escapes
+  expected: ["%m", "%p", "%l", "%d", "%u", "%a", "%h"]
+  pass_condition_quote: "If the prefix does not at a minimum include `%m [%p]: [%l-1] db=%d,user=%u,app=%a,client=%h` (for non-Syslog logging), this is a fail."
+proof:
+  break:
+    setting_name: log_line_prefix
+    value: "%m [%p] "
+  fix:
+    setting_name: log_line_prefix
+    value: "%m [%p]: [%l-1] db=%d,user=%u,app=%a,client=%h"
+interpretation:
+  - "The check requires the seven escapes `%m`, `%p`, `%l`, `%d`, `%u`, `%a` and `%h` to be present in any order, not the literal example text of the CIS audit sentence (Gate 1 ruling A3)."
+  - "On a server that logs only to syslog CIS requires a smaller set of escapes (`user=%u,db=%d,app=%a,client=%h`), and this check still requires all seven, so it can report a false FAIL there but never a false PASS."

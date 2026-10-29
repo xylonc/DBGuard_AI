@@ -1,0 +1,24 @@
+spec_id: "cis-pg17-v1.1.0:3.1.10"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.10"
+  title: "Ensure the correct Syslog facility is selected"
+  source_sha256: "24fa1a7b10530fff8e20aa2cb31ce9458d3430ea9929ebc5727abeee19201dd4"
+tier: parameterised
+reason: "the organization's logging policy dictates which syslog facility to use (CIS assessment status Manual); the facility comes from the approved policy profile"
+check:
+  kind: setting
+  setting_name: syslog_facility
+  query: "SHOW syslog_facility"
+  operator: equals
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement and verify that the correct facility is selected:"
+applies_when:
+  setting_name: log_destination
+  operator: contains_items
+  expected: ["syslog"]
+  condition_quote: 'The `syslog_facility` setting specifies the syslog "facility" to be used when logging to `syslog` is enabled.'

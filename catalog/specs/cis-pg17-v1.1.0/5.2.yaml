@@ -1,0 +1,32 @@
+spec_id: "cis-pg17-v1.1.0:5.2"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "5.2"
+  title: "Ensure PostgreSQL is Bound to an IP Address"
+  source_sha256: "d05b20c3715ea537d54fd1525d3047d7b4acba1ab6cc636ebbbe5d468b059a7c"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: listen_addresses
+  query: "SHOW listen_addresses"
+  operator: no_item_in
+  expected: ["*", "0.0.0.0"]
+  pass_condition_quote: "If `*` or `0.0.0.0` is returned, this is a failure."
+proof:
+  break:
+    setting_name: listen_addresses
+    value: "*"
+  fix:
+    setting_name: listen_addresses
+    value: "localhost"
+interpretation:
+  - "listen_addresses is read as a comma-separated list of entries, split the way PostgreSQL splits it, and the check fails if any entry is `*` or `0.0.0.0`, so a value such as `*, 10.0.0.1` fails, because a `*` entry listens on all interfaces and a `0.0.0.0` entry on all IPv4 interfaces whatever else is listed."
+  - "An entry written as a number in a non-standard form (hex such as `0x0`, octal or leading zeros such as `0.0.0.00`, or fewer than four parts such as `0` or `127.1`) is not a strict IPv4 or IPv6 literal and the operating system may read it as `0.0.0.0`, so such a value is reported as unknown rather than as a pass, and a fix value must write IPv4 addresses as four decimal numbers and host names with labels that start with a letter."
+  - "The IPv6 wildcard `::` does not appear in the CIS audit text and is not checked by this control (a separate DBGuard check is planned), so a value of `::` passes here."
+  - "The sandbox and bundle fix value is site-specific and comes only from an approved policy profile (fixes entry for this spec), and without such a value no fix is offered and the DBA fixes the setting manually. The proof fix value `localhost` is a validation value only."
+  - "CIS marks 5.2 as Manual, and DBGuard automates it because the audit procedure gives a mechanical fail sentence, while the manual part (choosing the address to bind) is left to the DBA through the policy profile."

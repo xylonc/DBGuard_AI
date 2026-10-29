@@ -21,9 +21,20 @@ def test_shared_engine_retains_authoritative_phase1_report(engine, snapshot):
     native = assess(engine.specs, snapshot, engine.records)
     calculated = engine.assess(snapshot)
     assert calculated['upstream_report'] == native
-    # 10 compliant automated specs, 3.1.20 and 3.1.25 FAIL, 3.1.12 and 7.2 manual, 3.1.14 capability.
-    assert native['summary'] == dict(PASS=10, FAIL=2, MANUAL=2, NEEDS_CAPABILITY=1,
-                                     NOT_COLLECTED=0, STALE=0, ERROR=0)
+    # 17 automated specs: 14 compliant, 3.1.20 and 3.1.25 FAIL, 3.1.11 NOT_APPLICABLE
+    # (log_destination 'stderr', no syslog). MANUAL: 9 policy specs (no approved profile,
+    # policy_missing) + 3.1.12 and 7.2 (manual_checklist). 6.10 needs a capability.
+    assert native['summary'] == dict(PASS=14, FAIL=2, MANUAL=11, NEEDS_CAPABILITY=1,
+                                     NOT_APPLICABLE=1, NOT_COLLECTED=0, STALE=0, ERROR=0)
+    rows = {r['spec_id']: r for r in native['results']}
+    assert (rows['cis-pg17-v1.1.0:3.1.11']['result'],
+            rows['cis-pg17-v1.1.0:3.1.11']['reason_code']) == ('NOT_APPLICABLE', 'condition_false')
+    assert {sid for sid, r in rows.items() if r['reason_code'] == 'policy_missing'} == {
+        f'cis-pg17-v1.1.0:{n}' for n in ('3.1.2', '3.1.4', '3.1.5', '3.1.6', '3.1.8', '3.1.9',
+                                         '3.1.10', '3.1.13', '3.1.26')}
+    assert rows['cis-pg17-v1.1.0:6.10']['result'] == 'NEEDS_CAPABILITY'
+    assert {sid for sid, r in rows.items() if r['result'] == 'FAIL'} == {
+        'cis-pg17-v1.1.0:3.1.20', 'cis-pg17-v1.1.0:3.1.25'}
     ref = TemplateReference(version=1, sha256='a'*64,
         evidence=[dict(document_id='test', version='1', sha256='b'*64)])
     request = build_handoff(engine, snapshot, ref, assessment=native)

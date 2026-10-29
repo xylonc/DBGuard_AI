@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.26"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.26"
+  title: "Ensure 'log_timezone' is set correctly"
+  source_sha256: "e65c3264e2d5731d1344e2c147f6a60a2f1d71af7560ece65e5edd3b392f82f9"
+tier: parameterised
+reason: "the audit accepts GMT, UTC or a zone defined by the organization's logging policy, so the accepted zones come from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_timezone
+  query: "SHOW log_timezone"
+  operator: in
+  expected_from: policy
+  pass_condition_quote: "If `log_timezone` is not set to `GMT`, `UTC`, or as defined by your organization's logging policy this is a fail."

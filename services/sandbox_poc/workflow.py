@@ -9,8 +9,9 @@ from langgraph.graph import END, START, StateGraph
 
 from .provenance import reconstruct, reconstruction_plan, setting_rows, signature
 from app.services.fix_unit_render import derive_rollback, render_action_script
+from app.services.setting_values import SettingValueError, check_setting_value
 from .runtime import DisposablePostgres
-from .shared import ContractError, SpecEngine, digest, validate_contract
+from .shared import ContractError, SpecEngine, digest, is_regression, validate_contract
 from .templates import ApprovedTemplate
 from .adaptive import RevisionDecision, feedback_for
 
@@ -22,10 +23,17 @@ def template_action(sql: str, name="log_connections") -> dict:
     if name not in POLICIES:
         raise ContractError("Unsupported setting action")
     body = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
-    match = re.fullmatch(r"\s*ALTER\s+SYSTEM\s+SET\s+\"?"+re.escape(name)+r"\"?\s*=\s*'([a-zA-Z0-9_.]+)'\s*;\s*SELECT\s+pg_reload_conf\s*\(\s*\)\s*;\s*", body, re.I)
+    # The literal may hold any character except a quote or line break; the value is
+    # then checked against the reviewed per-setting table (GLOBAL_FORBIDDEN rejects
+    # quotes, so an escaped '' can never reach this point as a valid value).
+    match = re.fullmatch(r"\s*ALTER\s+SYSTEM\s+SET\s+\"?"+re.escape(name)+r"\"?\s*=\s*'([^'\n\r]+)'\s*;\s*SELECT\s+pg_reload_conf\s*\(\s*\)\s*;\s*", body, re.I)
     if not match:
         raise ContractError("Approved template is outside the supported setting action")
-    return {"action": "set_config", "param": name, "value": match[1]}
+    try:
+        value = check_setting_value(name, match[1])
+    except SettingValueError as exc:
+        raise ContractError(f"Approved template value is outside the reviewed rule: {exc}") from None
+    return {"action": "set_config", "param": name, "value": value}
 
 
 class LoopState(TypedDict):
@@ -157,7 +165,7 @@ class RemediationLoop:
                             raise RuntimeError('Functional verification failed')
                     regressions = [sid for sid, finding in before_report["findings"].items()
                                    if sid != control and (
-                                       (finding["status"] == "PASS" and after_report["findings"][sid]["status"] != "PASS")
+                                       is_regression(finding["status"], after_report["findings"][sid]["status"])
                                        or after_report["findings"][sid]["status"] == "GAPPED")]
                     record["regressions"] = regressions
                     if after["baseline"].get("gaps"):
@@ -224,6 +232,7 @@ class RemediationLoop:
         return {"schema_version": "sandbox-run-v1", "status": state["status"],
                 "snapshot_hash": digest(snapshot), "spec_set_hash": self.engine.spec_set_hash,
                 "spec_hashes": self.engine.hashes, "collector_hash": self.engine.collector_hash,
+                "policy_profile": self.engine.policy_pin,
                 "template": current_template.identity(), "fix_unit": fix,
                 "rendered_apply_sql": current_template.render(name, value),
                 "rendered_rollback_sql": render_action_script(fix["rollback"]),

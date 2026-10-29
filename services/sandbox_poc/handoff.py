@@ -43,6 +43,9 @@ class SandboxHandoff(StrictModel):
                             description="Exact selected spec ID; defaults to cis-pg17-v1.1.0:3.1.20 for older callers")
     retry_mode: Literal["repeat", "adaptive"] = "repeat"
     retry_template_refs: list[TemplateReference] = Field(default_factory=list, max_length=2)
+    # Hash of the policy profile the assessment used (resolved server-side from the
+    # profile store); None means no profile (policy_missing). Never profile values.
+    policy_profile_sha256: Hash | None = None
 
     @model_validator(mode='after')
     def candidate_scope(self):
@@ -67,4 +70,5 @@ def build_handoff(engine, snapshot: dict, template_ref: TemplateReference, *,
     return SandboxHandoff(
         schema_version="sandbox-handoff-v1", benchmark_id=benchmark_ids.pop(),
         spec_set_hash=engine.spec_set_hash, specs=engine.specs, snapshot=snapshot,
-        assessment=calculated, template_ref=template_ref)
+        assessment=calculated, template_ref=template_ref,
+        policy_profile_sha256=engine.policy.sha256 if engine.policy is not None else None)

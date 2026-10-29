@@ -85,6 +85,24 @@
               }
             }
           }
+        },
+        "policy_profile": {
+          "description": "Present when a spec takes its expected value from a policy profile (check.expected_from: policy), or when an approved profile supplies a site-specific fix value (fixes) for a spec in the set. null means no profile was supplied; policy specs are then MANUAL with reason_code policy_missing.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["profile_id", "sha256", "approved_by", "approved_at", "approval_auth"],
+              "properties": {
+                "profile_id": { "description": "Profile identifier.", "type": "string", "minLength": 1 },
+                "sha256": { "description": "SHA-256 of the profile file bytes.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "approved_by": { "description": "Named human approver, or null when unapproved (values are then never used).", "type": ["string", "null"], "minLength": 1 },
+                "approved_at": { "description": "Approval date, or null when unapproved.", "type": ["string", "null"], "minLength": 1 },
+                "approval_auth": { "description": "How the approval was authenticated. DEMO_NO_SIGN_IN: the approver typed a name; there is no sign-in, so approved_by is not an authenticated identity.", "const": "DEMO_NO_SIGN_IN" }
+              }
+            }
+          ]
         }
       }
     },
@@ -139,7 +157,7 @@
       "description": "Counts of each result type.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["PASS", "FAIL", "MANUAL", "NEEDS_CAPABILITY", "NOT_COLLECTED", "STALE", "ERROR"],
+      "required": ["PASS", "FAIL", "MANUAL", "NEEDS_CAPABILITY", "NOT_APPLICABLE", "NOT_COLLECTED", "STALE", "ERROR"],
       "properties": {
         "PASS": {
           "description": "Count of PASS results.",
@@ -152,12 +170,17 @@
           "minimum": 0
         },
         "MANUAL": {
-          "description": "Count of MANUAL results (manual_checklist, parameterised tier).",
+          "description": "Count of MANUAL results (manual_checklist, parameterised without a policy check, or policy_missing).",
           "type": "integer",
           "minimum": 0
         },
         "NEEDS_CAPABILITY": {
           "description": "Count of NEEDS_CAPABILITY results (needs_capability tier).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "NOT_APPLICABLE": {
+          "description": "Count of NOT_APPLICABLE results (applies_when condition false on clean, current evidence).",
           "type": "integer",
           "minimum": 0
         },
@@ -203,26 +226,36 @@
           "result": {
             "description": "Assessment result.",
             "type": "string",
-            "enum": ["PASS", "FAIL", "MANUAL", "NEEDS_CAPABILITY", "NOT_COLLECTED", "STALE", "ERROR"]
+            "enum": ["PASS", "FAIL", "MANUAL", "NEEDS_CAPABILITY", "NOT_APPLICABLE", "NOT_COLLECTED", "STALE", "ERROR"]
           },
           "reason_code": {
             "description": "Short code explaining the result.",
             "type": "string",
-            "enum": ["hash_mismatch", "no_entry", "status_error", "non_string_result", "operator_true", "operator_false", "tier_manual", "tier_needs_capability"]
+            "enum": ["hash_mismatch", "no_entry", "status_not_collected", "status_error", "non_string_result", "operator_true", "operator_false", "operator_error", "tier_manual", "tier_needs_capability", "policy_missing", "condition_no_entry", "condition_hash_mismatch", "condition_status_not_collected", "condition_status_error", "condition_non_string_result", "condition_operator_error", "condition_false", "session_override", "condition_session_override", "redacted_secret_setting", "condition_redacted_secret_setting"]
           },
           "setting_name": {
-            "description": "PostgreSQL setting name (automated specs only).",
+            "description": "PostgreSQL setting name (specs with a check, when an entry was collected).",
             "type": "string",
             "minLength": 1
           },
           "operator": {
-            "description": "Operator for automated checks (equals, not_equals, in, true).",
+            "description": "Check operator; exactly the OPERATORS registry in backend/app/services/spec_engine/operators.py.",
             "type": "string",
-            "enum": ["equals", "not_equals", "in", "true"]
+            "enum": ["equals", "not_equals", "in", "not_in", "contains_items", "contains_escapes", "severity", "no_item_in"]
+          },
+          "direction": {
+            "description": "severity operator only.",
+            "type": "string",
+            "enum": ["at_or_more_verbose", "at_or_less_verbose"]
           },
           "expected": {
-            "description": "Expected value(s) for the check.",
+            "description": "Expected value(s) for the check. For expected_from policy, present only when the approved profile has a value.",
             "type": ["string", "array"]
+          },
+          "expected_from": {
+            "description": "'policy' when the expected value comes from the policy profile.",
+            "type": "string",
+            "enum": ["policy"]
           },
           "spec_hash": {
             "description": "SHA-256 hash of the spec.",
@@ -237,6 +270,53 @@
           "observed": {
             "description": "Observed result value when status is ok (only when status was ok).",
             "type": "string"
+          },
+          "condition": {
+            "description": "The spec's applies_when condition, with the observed condition value when it was collected ok.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["setting_name", "operator", "expected"],
+            "properties": {
+              "setting_name": { "type": "string", "minLength": 1 },
+              "operator": { "type": "string", "enum": ["equals", "not_equals", "in", "not_in", "contains_items", "contains_escapes", "severity", "no_item_in"] },
+              "direction": { "type": "string", "enum": ["at_or_more_verbose", "at_or_less_verbose"] },
+              "expected": { "type": ["string", "array"] },
+              "observed": { "type": "string" }
+            }
+          },
+          "cis": {
+            "description": "Present with explanation: the CIS recommendation from the spec ref.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["recommendation", "title"],
+            "properties": {
+              "recommendation": { "type": "string", "minLength": 1 },
+              "title": { "type": "string" }
+            }
+          },
+          "explanation": {
+            "description": "Structured facts (never prose) for NOT_APPLICABLE, NOT_COLLECTED, STALE, ERROR and MANUAL policy_missing results, so the UI can explain them. Facts come only from the spec, the profile and the collected evidence.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code"],
+            "properties": {
+              "code": { "enum": ["condition_false", "condition_unknown", "policy_missing", "not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting"] },
+              "cause": { "description": "condition_unknown only: the evidence problem with the condition setting.", "enum": ["not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting"] },
+              "case": { "description": "policy_missing only.", "enum": ["no_profile", "profile_unapproved", "no_value_for_spec"] },
+              "profile_id": { "type": "string", "minLength": 1 },
+              "evidence": { "description": "Which evidence is affected: the main check or the applies_when condition.", "enum": ["check", "condition"] },
+              "setting_name": { "type": "string", "minLength": 1 },
+              "operator": { "type": "string", "enum": ["equals", "not_equals", "in", "not_in", "contains_items", "contains_escapes", "severity", "no_item_in"] },
+              "direction": { "type": "string", "enum": ["at_or_more_verbose", "at_or_less_verbose"] },
+              "expected": { "type": ["string", "array"] },
+              "actual": { "description": "Collected SHOW value.", "type": "string" },
+              "condition_quote": { "description": "Verbatim CIS text stating the condition.", "type": "string" },
+              "entry_status": { "enum": ["missing", "not_collected"] },
+              "spec_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "collected_spec_hash": { "type": ["string", "null"] },
+              "error": { "description": "Collector-reported error text.", "type": ["string", "null"] },
+              "source": { "description": "session_override only: pg_settings.source of the setting in the collector's session (per role, database or session; null if not a string).", "type": ["string", "null"] }
+            }
           }
         }
       }

@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.5"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.5"
+  title: "Ensure the filename pattern for log files is set correctly"
+  source_sha256: "abbc16d26574d507eb03e76915aafa355ffc741d47ad01cccec178049514e471"
+tier: parameterised
+reason: "the log_filename pattern should match the organization's logging policy; the desired pattern comes from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_filename
+  query: "SHOW log_filename"
+  operator: equals
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement to confirm that the desired pattern is set:"

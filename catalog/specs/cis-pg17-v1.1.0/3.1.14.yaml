@@ -1,6 +1,6 @@
 spec_id: "cis-pg17-v1.1.0:3.1.14"
 schema_version: 1
-authored_by: human
+authored_by: agent
 ref:
   benchmark: "CIS PostgreSQL 17 Benchmark"
   benchmark_version: "1.1.0"
@@ -8,5 +8,22 @@ ref:
   recommendation: "3.1.14"
   title: "Ensure the correct messages are written to the server log"
   source_sha256: "243fc1fda911d45a3786584dd77eba34c6037dde3568b38b441203e02771baca"
-tier: needs_capability
-reason: "ordered_enum_comparison: pass condition is 'at least warning', which requires log severity ordering"
+tier: automated
+reason: null
+check:
+  kind: setting
+  setting_name: log_min_messages
+  query: "SHOW log_min_messages"
+  operator: severity
+  direction: at_or_more_verbose
+  expected: "warning"
+  pass_condition_quote: "If logging is not configured to at least `warning`, this is a fail."
+proof:
+  break:
+    setting_name: log_min_messages
+    value: "error"
+  fix:
+    setting_name: log_min_messages
+    value: "warning"
+interpretation:
+  - "\"At least `warning`\" is read, per the CIS description (\"The lower the level (vertically, below), the fewer messages are logged\"), as logging at least as much as `warning`, so `warning` or any more verbose level passes and `error`, `log`, `fatal` and `panic` fail. Very verbose levels such as `debug5` also pass, because the CIS fail sentence does not limit verbosity (Gate 1 ruling A2)."

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.models import FindingStatus, SetConfigTemplateParams
 from app.services.assessment_service import AssessmentService
 from app.services.spec_engine import assess, spec_sha256
+from app.services.spec_engine.manifest import condition_check_id
 from app.services.spec_engine.validate import OPERATORS
 from catalog.controls.assess.registry import CONTROL_REGISTRY
 from scripts.sandbox_poc import demo_template
@@ -45,6 +46,17 @@ EXPECTED_RISK = {
     "log_error_verbosity": "medium",
     "log_hostname": "low",
 }
+# 3.1.11 applies only when logging to syslog (Gate 1 ruling A6, re-approved). Tests of its
+# main check supply that condition as a log_destination row / '#applies_when' entry.
+SYSLOG_ROW = {"name": "log_destination", "setting": "stderr,syslog", "vartype": "string",
+              "unit": None, "sanitised": False}
+CONDITIONAL = {"cis-pg17-v1.1.0:3.1.11"}
+
+
+def with_condition(spec_id, rows):
+    return [*rows, dict(SYSLOG_ROW)] if spec_id in CONDITIONAL else rows
+
+
 MANUAL = [
     ("cis-pg17-v1.1.0:3.1.12", "syslog_split_messages"),
     ("cis-pg17-v1.1.0:7.2", "log_replication_commands"),
@@ -89,8 +101,9 @@ def test_spec_check_and_proof_match_cis_value(engine, spec_id, name, good, bad, 
 
 @pytest.mark.parametrize("spec_id,name,good,bad,vartype,context", CONTROLS, ids=IDS)
 def test_compliant_value_passes(service, spec_id, name, good, bad, vartype, context):
-    finding = evaluate(service, [{"name": name, "setting": good, "vartype": vartype, "unit": None,
-                                  "sanitised": False}])[spec_id]
+    finding = evaluate(service, with_condition(spec_id, [{"name": name, "setting": good,
+                                                          "vartype": vartype, "unit": None,
+                                                          "sanitised": False}]))[spec_id]
     assert finding.status == FindingStatus.PASS
     assert finding.evidence_found == {name: good}
     assert finding.is_gapped is False
@@ -99,7 +112,8 @@ def test_compliant_value_passes(service, spec_id, name, good, bad, vartype, cont
 @pytest.mark.parametrize("spec_id,name,good,bad,vartype,context", CONTROLS, ids=IDS)
 def test_non_compliant_values_fail(service, spec_id, name, good, bad, vartype, context):
     for value in bad:
-        finding = evaluate(service, [{"name": name, "setting": value, "vartype": vartype}])[spec_id]
+        finding = evaluate(service, with_condition(
+            spec_id, [{"name": name, "setting": value, "vartype": vartype}]))[spec_id]
         assert finding.status == FindingStatus.FAIL, value
         assert finding.evidence_found == {name: value}
         assert f"'{good}'" in finding.rationale
@@ -119,7 +133,8 @@ def test_settings_section_not_collected_is_gapped(service, spec_id, name, good, 
 @pytest.mark.parametrize("spec_id,name,good,bad,vartype,context", CONTROLS, ids=IDS)
 def test_setting_row_missing_is_gapped(service, spec_id, name, good, bad, vartype, context):
     # Collected settings list without this row: never read as default/PASS.
-    finding = evaluate(service, [{"name": "log_connections", "setting": "on"}])[spec_id]
+    finding = evaluate(service, with_condition(
+        spec_id, [{"name": "log_connections", "setting": "on"}]))[spec_id]
     assert finding.status == FindingStatus.GAPPED
     assert finding.evidence_found[name] is None
 
@@ -137,7 +152,7 @@ def test_unreadable_evidence_is_gapped_even_with_compliant_value(
         service, spec_id, name, good, bad, vartype, context, unreadable):
     row = {"name": name, "setting": good, "vartype": vartype, "unit": None, "sanitised": False}
     row.update(unreadable)
-    finding = evaluate(service, [row])[spec_id]
+    finding = evaluate(service, with_condition(spec_id, [row]))[spec_id]
     assert finding.status == FindingStatus.GAPPED
     assert finding.is_gapped is True
 
@@ -146,7 +161,8 @@ def test_unreadable_evidence_is_gapped_even_with_compliant_value(
 @pytest.mark.parametrize("version", [160004, 180000])
 def test_wrong_postgres_major_is_gapped(service, spec_id, name, good, bad, vartype, context,
                                         version):
-    finding = evaluate(service, [{"name": name, "setting": good, "vartype": vartype}],
+    finding = evaluate(service, with_condition(spec_id, [{"name": name, "setting": good,
+                                                          "vartype": vartype}]),
                        identity={"server_version_num": version})[spec_id]
     assert finding.status == FindingStatus.GAPPED
     assert "PostgreSQL 17" in finding.rationale
@@ -156,16 +172,21 @@ def test_wrong_postgres_major_is_gapped(service, spec_id, name, good, bad, varty
 # Phase 1 assessor (collector check entries)
 # ---------------------------------------------------------------------------
 
-def phase1(engine, spec_id, entry):
+def phase1(engine, spec_id, entry, condition="stderr,syslog"):
     spec = spec_of(engine, spec_id)
     entry = {"spec_hash": spec_sha256(spec), "query": spec["check"]["query"], **entry}
+    checks = {spec_id: entry}
+    if "applies_when" in spec:
+        checks[condition_check_id(spec_id)] = {"spec_hash": spec_sha256(spec),
+                                                "query": "SHOW log_destination",
+                                                "status": "ok", "result": condition}
     snapshot = {
         "envelope": {"schema_version": "0.3.0", "target_id": "t", "database": "d",
                      "collector_sha256": "a" * 64,
                      "manifest": {"sha256": "b" * 64, "manifest_version": 1,
-                                  "benchmark_id": "cis-pg17-v1.1.0", "check_count": 1}},
+                                  "benchmark_id": "cis-pg17-v1.1.0", "check_count": len(checks)}},
         "baseline": {"identity": {"server_version_num": 170000}},
-        "checks": {spec_id: entry},
+        "checks": checks,
     }
     return assess([spec], snapshot, engine.records)["results"][0]["result"]
 
@@ -180,6 +201,24 @@ def test_phase1_pass_fail_and_never_pass_without_a_result(engine, spec_id, name,
     assert phase1(engine, spec_id, {"status": "error", "error": "permission denied"}) == "ERROR"
     assert phase1(engine, spec_id, {"status": "ok", "result": good,
                                     "spec_hash": "0" * 64}) == "STALE"
+
+
+def test_3_1_11_applies_only_when_logging_to_syslog(engine, service):
+    """stderr only: 3.1.11 is NOT_APPLICABLE whatever syslog_sequence_numbers says; with no
+    log_destination evidence it is unknown (GAPPED / NOT_COLLECTED), never PASS."""
+    spec_id = "cis-pg17-v1.1.0:3.1.11"
+    assert spec_of(engine, spec_id)["applies_when"]["setting_name"] == "log_destination"
+    for value in ("on", "off"):
+        assert phase1(engine, spec_id, {"status": "ok", "result": value},
+                      condition="stderr") == "NOT_APPLICABLE"
+        assert phase1(engine, spec_id, {"status": "ok", "result": value},
+                      condition="csvlog,stderr") == "NOT_APPLICABLE"
+        assert phase1(engine, spec_id, {"status": "ok", "result": value},
+                      condition="syslog") == ("PASS" if value == "on" else "FAIL")
+        row = {"name": "syslog_sequence_numbers", "setting": value, "vartype": "bool"}
+        stderr = {"name": "log_destination", "setting": "stderr", "vartype": "string"}
+        assert evaluate(service, [row, stderr])[spec_id].status == FindingStatus.NOT_APPLICABLE
+        assert evaluate(service, [row])[spec_id].status == FindingStatus.GAPPED
 
 
 # ---------------------------------------------------------------------------

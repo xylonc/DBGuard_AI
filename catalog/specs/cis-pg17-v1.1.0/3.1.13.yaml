@@ -1,0 +1,24 @@
+spec_id: "cis-pg17-v1.1.0:3.1.13"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.13"
+  title: "Ensure the program name for PostgreSQL Syslog messages is correct"
+  source_sha256: "8219fcdc883ccf0aa86b16b73e59ee13bde6296a8ce5224a7a06ddce68614608"
+tier: parameterised
+reason: "the audit asks that the program name is set correctly but names no required value (postgres is only an example); the value comes from the approved policy profile"
+check:
+  kind: setting
+  setting_name: syslog_ident
+  query: "SHOW syslog_ident"
+  operator: equals
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement to verify the program name is set correctly:"
+applies_when:
+  setting_name: log_destination
+  operator: contains_items
+  expected: ["syslog"]
+  condition_quote: "The `syslog_ident` setting specifies the program name used to identify PostgreSQL messages in syslog logs."

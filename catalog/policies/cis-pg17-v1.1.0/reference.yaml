@@ -1,0 +1,50 @@
+# DBGuardAI policy profile for CIS PostgreSQL 17 v1.1.0 (draft template).
+#
+# Organisation-chosen values for parameterised specs (check.expected_from: policy).
+# Each entry: <spec_id>: {expected: <operator-shaped value>, fix: "<passes>", break: "<fails>"}
+# The engine checks fix passes and break fails the spec's operator.
+#
+# approved_by / approved_at are set ONLY by a named human reviewer (Melvin), never
+# by an agent. While approved_by is null every policy spec assesses as MANUAL
+# (reason_code policy_missing) and can never PASS.
+profile_id: cis-pg17-v1.1.0-reference
+benchmark: cis-pg17-v1.1.0
+approved_by: null
+approved_at: null
+# Draft values by spec-author (agent), pending human review. Sources are cited per
+# entry: "audit example" / "remediation example" = the CIS 1.1.0 record text;
+# "PG default" = the record's pg_default_value. A break value marked "synthetic" is
+# simply a value that must fail; it is not taken from CIS.
+values:
+  # expected: audit example output and PG default (stderr). break: remediation example (csvlog).
+  "cis-pg17-v1.1.0:3.1.2": {expected: ["stderr"], fix: "stderr", break: "csvlog"}
+  # expected/fix: an absolute path outside PGDATA, per the remediation note ("it **is** a good
+  # idea to have the logs outside of your `PGDATA` directory"); Gate 1 ruling A8. The directory
+  # exists in postgres:17-bookworm (root:postgres, mode 1775) and the logging collector writes
+  # there (live-checked). break: audit example output and PG default (log, inside PGDATA).
+  "cis-pg17-v1.1.0:3.1.4": {expected: "/var/log/postgresql", fix: "/var/log/postgresql", break: "log"}
+  # expected: audit example output and the record's PG default (postgresql-%a.log).
+  # break: the upstream PostgreSQL default pattern (synthetic for this profile).
+  "cis-pg17-v1.1.0:3.1.5": {expected: "postgresql-%a.log", fix: "postgresql-%a.log", break: "postgresql-%Y-%m-%d_%H%M%S.log"}
+  # expected: description "In most cases, the best setting is `0600`", audit example, PG default
+  # and remediation example; 0640 per the description: "The other commonly useful setting is `0640`"
+  # (Gate 1 ruling A8). break: synthetic world-readable mode.
+  "cis-pg17-v1.1.0:3.1.6": {expected: ["0600", "0640"], fix: "0600", break: "0644"}
+  # expected: audit example and PG default (1d) plus remediation example (1h); both meet the
+  # description's "log rotation *at least* daily". break: 0 disables time-based rotation (synthetic).
+  "cis-pg17-v1.1.0:3.1.8": {expected: ["1h", "1d"], fix: "1d", break: "0"}
+  # expected: remediation example (1GB), plus 0 (size rotation off, the audit example) because
+  # 3.1.8 keeps age-based rotation on (Gate 1 ruling A8). break: 10MB, a valid size that is
+  # not listed (synthetic; it is also what postgres:17-bookworm reports by default).
+  "cis-pg17-v1.1.0:3.1.9": {expected: ["0", "1GB"], fix: "1GB", break: "10MB"}
+  # expected: audit example output and PG default (local0; SHOW prints lower case).
+  # break: remediation example (LOCAL1, shown as local1).
+  "cis-pg17-v1.1.0:3.1.10": {expected: "local0", fix: "local0", break: "local1"}
+  # expected: audit example output, description example and PG default (postgres).
+  # break: remediation example (proddb).
+  "cis-pg17-v1.1.0:3.1.13": {expected: "postgres", fix: "postgres", break: "proddb"}
+  # expected: GMT and UTC from the audit sentence (always required); Etc/UTC is the IANA name
+  # the PG17 container reports by default (Gate 1 ruling A5). fix: remediation example (GMT).
+  # break: America/New_York (synthetic; the canonical IANA name, since US/Eastern is a legacy
+  # alias that newer tzdata packages may drop). SHOW echoes each name as set (live-checked).
+  "cis-pg17-v1.1.0:3.1.26": {expected: ["GMT", "UTC", "Etc/UTC"], fix: "GMT", break: "America/New_York"}

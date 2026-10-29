@@ -2,8 +2,10 @@
 
 Conventions:
 - Marked tier_a for automated test suite.
-- Tests verify the 15 committed specs produce 12 checks (3.1.14 is needs_capability;
-  3.1.12 and 7.2 are manual_checklist).
+- Tests verify the 29 committed specs produce 29 manifest entries: 26 spec checks
+  (17 automated + 9 parameterised policy specs) plus 3 '<spec_id>#applies_when'
+  condition entries (3.1.10, 3.1.11, 3.1.13 read log_destination). 6.10 is
+  needs_capability; 3.1.12 and 7.2 are manual_checklist, so they are absent.
 - Golden file at tests/fixtures/phase1/checks-cis-pg17-v1.1.0.json is the source of truth.
 """
 import copy
@@ -53,47 +55,87 @@ def validate_against_schema(manifest, schema):
 class TestCheckManifest:
     """Test rules for the check manifest contract."""
 
-    def test_fifteen_specs_give_exactly_twelve_checks_and_non_automated_are_absent(self):
-        """The 15 committed specs give exactly 12 checks; 3.1.14, 3.1.12 and 7.2 are absent."""
+    def test_committed_specs_give_exactly_the_collected_checks_and_non_collected_are_absent(self):
+        """29 specs give 26 spec checks + 3 condition entries; 6.10, 3.1.12 and 7.2 are absent."""
         records = RecordsIndex.load(RECORDS_PATH)
         manifest = build_manifest(SPEC_DIR, records)
 
         assert manifest["manifest_version"] == 1
         assert manifest["benchmark_id"] == "cis-pg17-v1.1.0"
-        assert len(manifest["checks"]) == 12
+        assert len(list(SPEC_DIR.glob("*.yaml"))) == 29
+        assert len(manifest["checks"]) == 29
 
-        # 3.1.14 is needs_capability, not automated, so it should be absent
         spec_ids = [c["spec_id"] for c in manifest["checks"]]
-        assert "cis-pg17-v1.1.0:3.1.14" not in spec_ids
-        # 3.1.12 and 7.2 are manual_checklist, so they are absent too
-        assert "cis-pg17-v1.1.0:3.1.12" not in spec_ids
-        assert "cis-pg17-v1.1.0:7.2" not in spec_ids
+        # 6.10 is needs_capability; 3.1.12 and 7.2 are manual_checklist: never collected
+        for absent in ("cis-pg17-v1.1.0:6.10", "cis-pg17-v1.1.0:3.1.12", "cis-pg17-v1.1.0:7.2"):
+            assert absent not in spec_ids
+            assert absent + "#applies_when" not in spec_ids
+        # 3.1.14 is automated now (severity operator), so it is collected
+        assert "cis-pg17-v1.1.0:3.1.14" in spec_ids
 
-        # Expected automated specs (sorted by spec_id string, so 3.1.7 follows 3.1.25)
+        # Sorted by spec_id string (so 3.1.10 precedes 3.1.2, and '#' sorts before end of string)
         expected = [
+            "cis-pg17-v1.1.0:3.1.10",
+            "cis-pg17-v1.1.0:3.1.10#applies_when",
             "cis-pg17-v1.1.0:3.1.11",
+            "cis-pg17-v1.1.0:3.1.11#applies_when",
+            "cis-pg17-v1.1.0:3.1.13",
+            "cis-pg17-v1.1.0:3.1.13#applies_when",
+            "cis-pg17-v1.1.0:3.1.14",
+            "cis-pg17-v1.1.0:3.1.15",
             "cis-pg17-v1.1.0:3.1.16",
             "cis-pg17-v1.1.0:3.1.17",
             "cis-pg17-v1.1.0:3.1.18",
             "cis-pg17-v1.1.0:3.1.19",
+            "cis-pg17-v1.1.0:3.1.2",
             "cis-pg17-v1.1.0:3.1.20",
             "cis-pg17-v1.1.0:3.1.21",
             "cis-pg17-v1.1.0:3.1.22",
             "cis-pg17-v1.1.0:3.1.23",
+            "cis-pg17-v1.1.0:3.1.24",
             "cis-pg17-v1.1.0:3.1.25",
+            "cis-pg17-v1.1.0:3.1.26",
+            "cis-pg17-v1.1.0:3.1.3",
+            "cis-pg17-v1.1.0:3.1.4",
+            "cis-pg17-v1.1.0:3.1.5",
+            "cis-pg17-v1.1.0:3.1.6",
             "cis-pg17-v1.1.0:3.1.7",
+            "cis-pg17-v1.1.0:3.1.8",
+            "cis-pg17-v1.1.0:3.1.9",
+            "cis-pg17-v1.1.0:5.2",
             "cis-pg17-v1.1.0:6.9",
         ]
         assert spec_ids == expected
 
+        # The three syslog conditions read log_destination, nothing else
+        conditions = {c["spec_id"]: c for c in manifest["checks"] if "#" in c["spec_id"]}
+        assert set(conditions) == {
+            "cis-pg17-v1.1.0:3.1.10#applies_when",
+            "cis-pg17-v1.1.0:3.1.11#applies_when",
+            "cis-pg17-v1.1.0:3.1.13#applies_when",
+        }
+        for entry in conditions.values():
+            assert (entry["kind"], entry["setting_name"], entry["query"]) == (
+                "setting", "log_destination", "SHOW log_destination")
+
     def test_each_spec_hash_equals_spec_sha256_of_its_spec_file(self):
-        """Each spec_hash equals spec_sha256 of its spec file."""
+        """Each spec_hash equals spec_sha256 of its spec file.
+
+        A '<spec_id>#applies_when' condition entry carries its owning spec's hash, so it
+        is checked against that spec file (the key itself is not a file name).
+        """
         records = RecordsIndex.load(RECORDS_PATH)
         manifest = build_manifest(SPEC_DIR, records)
 
         for check in manifest["checks"]:
-            spec_path = SPEC_DIR / f"{check['spec_id'].split(':')[-1]}.yaml"
+            owner, _, suffix = check["spec_id"].partition("#")
+            assert suffix in ("", "applies_when"), check["spec_id"]
+            spec_path = SPEC_DIR / f"{owner.split(':')[-1]}.yaml"
             spec = load_spec(spec_path)
+            if suffix:
+                assert spec["applies_when"]["setting_name"] == check["setting_name"]
+            else:
+                assert spec["check"]["setting_name"] == check["setting_name"]
             expected_hash = spec_sha256(spec)
             assert check["spec_hash"] == expected_hash, (
                 f"spec_hash mismatch for {check['spec_id']}: "

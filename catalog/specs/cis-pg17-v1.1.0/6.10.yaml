@@ -1,0 +1,12 @@
+spec_id: "cis-pg17-v1.1.0:6.10"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "6.10"
+  title: "Ensure Weak SSL/TLS Ciphers Are Disabled"
+  source_sha256: "9ae40c2a823e243666cf62749fd7a8649bb8b4b8582b51b33ff7e486df62972e"
+tier: needs_capability
+reason: "needs capability: a cipher-subset check of ssl_ciphers plus a read-only check of established TLS connections (pg_stat_ssl); without superuser or pg_read_all_stats the connection query returns no rows, so an empty result must be treated as unknown, never PASS. Planned with F7."

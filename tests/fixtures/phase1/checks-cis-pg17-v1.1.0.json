@@ -3,10 +3,59 @@
   "checks": [
     {
       "kind": "setting",
+      "query": "SHOW syslog_facility",
+      "setting_name": "syslog_facility",
+      "spec_hash": "0dd9363a7446362b9a0f8508429c630142fbff866e6d14f8aaca822236b50ff0",
+      "spec_id": "cis-pg17-v1.1.0:3.1.10"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_destination",
+      "setting_name": "log_destination",
+      "spec_hash": "0dd9363a7446362b9a0f8508429c630142fbff866e6d14f8aaca822236b50ff0",
+      "spec_id": "cis-pg17-v1.1.0:3.1.10#applies_when"
+    },
+    {
+      "kind": "setting",
       "query": "SHOW syslog_sequence_numbers",
       "setting_name": "syslog_sequence_numbers",
-      "spec_hash": "ade1f3c9ba50073636768af51b51d63ee1160da8f524721038f46b9a85350fbe",
+      "spec_hash": "27770c904752090b050723f5122e5c8f24bc139d5d7f36115985d32973bb9a1e",
       "spec_id": "cis-pg17-v1.1.0:3.1.11"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_destination",
+      "setting_name": "log_destination",
+      "spec_hash": "27770c904752090b050723f5122e5c8f24bc139d5d7f36115985d32973bb9a1e",
+      "spec_id": "cis-pg17-v1.1.0:3.1.11#applies_when"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW syslog_ident",
+      "setting_name": "syslog_ident",
+      "spec_hash": "3cb3a4cff01abfe4b9db55d630e85d341eaf32f90cfc6bae2dd53285a10b9457",
+      "spec_id": "cis-pg17-v1.1.0:3.1.13"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_destination",
+      "setting_name": "log_destination",
+      "spec_hash": "3cb3a4cff01abfe4b9db55d630e85d341eaf32f90cfc6bae2dd53285a10b9457",
+      "spec_id": "cis-pg17-v1.1.0:3.1.13#applies_when"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_min_messages",
+      "setting_name": "log_min_messages",
+      "spec_hash": "93166d9d05ecd4d23e220ff993c0a047c60c02817314d13be301b983dcd1ea17",
+      "spec_id": "cis-pg17-v1.1.0:3.1.14"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_min_error_statement",
+      "setting_name": "log_min_error_statement",
+      "spec_hash": "8007758865cfb7834a9b1ab04dedfda3ec7ccdb745b9444836ea524e353cc1d0",
+      "spec_id": "cis-pg17-v1.1.0:3.1.15"
     },
     {
       "kind": "setting",
@@ -38,6 +87,13 @@
     },
     {
       "kind": "setting",
+      "query": "SHOW log_destination",
+      "setting_name": "log_destination",
+      "spec_hash": "dbc763fa6afe4d9e1fc993a650375d66a2619d3adc323a37975c6cd912d7f6bf",
+      "spec_id": "cis-pg17-v1.1.0:3.1.2"
+    },
+    {
+      "kind": "setting",
       "query": "SHOW log_connections",
       "setting_name": "log_connections",
       "spec_hash": "4180999090635516d57fa3bf591f9943640049253d86af6483739316718089c1",
@@ -66,6 +122,13 @@
     },
     {
       "kind": "setting",
+      "query": "SHOW log_line_prefix",
+      "setting_name": "log_line_prefix",
+      "spec_hash": "7c11b2ab654baa0dc6f10ec2523e64d9165ef58a22a1c912c6bb440360f1e073",
+      "spec_id": "cis-pg17-v1.1.0:3.1.24"
+    },
+    {
+      "kind": "setting",
       "query": "SHOW log_statement",
       "setting_name": "log_statement",
       "spec_hash": "3b4d97ea5cfaba24215e66bc1c2628b6dfb194f4b5fc8bb34d89cb1178e625f0",
@@ -73,10 +136,66 @@
     },
     {
       "kind": "setting",
+      "query": "SHOW log_timezone",
+      "setting_name": "log_timezone",
+      "spec_hash": "66da8fd1991f93d617f9000e50519cb827ebc83a57d9012957edea7dc4633292",
+      "spec_id": "cis-pg17-v1.1.0:3.1.26"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW logging_collector",
+      "setting_name": "logging_collector",
+      "spec_hash": "44d371914587c57787fa33a6f1a15c906d95ca9a7ee6c932615900f6d870ba2f",
+      "spec_id": "cis-pg17-v1.1.0:3.1.3"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_directory",
+      "setting_name": "log_directory",
+      "spec_hash": "2030397a6836149e2b25f167a4a3ab1781315f4905287b10fc962c340e261f2f",
+      "spec_id": "cis-pg17-v1.1.0:3.1.4"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_filename",
+      "setting_name": "log_filename",
+      "spec_hash": "8240a207535c95b768aa7658d4ea5817089c748116fc5e4c1b44bc5745ae6dc0",
+      "spec_id": "cis-pg17-v1.1.0:3.1.5"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_file_mode",
+      "setting_name": "log_file_mode",
+      "spec_hash": "af3087d4bfcd224e7dfa38a7276cf3d4743869770b8855e232963995ec108ca0",
+      "spec_id": "cis-pg17-v1.1.0:3.1.6"
+    },
+    {
+      "kind": "setting",
       "query": "SHOW log_truncate_on_rotation",
       "setting_name": "log_truncate_on_rotation",
       "spec_hash": "5122df74f337042afdc3e67504f733440b130b20496266e15142157b43c526ae",
       "spec_id": "cis-pg17-v1.1.0:3.1.7"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_rotation_age",
+      "setting_name": "log_rotation_age",
+      "spec_hash": "e21ae3899bfb6010571249635aaed961ec14d0e688e83fa16adf099417bf1c32",
+      "spec_id": "cis-pg17-v1.1.0:3.1.8"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW log_rotation_size",
+      "setting_name": "log_rotation_size",
+      "spec_hash": "e5b90acdcb04680e321e6ddaa334400a32b3c2b1e4ecd90ad78dfb0e246f2681",
+      "spec_id": "cis-pg17-v1.1.0:3.1.9"
+    },
+    {
+      "kind": "setting",
+      "query": "SHOW listen_addresses",
+      "setting_name": "listen_addresses",
+      "spec_hash": "471ec12a7161e86181192480e37088ff52b80395fd33b177cc6a46cd743565dd",
+      "spec_id": "cis-pg17-v1.1.0:5.2"
     },
     {
       "kind": "setting",

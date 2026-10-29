@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.4"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.4"
+  title: "Ensure the log file destination directory is set correctly"
+  source_sha256: "78d5599a33cea2f2bbe4b2511e3aff441c31f02c703a8135c5e4c237933a7a8c"
+tier: parameterised
+reason: "the expected logging directory is defined by the organization's logging policy; the value comes from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_directory
+  query: "SHOW log_directory"
+  operator: equals
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement to confirm that the expected logging directory is specified:"

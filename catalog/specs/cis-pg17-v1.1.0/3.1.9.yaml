@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.9"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.9"
+  title: "Ensure the maximum log file size is set correctly"
+  source_sha256: "9b694dec3b25ca0c0f87372f46a57cdd35515f92762e3829882a908d81c5f2f2"
+tier: parameterised
+reason: "the audit requires log_rotation_size to comply with the organization's logging policy; the accepted values come from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_rotation_size
+  query: "SHOW log_rotation_size"
+  operator: in
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement to verify that `log_rotation_size` is set in compliance with the organization's logging policy:"

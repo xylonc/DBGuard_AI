@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.2"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.2"
+  title: "Ensure the log destinations are set correctly"
+  source_sha256: "ffe4ee83c6582ce5610382231e1355421373ce6254f672ef034ea30bee358ae2"
+tier: parameterised
+reason: "the expected log destinations are set by the organization's logging policy; the required destinations come from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_destination
+  query: "SHOW log_destination"
+  operator: contains_items
+  expected_from: policy
+  pass_condition_quote: "If all the expected log destinations are not set, this is a fail."

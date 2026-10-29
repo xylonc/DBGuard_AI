@@ -1,5 +1,5 @@
 spec_id: "cis-pg17-v1.1.0:3.1.11"
-schema_version: 1
+schema_version: 2
 authored_by: agent
 ref:
   benchmark: "CIS PostgreSQL 17 Benchmark"
@@ -24,3 +24,8 @@ proof:
   fix:
     setting_name: syslog_sequence_numbers
     value: "on"
+applies_when:
+  setting_name: log_destination
+  operator: contains_items
+  expected: ["syslog"]
+  condition_quote: "When logging to Syslog and `syslog_sequence_numbers` is on, then each message will be prefixed by an increasing sequence number (such as [2])."

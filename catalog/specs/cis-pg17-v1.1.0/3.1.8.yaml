@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:3.1.8"
+schema_version: 2
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.1.8"
+  title: "Ensure the maximum log file lifetime is set correctly"
+  source_sha256: "0e705f9b50cad8233d72571ec6f36a249eafe8e014e473f0520d087f6db3811a"
+tier: parameterised
+reason: "the audit asks for an acceptable value and the organization's logging policy dictates the rotation schedule; the accepted values come from the approved policy profile"
+check:
+  kind: setting
+  setting_name: log_rotation_age
+  query: "SHOW log_rotation_age"
+  operator: in
+  expected_from: policy
+  pass_condition_quote: "Execute the following SQL statement to verify the log rotation age is set to an acceptable value:"

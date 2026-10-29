@@ -19,11 +19,14 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
 from app.services.spec_engine import (  # noqa: E402
+    PolicyProfileError,
     RecordsIndex,
     RecordsIntegrityError,
+    load_default_profile,
     load_spec,
     validate_spec,
 )
+from app.services.spec_engine.policy import default_profile_path, profile_value_errors  # noqa: E402
 
 RECORDS_PATH = REPO_ROOT / "catalog" / "benchmarks" / "cis-pg17-v1.1.0" / "records.json"
 
@@ -52,6 +55,7 @@ def main(argv: list[str]) -> int:
         print(f"FAIL {RECORDS_PATH}: cannot load records: {exc}")
         return 1
     all_valid = True
+    specs = []
     for path in files:
         try:
             spec = load_spec(path)
@@ -59,6 +63,7 @@ def main(argv: list[str]) -> int:
             print(f"FAIL {path}: cannot load spec: {exc}")
             all_valid = False
             continue
+        specs.append(spec)
         errors = validate_spec(spec, records)
         if errors:
             all_valid = False
@@ -67,6 +72,25 @@ def main(argv: list[str]) -> int:
                 print(f"  - {error}")
         else:
             print(f"OK {path}")
+    if target.is_dir() and target.resolve() == (REPO_ROOT / "catalog" / "specs" / records.benchmark_id).resolve():
+        # The installed catalog directory also checks the installed policy profile:
+        # every value must belong to a policy spec, fix must pass and break fail.
+        profile_path = default_profile_path(records.benchmark_id)
+        try:
+            profile = load_default_profile(records)
+        except (OSError, PolicyProfileError) as exc:
+            print(f"FAIL {profile_path}: {exc}")
+            return 1
+        if profile is not None:
+            errors = profile_value_errors(profile, specs, strict=True)
+            if errors:
+                all_valid = False
+                print(f"FAIL {profile_path}:")
+                for error in errors:
+                    print(f"  - {error}")
+            else:
+                state = f"approved by {profile.approved_by}" if profile.approved else "UNAPPROVED"
+                print(f"PROFILE {profile_path}: valid ({len(profile.values)} values, {state})")
     return 0 if all_valid else 1
 
 

@@ -26,6 +26,8 @@ if sys_path not in __import__("sys").path:
     __import__("sys").path.insert(0, sys_path)
 
 from app.services.spec_engine import RecordsIndex, load_spec, spec_sha256, assess
+from app.services.spec_engine.operators import OPERATORS
+from app.services.spec_engine.manifest import condition_check_id
 
 
 # Load records
@@ -46,6 +48,22 @@ automated_specs = [s for s in specs_list if s.get("tier") == "automated"]
 
 # Non-automated specs (needs_capability, manual_checklist, parameterised)
 non_automated_specs = [s for s in specs_list if s.get("tier") != "automated"]
+
+# applies_when condition evidence, written out (not read from the spec): every
+# committed condition is "logs go to syslog" (3.1.10, 3.1.11, 3.1.13 read log_destination).
+CONDITION_TRUE = {"log_destination": "stderr,syslog"}
+CONDITION_FALSE = {"log_destination": "stderr"}
+
+
+def checks_for(spec: dict, result: Any, condition: dict | None = CONDITION_TRUE) -> dict:
+    """Check entries for spec; a spec with applies_when also gets its condition entry."""
+    checks = {spec["spec_id"]: make_check_entry("ok", result=result, spec=spec)}
+    if "applies_when" in spec and condition is not None:
+        name = spec["applies_when"]["setting_name"]
+        assert name in condition, f"no written-out condition value for {name}"
+        checks[condition_check_id(spec["spec_id"])] = make_check_entry(
+            "ok", result=condition[name], spec=spec)
+    return checks
 
 # Load contract schema
 CONTRACT_PATH = REPO_ROOT / "catalog" / "specs" / "contracts" / "assessment-report-v1.json"
@@ -184,17 +202,14 @@ class TestAssessRealSpecs:
         # Determine what value satisfies the check (the "fix" value)
         fix_value = spec["proof"]["fix"]["value"]
 
-        # Determine result_value based on operator
-        if operator == "equals":
-            result_value = fix_value
-        elif operator == "not_equals":
-            result_value = fix_value
-        elif operator == "in":
-            result_value = fix_value
-        else:
+        # Every operator in the one registry is evaluated with the proof value itself;
+        # an operator outside the registry is a failure, not a skip.
+        if operator not in OPERATORS:
             pytest.fail(f"Unknown operator {operator}")
+        result_value = fix_value
 
-        checks = {spec["spec_id"]: make_check_entry("ok", result=result_value, spec=spec)}
+        # A spec with applies_when is tested where it applies (condition true).
+        checks = checks_for(spec, result_value)
         snapshot = make_snapshot_with_checks(checks)
 
         report = assess([spec], snapshot, records)
@@ -213,7 +228,7 @@ class TestAssessRealSpecs:
         # Determine what value fails the check (the "break" value)
         break_value = spec["proof"]["break"]["value"]
 
-        checks = {spec["spec_id"]: make_check_entry("ok", result=break_value, spec=spec)}
+        checks = checks_for(spec, break_value)
         snapshot = make_snapshot_with_checks(checks)
 
         report = assess([spec], snapshot, records)
@@ -223,30 +238,58 @@ class TestAssessRealSpecs:
             f"Expected FAIL for {spec['spec_id']} with break value {break_value}, got {result_row['result']}"
         )
 
+    @pytest.mark.parametrize("spec", [s for s in automated_specs if "applies_when" in s],
+                             ids=lambda s: s["spec_id"])
+    def test_automated_spec_with_false_condition_is_not_applicable(self, spec):
+        """Where the condition is false, neither the fix nor the break value gives PASS or FAIL."""
+        for value in (spec["proof"]["fix"]["value"], spec["proof"]["break"]["value"]):
+            snapshot = make_snapshot_with_checks(checks_for(spec, value, CONDITION_FALSE))
+            row = assess([spec], snapshot, records)["results"][0]
+            assert (row["result"], row["reason_code"]) == ("NOT_APPLICABLE", "condition_false")
+            # without the condition entry the result is unknown, never PASS/FAIL/N-A
+            snapshot = make_snapshot_with_checks(checks_for(spec, value, None))
+            row = assess([spec], snapshot, records)["results"][0]
+            assert (row["result"], row["reason_code"]) == ("NOT_COLLECTED", "condition_no_entry")
+
+    def test_committed_applies_when_specs(self):
+        """The syslog condition is on exactly 3.1.10, 3.1.11 and 3.1.13 (Gate 1 ruling A6)."""
+        assert sorted(s["spec_id"] for s in specs_list if "applies_when" in s) == [
+            "cis-pg17-v1.1.0:3.1.10", "cis-pg17-v1.1.0:3.1.11", "cis-pg17-v1.1.0:3.1.13"]
+
     def test_non_automated_tier_results(self):
-        """Non-automated specs get their tier's result."""
+        """Non-automated specs get their tier's result, even with compliant-looking evidence.
+
+        The committed spec is used as-is (a policy spec keeps its check and, for 3.1.10 and
+        3.1.13, its applies_when) and every entry it owns is supplied, condition true, so
+        only the tier (or the missing approved profile) can decide the result.
+        """
+        expected = {
+            "needs_capability": ("NEEDS_CAPABILITY", "tier_needs_capability"),
+            "manual_checklist": ("MANUAL", "tier_manual"),
+        }
+        seen_tiers = set()
         for spec in non_automated_specs:
             tier = spec.get("tier", "")
-            # Create a simple non-automated spec copy
+            seen_tiers.add(tier)
             spec_copy = copy.deepcopy(spec)
-            if "check" in spec_copy:
-                del spec_copy["check"]
-            if "proof" in spec_copy:
-                del spec_copy["proof"]
-            spec_copy["reason"] = "test reason"
-
-            checks = {spec_copy["spec_id"]: make_check_entry("ok", result="test", spec=spec_copy)}
+            checks = checks_for(spec_copy, "test")
             snapshot = make_snapshot_with_checks(checks)
 
             report = assess([spec_copy], snapshot, records)
 
             result_row = report["results"][0]
-            if tier == "needs_capability":
-                assert result_row["result"] == "NEEDS_CAPABILITY"
-            elif tier in ("manual_checklist", "parameterised"):
-                assert result_row["result"] == "MANUAL"
+            got = (result_row["result"], result_row["reason_code"])
+            if tier in expected:
+                assert got == expected[tier], spec["spec_id"]
+            elif tier == "parameterised":
+                # With no policy profile supplied: MANUAL, and never PASS
+                if spec.get("check", {}).get("expected_from") == "policy":
+                    assert got == ("MANUAL", "policy_missing"), spec["spec_id"]
+                else:
+                    assert got == ("MANUAL", "tier_manual"), spec["spec_id"]
             else:
                 pytest.fail(f"Unknown tier: {tier}")
+        assert seen_tiers == {"needs_capability", "manual_checklist", "parameterised"}
 
 
 class TestAssessSpecificCases:
@@ -558,8 +601,13 @@ class TestAssessLiveSnapshot:
 
         report = assess(loaded_specs, snapshot, records)
 
-        # Check no STALE, NOT_COLLECTED, or ERROR for automated specs
+        assert {row["spec_id"] for row in report["results"]} == set(automated_spec_ids)
+        # Check no STALE, NOT_COLLECTED, or ERROR for automated specs. NOT_APPLICABLE is
+        # allowed only for a spec with applies_when whose collected condition is false.
         for row in report["results"]:
+            if "applies_when" in specs_by_id[row["spec_id"]] and row["result"] == "NOT_APPLICABLE":
+                assert row["reason_code"] == "condition_false", row
+                continue
             assert row["result"] in ("PASS", "FAIL"), (
                 f"Unexpected result {row['result']} for automated spec {row['spec_id']}"
             )

@@ -55,6 +55,7 @@ class AssessmentService:
         fail_count = 0
         gapped_count = 0
         manual_review_count = 0
+        not_applicable_count = 0
 
         for control_id, control in self.control_registry.items():
             finding = control.evaluate(snapshot)
@@ -69,6 +70,8 @@ class AssessmentService:
                 gapped_count += 1
             elif finding.status == FindingStatus.MANUAL_REVIEW:
                 manual_review_count += 1
+            elif finding.status == FindingStatus.NOT_APPLICABLE:
+                not_applicable_count += 1
 
         total = len(findings)
         summary = AssessmentSummary(
@@ -77,6 +80,7 @@ class AssessmentService:
             fail_count=fail_count,
             gapped_count=gapped_count,
             manual_review_count=manual_review_count,
+            not_applicable_count=not_applicable_count,
         )
 
         return AssessmentReport(

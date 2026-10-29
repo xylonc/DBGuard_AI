@@ -14,10 +14,14 @@ from typing import Any
 
 from jsonschema import Draft7Validator
 
-from .operators import equals, in_, not_equals
+from .manifest import collects_evidence, condition_check_id
+from .operators import evaluate
+from .policy import PolicyProfile, policy_entry, profile_value_errors, site_fix
 from .records import RecordsIndex
+from .redaction import is_redacted
+from .sources import session_override
 from .specs import spec_sha256
-from .validate import OPERATORS, validate_spec
+from .validate import uses_policy, validate_spec
 
 # Compute REPO_ROOT from this file's location
 # assess.py is at backend/app/services/spec_engine/assess.py
@@ -42,77 +46,183 @@ def _validate_snapshot(snapshot: dict[str, Any], schema_path: Path) -> list[str]
     return errors
 
 
-def _decide(spec: dict[str, Any], entry: dict[str, Any] | None, spec_hash: str) -> tuple[str, str]:
-    """Decide result for a single spec based on entry and hash.
-
-    Returns (result, reason_code) at the first match, returning at the first
-    condition that matches in this order:
-
-    1. tier manual_checklist or parameterised -> ("MANUAL", "tier_manual")
-    2. tier needs_capability -> ("NEEDS_CAPABILITY", "tier_needs_capability")
-    3. no entry -> ("NOT_COLLECTED", "no_entry")
-    4. entry spec_hash != spec_hash -> ("STALE", "hash_mismatch")
-    5. status not_collected -> ("NOT_COLLECTED", "status_not_collected")
-    6. status error -> ("ERROR", "status_error")
-    7. result is not a str -> ("ERROR", "non_string_result")
-    8. ok = OPERATORS[operator](result, expected) -> ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
-    """
-    tier = spec.get("tier", "")
-
-    # 1. tier manual_checklist or parameterised
-    if tier in ("manual_checklist", "parameterised"):
-        return ("MANUAL", "tier_manual")
-
-    # 2. tier needs_capability
-    if tier == "needs_capability":
-        return ("NEEDS_CAPABILITY", "tier_needs_capability")
-
-    # Allow-list automated tier (only automated specs reach the operator check)
-    if tier != "automated":
-        raise ValueError(f"unknown tier: {tier!r}")
-
-    # 3. no entry
+def _entry_problem(entry: dict[str, Any] | None, spec_hash: str, prefix: str = "") -> tuple[str, str] | None:
+    """Missing, stale, not-collected or errored evidence; None when status is ok."""
     if entry is None:
-        return ("NOT_COLLECTED", "no_entry")
-
-    # 4. hash mismatch (checked before status to report stale data regardless of status)
-    collected_spec_hash = entry.get("spec_hash")
-    if collected_spec_hash != spec_hash:
-        return ("STALE", "hash_mismatch")
-
-    # 5. status not_collected
+        return ("NOT_COLLECTED", prefix + "no_entry")
+    if entry.get("spec_hash") != spec_hash:
+        return ("STALE", prefix + "hash_mismatch")
     status = entry.get("status")
     if status == "not_collected":
-        return ("NOT_COLLECTED", "status_not_collected")
-
-    # 6. status error
+        return ("NOT_COLLECTED", prefix + "status_not_collected")
     if status == "error":
-        return ("ERROR", "status_error")
-
+        return ("ERROR", prefix + "status_error")
     if status != "ok":
         raise ValueError(f"unknown status: {status!r}")
+    if not isinstance(entry.get("result"), str):
+        return ("ERROR", prefix + "non_string_result")
+    # The collector never ships a secret-bearing value; no operator may see the marker.
+    if is_redacted(entry["result"]):
+        return ("NOT_COLLECTED", prefix + "redacted_secret_setting")
+    return None
 
-    result_value = entry.get("result")
 
-    # 7. result is not a str
-    if not isinstance(result_value, str):
-        return ("ERROR", "non_string_result")
+def _decide(spec: dict[str, Any], entry: dict[str, Any] | None, spec_hash: str,
+            condition: dict[str, Any] | None = None,
+            policy: PolicyProfile | None = None,
+            settings: Any = None) -> tuple[str, str]:
+    """Decide result for a single spec based on entry and hash.
 
-    check = spec.get("check", {})
-    operator = check.get("operator")
-    expected = check.get("expected")
+    Returns (result, reason_code) at the first condition that matches, in this order:
 
-    ok = OPERATORS[operator](result_value, expected)
+    1. tier manual_checklist, or parameterised without a policy check -> ("MANUAL", "tier_manual")
+    2. tier needs_capability -> ("NEEDS_CAPABILITY", "tier_needs_capability")
+    3. parameterised policy check with no approved profile value -> ("MANUAL", "policy_missing")
+    4. main entry: missing -> NOT_COLLECTED no_entry; spec_hash differs -> STALE hash_mismatch;
+       status not_collected -> NOT_COLLECTED status_not_collected; status error -> ERROR
+       status_error; result not a str -> ERROR non_string_result; result is the collector's
+       redaction marker (redaction.is_redacted) -> NOT_COLLECTED redacted_secret_setting
+    4b. the checked setting's baseline.settings row has a per-role/database/session
+       source (sources.session_override) -> NOT_COLLECTED session_override
+    5. applies_when only: the same six checks on the condition entry, with reason codes
+       prefixed "condition_" (condition_no_entry, condition_hash_mismatch, ...)
+    5b. applies_when only: the condition setting's row has such a source ->
+       NOT_COLLECTED condition_session_override
+    6. applies_when only: condition operator cannot interpret the value -> ERROR
+       condition_operator_error; condition false -> ("NOT_APPLICABLE", "condition_false")
+    7. operator cannot interpret the value -> ("ERROR", "operator_error")
+    8. ok = operator(result, expected) -> ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
+
+    Every evidence problem is decided before the condition, so NOT_APPLICABLE is
+    only ever given on clean, current evidence for both settings, and nothing
+    about a missing condition or a missing policy can produce PASS. ``settings`` is
+    baseline.settings; a missing section, row or source keeps steps 4b/5b silent.
+    """
+    tier = spec.get("tier", "")
+    expected = None
+
+    if tier == "manual_checklist" or (tier == "parameterised" and not uses_policy(spec)):
+        return ("MANUAL", "tier_manual")
+    if tier == "needs_capability":
+        return ("NEEDS_CAPABILITY", "tier_needs_capability")
+    if tier == "parameterised":
+        value = policy_entry(spec, policy)
+        if value is None:
+            return ("MANUAL", "policy_missing")
+        expected = value["expected"]
+    elif tier != "automated":
+        # Allow-list: only automated and policy specs reach the operator check
+        raise ValueError(f"unknown tier: {tier!r}")
+
+    problem = _entry_problem(entry, spec_hash)
+    if problem:
+        return problem
+    if session_override(settings, spec["check"]["setting_name"]):
+        return ("NOT_COLLECTED", "session_override")
+
+    applies_when = spec.get("applies_when")
+    if applies_when is not None:
+        problem = _entry_problem(condition, spec_hash, "condition_")
+        if problem:
+            return problem
+        if session_override(settings, applies_when["setting_name"]):
+            return ("NOT_COLLECTED", "condition_session_override")
+        try:
+            applies = evaluate(applies_when, condition["result"])
+        except (TypeError, ValueError):
+            return ("ERROR", "condition_operator_error")
+        if not applies:
+            return ("NOT_APPLICABLE", "condition_false")
+
+    try:
+        ok = evaluate(spec["check"], entry["result"], expected)
+    except (TypeError, ValueError):
+        return ("ERROR", "operator_error")
     return ("PASS", "operator_true") if ok else ("FAIL", "operator_false")
 
 
-def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: RecordsIndex) -> dict[str, Any]:
+# ---- structured explanations ---------------------------------------------------
+# Results the UI must explain to a DBA carry `cis` and `explanation` alongside
+# result/reason_code. Explanations hold facts only (spec fields, collected values,
+# verbatim CIS quotes, collector-reported errors); the UI renders the sentence.
+EXPLAINED_RESULTS = ("NOT_APPLICABLE", "NOT_COLLECTED", "STALE", "ERROR")
+
+
+def _evidence_facts(reason: str, setting_name: str, entry: dict[str, Any] | None,
+                    spec_hash: str, rule: dict[str, Any], settings: Any = None) -> dict[str, Any]:
+    """Facts for a main- or condition-evidence problem (reason without 'condition_')."""
+    if reason == "session_override":
+        return {"code": "session_override", **session_override(settings, setting_name)}
+    if reason in ("no_entry", "status_not_collected"):
+        return {"code": "not_collected", "setting_name": setting_name,
+                "entry_status": "missing" if reason == "no_entry" else "not_collected"}
+    if reason == "hash_mismatch":
+        return {"code": "stale_spec_hash", "setting_name": setting_name, "spec_hash": spec_hash,
+                "collected_spec_hash": entry.get("spec_hash")}
+    if reason == "status_error":
+        error = entry.get("error")
+        return {"code": "collector_error", "setting_name": setting_name,
+                "error": error if isinstance(error, str) else None}
+    if reason == "non_string_result":
+        return {"code": "unit_or_non_text_value", "setting_name": setting_name}
+    if reason == "redacted_secret_setting":
+        return {"code": "redacted_secret_setting", "setting_name": setting_name}
+    if reason == "operator_error":
+        facts = {"code": "uninterpretable_value", "setting_name": setting_name,
+                 "operator": rule["operator"], "actual": entry["result"]}
+        if "direction" in rule:
+            facts["direction"] = rule["direction"]
+        return facts
+    raise ValueError(f"no explanation for reason {reason!r}")
+
+
+def _condition_facts(applies_when: dict[str, Any]) -> dict[str, Any]:
+    facts = {key: applies_when[key] for key in ("setting_name", "operator", "expected", "direction")
+             if key in applies_when}
+    facts["condition_quote"] = applies_when["condition_quote"]
+    return facts
+
+
+def _explain(spec: dict[str, Any], result: str, reason_code: str, entry: dict[str, Any] | None,
+             condition: dict[str, Any] | None, spec_hash: str,
+             policy: PolicyProfile | None, settings: Any = None) -> dict[str, Any] | None:
+    if reason_code == "policy_missing":
+        case = ("no_profile" if policy is None else
+                "profile_unapproved" if not policy.approved else "no_value_for_spec")
+        facts = {"code": "policy_missing", "case": case}
+        if policy is not None:
+            facts["profile_id"] = policy.profile_id
+        return facts
+    if result not in EXPLAINED_RESULTS:
+        return None
+    applies_when = spec.get("applies_when")
+    if reason_code == "condition_false":
+        return {"code": "condition_false", **_condition_facts(applies_when),
+                "actual": condition["result"]}
+    if reason_code.startswith("condition_"):
+        inner = _evidence_facts(reason_code.removeprefix("condition_"),
+                                applies_when["setting_name"], condition, spec_hash, applies_when,
+                                settings)
+        cause = inner.pop("code")
+        inner.pop("setting_name")
+        return {"code": "condition_unknown", "cause": cause, "evidence": "condition",
+                **_condition_facts(applies_when), **inner}
+    facts = _evidence_facts(reason_code, spec["check"]["setting_name"], entry, spec_hash, spec["check"],
+                            settings)
+    return {**facts, "evidence": "check"}
+
+
+def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: RecordsIndex,
+           policy: PolicyProfile | None = None) -> dict[str, Any]:
     """Assess specs against a snapshot.
 
     Args:
         specs: List of validated spec dicts.
         snapshot: A snapshot dict that passes v0.3.0 JSON Schema validation.
         records: RecordsIndex for validation.
+        policy: Optional policy profile for parameterised specs with
+            ``expected_from: policy``. Its values are validated against the specs;
+            unless it is approved, those specs are MANUAL (policy_missing).
 
     Returns:
         An assessment report dict.
@@ -145,17 +255,25 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
         spec_errors.extend([f"spec[{i}] ({spec_id or 'unknown'}): {e}" for e in validate_spec(spec, records)])
     if spec_errors:
         raise ValueError("Spec validation failed:\n" + "\n".join(spec_errors))
+    if policy is not None:
+        policy_errors = profile_value_errors(policy, specs)
+        if policy_errors:
+            raise ValueError("Policy profile validation failed:\n" + "\n".join(policy_errors))
 
     # Build checks index from snapshot
     snapshot_checks: dict[str, dict[str, Any]] = snapshot.get("checks", {})
 
-    # Build spec index by spec_id
-    spec_by_id: dict[str, dict[str, Any]] = {}
+    # Keys a spec may own in the snapshot: its own and, with applies_when, its condition's
+    owned_keys: set[str] = set()
     for spec in specs:
-        spec_by_id[spec["spec_id"]] = spec
+        owned_keys.add(spec["spec_id"])
+        if "applies_when" in spec:
+            owned_keys.add(condition_check_id(spec["spec_id"]))
 
     # Compute results for each spec
     results: list[dict[str, Any]] = []
+    # pg_settings rows, for the source of each checked value (null when not collected)
+    settings = (snapshot.get("baseline") or {}).get("settings")
 
     # Track orphan checks (in snapshot but no spec)
     orphan_checks: list[str] = []
@@ -173,7 +291,8 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
 
         # Determine result using _decide
         entry = snapshot_checks.get(spec_id)
-        result, reason_code = _decide(spec, entry, spec_hash)
+        condition = snapshot_checks.get(condition_check_id(spec_id))
+        result, reason_code = _decide(spec, entry, spec_hash, condition, policy, settings)
 
         # Build result row
         row: dict[str, Any] = {
@@ -183,27 +302,45 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
             "result": result,
             "reason_code": reason_code,
         }
+        explanation = _explain(spec, result, reason_code, entry, condition, spec_hash, policy, settings)
+        if explanation is not None:
+            row["cis"] = {"recommendation": ref.get("recommendation"), "title": title}
+            row["explanation"] = explanation
 
-        if tier == "automated" and entry is not None:
+        if collects_evidence(spec) and entry is not None:
             check = spec.get("check", {})
-            setting_name = check.get("setting_name")
-            operator = check.get("operator")
-            expected = check.get("expected")
-
-            row["setting_name"] = setting_name
-            row["operator"] = operator
-            row["expected"] = expected
+            row["setting_name"] = check.get("setting_name")
+            row["operator"] = check.get("operator")
+            if "direction" in check:
+                row["direction"] = check["direction"]
+            if uses_policy(spec):
+                row["expected_from"] = "policy"
+                value = policy_entry(spec, policy)
+                if value is not None:
+                    row["expected"] = value["expected"]
+            else:
+                row["expected"] = check.get("expected")
             row["spec_hash"] = spec_hash
             row["collected_spec_hash"] = entry.get("spec_hash")
 
-            if entry.get("status") == "ok":
+            # observed is a SHOW string; a non-string result is reported by reason_code only
+            if entry.get("status") == "ok" and isinstance(entry.get("result"), str):
                 row["observed"] = entry.get("result")
+
+            applies_when = spec.get("applies_when")
+            if applies_when is not None:
+                row["condition"] = {key: applies_when[key] for key in
+                                    ("setting_name", "operator", "expected", "direction")
+                                    if key in applies_when}
+                if (condition is not None and condition.get("status") == "ok"
+                        and isinstance(condition.get("result"), str)):
+                    row["condition"]["observed"] = condition.get("result")
 
         results.append(row)
 
     # Find orphan checks (in snapshot but no spec)
     for spec_id in snapshot_checks:
-        if spec_id not in spec_by_id:
+        if spec_id not in owned_keys:
             orphan_checks.append(spec_id)
     orphan_checks.sort()
 
@@ -220,6 +357,7 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
         "FAIL": 0,
         "MANUAL": 0,
         "NEEDS_CAPABILITY": 0,
+        "NOT_APPLICABLE": 0,
         "NOT_COLLECTED": 0,
         "STALE": 0,
         "ERROR": 0,
@@ -247,6 +385,15 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
             except (ValueError, IndexError):
                 pass
 
+    # Pin the policy profile when a spec depends on it (null = none supplied), and
+    # whenever an approved profile is used for anything else, such as a site-specific
+    # fix value for a spec in this set (fixes[spec], e.g. 5.2 listen_addresses).
+    inputs_extra: dict[str, Any] = {}
+    uses_site_fix = (policy is not None and policy.approved
+                     and any(site_fix(s, policy) is not None for s in specs))
+    if any(uses_policy(s) for s in specs) or uses_site_fix:
+        inputs_extra["policy_profile"] = policy.pin() if policy is not None else None
+
     # Build report
     report = {
         "report_version": 1,
@@ -261,6 +408,7 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
             "manifest_sha256": manifest.get("sha256"),
             "benchmark_id": benchmark_id,
             "specs": [{"spec_id": s["spec_id"], "spec_hash": spec_sha256(s)} for s in specs],
+            **inputs_extra,
         },
         "flags": {
             "version_mismatch": version_mismatch,

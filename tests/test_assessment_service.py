@@ -29,13 +29,23 @@ from catalog.controls.assess.registry import CONTROL_REGISTRY, LEGACY_CONTROL_ID
 LOG_CONNECTIONS = "cis-pg17-v1.1.0:3.1.20"
 PUBLIC_SCHEMA = "DBGUARD-PUBLIC-SCHEMA-CREATE"
 MD5 = "DBGUARD-MD5-PASSWORDS"
-# 15 installed CIS PG17 specs (12 automated, 1 needs_capability, 2 manual_checklist)
-# + 2 supplementary checks.
-TOTAL_CONTROLS = 17
-# Specs without an automated check: 3.1.14 (needs_capability), 3.1.12 and 7.2 (manual_checklist).
-NON_AUTOMATED_SPECS = 3
-# Passing values for every automated spec setting.
+# 29 installed CIS PG17 specs (17 automated, 9 parameterised policy specs,
+# 1 needs_capability, 2 manual_checklist) + 2 supplementary checks.
+TOTAL_CONTROLS = 31
+AUTOMATED_SPECS = 17
+# MANUAL_REVIEW without an approved policy profile: 9 policy specs (policy_missing),
+# 6.10 (needs_capability), 3.1.12 and 7.2 (manual_checklist).
+NON_AUTOMATED_SPECS = 12
+# Passing values for every automated spec setting. log_destination includes syslog so
+# 3.1.11 (applies only when logging to syslog) is evaluated, not NOT_APPLICABLE.
 PASSING_SETTINGS = [
+    {"name": "logging_collector", "setting": "on"},
+    {"name": "log_min_messages", "setting": "warning"},
+    {"name": "log_min_error_statement", "setting": "error"},
+    {"name": "log_line_prefix", "setting": "%m [%p]: [%l-1] db=%d,user=%u,app=%a,client=%h",
+     "vartype": "string"},
+    {"name": "listen_addresses", "setting": "localhost", "vartype": "string"},
+    {"name": "log_destination", "setting": "stderr,syslog", "vartype": "string"},
     {"name": "log_connections", "setting": "on"},
     {"name": "log_disconnections", "setting": "on"},
     {"name": "debug_print_parse", "setting": "off"},
@@ -388,11 +398,33 @@ class TestAssessmentSummary:
         report = assessment_service.evaluate(base_snapshot)
 
         assert report.summary.total == TOTAL_CONTROLS
-        assert report.summary.pass_count == 14  # 12 automated specs + public schema + md5
+        assert report.summary.pass_count == 19  # 17 automated specs + public schema + md5
         assert report.summary.fail_count == 0
         assert report.summary.gapped_count == 0
-        # 3.1.14 has no automated check yet (needs an ordered comparison);
-        # 3.1.12 and 7.2 are manual_checklist.
+        assert report.summary.not_applicable_count == 0
+        # 9 policy specs without an approved profile, 6.10, 3.1.12 and 7.2.
+        assert report.summary.manual_review_count == NON_AUTOMATED_SPECS
+
+    def test_summary_counts_not_applicable_when_not_logging_to_syslog(self, assessment_service,
+                                                                      base_snapshot):
+        """stderr only: 3.1.11 is NOT_APPLICABLE (not PASS, not FAIL), even when off."""
+        base_snapshot["settings"] = [dict(row) for row in PASSING_SETTINGS]
+        for row in base_snapshot["settings"]:
+            if row["name"] == "log_destination":
+                row["setting"] = "stderr"
+            if row["name"] == "syslog_sequence_numbers":
+                row["setting"] = "off"
+        base_snapshot["schemas"] = [{"nspname": "public", "public_has_create": False}]
+        base_snapshot["password_types"] = [{"rolname": "user1", "password_type": "scram-sha-256"}]
+
+        report = assessment_service.evaluate(base_snapshot)
+        findings = {f.control_id: f for f in report.findings}
+
+        assert findings["cis-pg17-v1.1.0:3.1.11"].status == FindingStatus.NOT_APPLICABLE
+        assert report.summary.total == TOTAL_CONTROLS
+        assert report.summary.pass_count == 18
+        assert report.summary.fail_count == 0
+        assert report.summary.not_applicable_count == 1
         assert report.summary.manual_review_count == NON_AUTOMATED_SPECS
 
     def test_summary_counts_mixed_results(self, assessment_service, base_snapshot):
@@ -405,10 +437,10 @@ class TestAssessmentSummary:
         report = assessment_service.evaluate(base_snapshot)
 
         assert report.summary.total == TOTAL_CONTROLS
-        assert report.summary.pass_count == 12  # 11 automated specs + public schema
+        assert report.summary.pass_count == 17  # 16 automated specs + public schema
         assert report.summary.fail_count == 1
         assert report.summary.gapped_count == 0
-        assert report.summary.manual_review_count == 4  # md5 passwords + 3.1.14, 3.1.12, 7.2
+        assert report.summary.manual_review_count == 13  # md5 passwords + NON_AUTOMATED_SPECS
 
     def test_summary_counts_gapped_results(self, assessment_service, base_snapshot):
         """Test summary counts with GAPPED findings."""
@@ -424,12 +456,14 @@ class TestAssessmentSummary:
         report = assessment_service.evaluate(base_snapshot)
 
         # Note: DBGUARD-MD5-PASSWORDS is always MANUAL_REVIEW (non-SQL manual procedure)
-        # even when data cannot be collected; so is spec 3.1.14 (no automated check yet).
+        # even when data cannot be collected; so are the NON_AUTOMATED_SPECS (policy
+        # specs without an approved profile, 6.10, 3.1.12, 7.2). Never PASS.
         assert report.summary.total == TOTAL_CONTROLS
         assert report.summary.pass_count == 0
         assert report.summary.fail_count == 0
-        assert report.summary.gapped_count == 13  # 12 automated specs + public schema
-        assert report.summary.manual_review_count == 4  # md5 + 3.1.14, 3.1.12, 7.2
+        assert report.summary.not_applicable_count == 0
+        assert report.summary.gapped_count == AUTOMATED_SPECS + 1  # + public schema
+        assert report.summary.manual_review_count == NON_AUTOMATED_SPECS + 1  # + md5
 
 
 # ============================================================================
@@ -541,5 +575,9 @@ class TestSingleRulebook:
         assert "PostgreSQL 17" in findings[LOG_CONNECTIONS].rationale
 
     def test_needs_capability_spec_is_manual_review(self, assessment_service, base_snapshot):
+        # 6.10 is the needs_capability spec now; 3.1.14 became automated (severity operator),
+        # so with no settings row it is GAPPED, never MANUAL_REVIEW or PASS.
         findings = {f.control_id: f for f in assessment_service.evaluate(base_snapshot).findings}
-        assert findings["cis-pg17-v1.1.0:3.1.14"].status == FindingStatus.MANUAL_REVIEW
+        assert findings["cis-pg17-v1.1.0:6.10"].status == FindingStatus.MANUAL_REVIEW
+        assert findings["cis-pg17-v1.1.0:6.10"].control_metadata.is_automatable is False
+        assert findings["cis-pg17-v1.1.0:3.1.14"].status == FindingStatus.GAPPED

@@ -55,6 +55,20 @@ def build_manifest(spec_dir: Path, records: RecordsIndex) -> dict:
     return manifest_from_specs([spec for _, spec in valid_specs], records)
 
 
+# Manifest/snapshot key for a spec's applies_when evidence. '#' never occurs in
+# a spec_id (see schema.json), so it cannot collide with a real spec.
+CONDITION_SUFFIX = "#applies_when"
+
+
+def condition_check_id(spec_id: str) -> str:
+    return spec_id + CONDITION_SUFFIX
+
+
+def collects_evidence(spec: dict) -> bool:
+    """Automated specs and parameterised specs with a policy check are collected."""
+    return spec.get("tier") in ("automated", "parameterised") and isinstance(spec.get("check"), dict)
+
+
 def manifest_from_specs(specs: list[dict], records: RecordsIndex) -> dict:
     """Build the same manifest from exact handoff specs, without temporary files."""
     if not specs or len({s["spec_id"] for s in specs}) != len(specs):
@@ -63,9 +77,21 @@ def manifest_from_specs(specs: list[dict], records: RecordsIndex) -> dict:
         errors = validate_spec(spec, records)
         if errors:
             raise ValueError("; ".join(errors))
-    checks = [{"spec_id": spec["spec_id"], "spec_hash": spec_sha256(spec),
-               **{key: spec["check"][key] for key in ("kind", "setting_name", "query")}}
-              for spec in specs if spec.get("tier") == "automated"]
+    checks = []
+    for spec in specs:
+        if not collects_evidence(spec):
+            continue
+        spec_hash = spec_sha256(spec)
+        checks.append({"spec_id": spec["spec_id"], "spec_hash": spec_hash,
+                       **{key: spec["check"][key] for key in ("kind", "setting_name", "query")}})
+        condition = spec.get("applies_when")
+        if condition is not None:
+            # The condition setting is collected like any check, under its own key
+            # and pinned to the same spec hash, so a missing or stale condition is
+            # visible to the assessor instead of being read as "does not apply".
+            checks.append({"spec_id": condition_check_id(spec["spec_id"]), "spec_hash": spec_hash,
+                           "kind": "setting", "setting_name": condition["setting_name"],
+                           "query": "SHOW " + condition["setting_name"]})
     checks.sort(key=lambda check: check["spec_id"])
     manifest = {"manifest_version": 1, "benchmark_id": records.benchmark_id, "checks": checks}
     schema_path = Path(__file__).resolve().parents[4] / "catalog/specs/contracts/check-manifest-v1.json"

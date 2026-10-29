@@ -5,6 +5,7 @@ from .specs import load_spec, spec_sha256
 from .validate import validate_spec
 from .manifest import build_manifest
 from .assess import assess
+from .policy import PolicyProfile, PolicyProfileError, load_default_profile, load_profile
 
 __all__ = [
     "RecordsIndex",
@@ -14,4 +15,8 @@ __all__ = [
     "validate_spec",
     "build_manifest",
     "assess",
+    "PolicyProfile",
+    "PolicyProfileError",
+    "load_default_profile",
+    "load_profile",
 ]

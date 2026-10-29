@@ -1,0 +1,16 @@
+spec_id: "cis-pg17-v1.1.0:4.6"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.6"
+  title: "Ensure excessive DML privileges are revoked"
+  source_sha256: "513b64581963003310b543f8d058c1ed0189fd7ba7dac0e8e127185636cd63d8"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and whether a table grant is excessive must be decided with application developers, per database"
+check:
+  kind: catalog
+  evaluator: table_dml_grants
+  pass_condition_quote: "Therefore, the commands below should be executed for each defined database in the cluster. With this information, inspect database table grants and determine if any are excessive for defined database users."

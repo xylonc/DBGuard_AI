@@ -1,0 +1,16 @@
+spec_id: "cis-pg17-v1.1.0:4.7"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.7"
+  title: "Ensure Row Level Security (RLS) is configured correctly"
+  source_sha256: "b96f24d320333ea7f874ff980df0390b13fda9a4a33983da814dbb4e68f92181"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and which tables require RLS, and which roles may hold BYPASSRLS, is an organisation-specific business decision"
+check:
+  kind: catalog
+  evaluator: rls_tables_and_bypass_roles
+  pass_condition_quote: "The first step for an organization is to determine which, if any, database tables require RLS. This decision is a matter of business processes and is unique to each organization. To discover which, if any, database tables have RLS enabled, execute the following query. If any table(s) should have RLS policies applied, but do not appear in this query's results, then this is a fail."

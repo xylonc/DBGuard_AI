@@ -9,12 +9,24 @@ export async function request(path: string, options: RequestInit = {}) {
     data = text
   }
   if (!response.ok)
-    throw new Error(
+    throw new ApiError(
       `HTTP ${response.status}: ${
         typeof data === "object" ? JSON.stringify(data?.detail ?? data) : text
       }`,
+      response.status,
+      typeof data === "object" ? (data?.detail ?? data) : text,
     )
   return data
+}
+// Keeps the backend's structured `detail` so forms can show errors inline.
+export class ApiError extends Error {
+  status: number
+  detail: unknown
+  constructor(message: string, status: number, detail: unknown) {
+    super(message)
+    this.status = status
+    this.detail = detail
+  }
 }
 export const api = (service: Service, path: string, body?: unknown) =>
   request(
@@ -42,8 +54,9 @@ export function findings(envelope: any): any[] {
   return Array.isArray(f)
     ? f.map((r: any) => ({ ...r, id: r.control_id, status: r.status }))
     : Object.entries(f ?? {}).map(([id, value]: [string, any]) => ({
+        ...(value && typeof value === "object" ? value : {}),
         id,
-        status: typeof value === "object" ? value.status : value,
+        status: value && typeof value === "object" ? value.status : value,
       }))
 }
 export function sameTarget(before: any, after: any) {
@@ -61,7 +74,10 @@ export function bundlePath(service: Service, result: any) {
 }
 
 export function isFreshSnapshot(before: any, after: any) {
-  return !!after?.snapshot_id && before?.snapshot_id !== after.snapshot_id
-    && Number.isFinite(Date.parse(before?.collected_at))
-    && Date.parse(after.collected_at) > Date.parse(before.collected_at);
+  return (
+    !!after?.snapshot_id &&
+    before?.snapshot_id !== after.snapshot_id &&
+    Number.isFinite(Date.parse(before?.collected_at)) &&
+    Date.parse(after.collected_at) > Date.parse(before.collected_at)
+  )
 }

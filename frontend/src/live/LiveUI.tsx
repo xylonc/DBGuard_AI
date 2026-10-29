@@ -6,8 +6,21 @@ import {
   currentBatch,
 } from "./ReviewPanel"
 import { EndpointPanel } from "./EndpointPanel"
+import {
+  PolicyMissingBanner,
+  PolicyProfileScreen,
+  PolicyProfileSelector,
+} from "./PolicyProfile"
+import {
+  POLICY_MISSING_LABEL,
+  explainRow,
+  isPolicyMissing,
+  policyMissingRows,
+  statusKind,
+  statusLabel,
+} from "./explanations"
 import { useEffect, useState, type ReactNode } from "react"
-import { useLive } from "@/store/liveStore"
+import { assessmentPath, useLive } from "@/store/liveStore"
 import { useWorkflow } from "@/store/workflowStore"
 import {
   api,
@@ -65,6 +78,40 @@ export function Badge({ value }: { value: any }) {
     </span>
   )
 }
+// Assessment status. NOT_APPLICABLE has its own badge; every status DBGuard could not
+// decide (GAPPED, NOT_COLLECTED, STALE, ERROR, or anything unrecognised) is shown as
+// "Unknown: needs human review", never as passing.
+export function FindingBadge({ value }: { value: any }) {
+  const status =
+    value && typeof value === "object" ? value.status : (value ?? undefined)
+  if (status === undefined || status === null) return <Badge value={status} />
+  const kind = statusKind(status)
+  const color =
+    kind === "pass"
+      ? "bg-green-50 text-green-700"
+      : kind === "fail"
+        ? "bg-red-50 text-red-700"
+        : kind === "not_applicable"
+          ? "bg-sky-50 text-sky-800 border border-sky-200"
+          : kind === "unknown"
+            ? "bg-amber-100 text-amber-900 border border-amber-300"
+            : "bg-slate-100 text-slate-700"
+  return (
+    <span className={`inline-block px-2 py-1 rounded text-xs ${color}`}>
+      {statusLabel(status)}
+      {kind === "unknown" && (
+        <small className="block opacity-75">{jsonText(status)}</small>
+      )}
+    </span>
+  )
+}
+export function PolicyMissingFlag() {
+  return (
+    <span className="inline-block mt-1 px-2 py-1 rounded text-xs font-bold tracking-wide bg-red-600 text-white">
+      {POLICY_MISSING_LABEL}
+    </span>
+  )
+}
 export function Feedback() {
   const { state } = useLive()
   return (
@@ -108,22 +155,43 @@ export function Results({
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.id} className="border-t border-slate-100">
-              <td className="p-2">
-                {r.title || r.id}
-                <small className="block text-slate-500">{r.id}</small>
-              </td>
-              <td className="p-2">
-                <Badge value={r.status} />
-              </td>
-              {after && (
+          {rows.map((r) => {
+            const why = explainRow(r)
+            return (
+              <tr key={r.id} className="border-t border-slate-100 align-top">
                 <td className="p-2">
-                  <Badge value={after[r.id]} />
+                  {r.title || r.id}
+                  <small className="block text-slate-500">{r.id}</small>
+                  {why && (
+                    <div
+                      className={`mt-2 rounded-lg p-2 text-xs space-y-1 ${
+                        why.policyMissing
+                          ? "bg-red-50 text-red-900"
+                          : why.unknown
+                            ? "bg-amber-50 text-amber-900"
+                            : "bg-sky-50 text-sky-900"
+                      }`}
+                    >
+                      <p className="font-semibold">{why.cis}</p>
+                      <p>{why.sentence}</p>
+                      {why.quote && (
+                        <p className="italic opacity-80">CIS: “{why.quote}”</p>
+                      )}
+                    </div>
+                  )}
                 </td>
-              )}
-            </tr>
-          ))}
+                <td className="p-2">
+                  <FindingBadge value={r.status} />
+                  {isPolicyMissing(r) && <PolicyMissingFlag />}
+                </td>
+                {after && (
+                  <td className="p-2">
+                    <FindingBadge value={after[r.id]} />
+                  </td>
+                )}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -192,6 +260,8 @@ export function LiveWorkflow() {
   const { state: ui, setWorkflowStep } = useWorkflow()
   const step = ui.activeWorkflowStep
   const [id, setId] = useState("")
+  // The Policy Profile screen opens inside step 4 (Assessment).
+  const [policyOpen, setPolicyOpen] = useState(false)
   const steps = [
     "Benchmark",
     "Collect",
@@ -373,7 +443,19 @@ export function LiveWorkflow() {
             )}
           </Card>
         )}
-        {step === 4 && (
+        {step === 4 && policyOpen && (
+          <PolicyProfileScreen onBack={() => setPolicyOpen(false)} />
+        )}
+        {step === 4 && !policyOpen && (
+          <PolicyProfileSelector onOpen={() => setPolicyOpen(true)} />
+        )}
+        {step === 4 && !policyOpen && s.assessment && (
+          <PolicyMissingBanner
+            rows={policyMissingRows(findings(s.assessment))}
+            onOpen={() => setPolicyOpen(true)}
+          />
+        )}
+        {step === 4 && !policyOpen && (
           <Card title="Assessment from the actual API">
             <button
               className={button}
@@ -722,9 +804,14 @@ function Verification() {
             disabled={!snapshot || !!s.busy}
             onClick={() =>
               live.action("Reassessing fresh target", async () => {
+                // Same policy profile as the original assessment, so results compare.
                 const a = await api(
                   "main",
-                  `/api/v1/snapshots/${snapshot.snapshot_id}/spec-assessment?benchmark_id=${encodeURIComponent(s.benchmark)}`,
+                  assessmentPath(
+                    snapshot.snapshot_id,
+                    s.benchmark,
+                    s.policyProfile,
+                  ),
                 )
                 setAssessment(a)
                 live.patch({

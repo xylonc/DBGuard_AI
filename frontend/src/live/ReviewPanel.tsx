@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react"
-import { api, request } from "@/adapters/live"
+import { api, request, findings } from "@/adapters/live"
 import { useLive } from "@/store/liveStore"
 import { Card, Raw } from "./LiveUI"
+import {
+  POLICY_MISSING_LABEL,
+  UNKNOWN_LABEL,
+  cisRule,
+  explanationSentence,
+  isPolicyMissing,
+  statusKind,
+} from "./explanations"
+import { profileRefQuery } from "./profileForm"
 const button = "rounded bg-teal-700 text-white px-4 py-2 disabled:opacity-40"
 export function FixPlan() {
   const live = useLive(),
@@ -14,12 +23,14 @@ export function FixPlan() {
   useEffect(() => {
     setPlan(null)
     setSelected([])
-  }, [s.snapshot?.snapshot_id, s.benchmark])
+  }, [s.snapshot?.snapshot_id, s.benchmark, s.policyProfile?.profile_ref])
+  // Assessment rows by spec, for the structured reasons shown below.
+  const rows = new Map(findings(s.assessment).map((r: any) => [r.id, r]))
   async function load(llm = false) {
     await live.action("Reviewing proposed fixes", async () => {
       const p = await api(
         s.service,
-        `/api/v1/snapshots/${s.snapshot.snapshot_id}/fix-plan?benchmark_id=${encodeURIComponent(s.benchmark)}&review_with_llm=${llm}`,
+        `/api/v1/snapshots/${s.snapshot.snapshot_id}/fix-plan?benchmark_id=${encodeURIComponent(s.benchmark)}&review_with_llm=${llm}${profileRefQuery(s.policyProfile?.profile_ref)}`,
       )
       setPlan(p)
     })
@@ -137,14 +148,49 @@ export function FixPlan() {
                 These controls did not pass, but DBGuard will not propose a fix.
                 They stay in the assessment for a person to handle.
               </p>
-              <ul className="list-disc pl-5">
-                {plan.manual_review.map((f: any) => (
-                  <li key={f.spec_id}>
-                    <strong>{f.title || f.spec_id}</strong>{" "}
-                    <span className="text-sm">({f.spec_id})</span>:{" "}
-                    {manualReason(f)}
-                  </li>
-                ))}
+              <ul className="list-disc pl-5 space-y-2">
+                {plan.manual_review.map((f: any) => {
+                  const row = rows.get(f.spec_id)
+                  return (
+                    <li key={f.spec_id}>
+                      <strong>{f.title || f.spec_id}</strong>{" "}
+                      <span className="text-sm">({f.spec_id})</span>:{" "}
+                      {manualReason(f, row)}
+                      {f.manual_fix && (
+                        <ManualFix fix={f.manual_fix} item={f} />
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          )}
+          {(plan.not_applicable ?? []).length > 0 && (
+            <section className="border border-sky-200 rounded p-4 space-y-2">
+              <h3 className="font-semibold">Not applicable on this server</h3>
+              <p className="text-sm">
+                These controls only apply under a condition this server does not
+                meet. They need neither a fix nor manual review.
+              </p>
+              <ul className="list-disc pl-5 space-y-2">
+                {plan.not_applicable.map((f: any) => {
+                  const row = rows.get(f.spec_id)
+                  return (
+                    <li key={f.spec_id}>
+                      <strong>{cisRule(row ?? { ...f, id: f.spec_id })}</strong>
+                      <p className="text-sm">
+                        {row?.explanation
+                          ? explanationSentence(row.explanation)
+                          : "Its CIS condition is not met on this server, so it doesn't apply."}
+                      </p>
+                      {f.condition && (
+                        <p className="text-xs italic text-slate-600">
+                          CIS: “{f.condition}”
+                        </p>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             </section>
           )}
@@ -209,6 +255,7 @@ export function FixPlan() {
                       retry_mode: s.retryMode,
                       retry_template_versions: [],
                       control_id,
+                      policy_profile: s.policyProfile?.profile_ref ?? null,
                     })),
                   })
                   live.patch({
@@ -260,14 +307,62 @@ export function currentBatch(s: any) {
     : null
 }
 
-// Plain-language reason a non-passing control gets no automatic fix.
-export function manualReason(f: any) {
+// Backend reason (planning.SITE_FIX_MISSING) when a fix needs a site-specific value.
+const SITE_FIX_MISSING = "site-specific fix value not supplied"
+
+// Plain-language reason a non-passing control gets no automatic fix. `row` is the
+// matching assessment row; its structured explanation is preferred when present.
+export function manualReason(f: any, row?: any) {
+  if (row && isPolicyMissing(row))
+    return `${POLICY_MISSING_LABEL}. ${explanationSentence(row.explanation)}`
+  if (statusKind(f.status) === "unknown")
+    return row?.explanation
+      ? explanationSentence(row.explanation)
+      : `${UNKNOWN_LABEL}. The evidence is missing or out of date; collect a new snapshot before fixing.`
   if (f.tier === "manual_checklist" || f.tier === "parameterised")
     return "a person must check this; the CIS text gives no value DBGuard can test automatically."
   if (f.tier === "needs_capability")
     return "DBGuard cannot check this automatically yet."
+  if (typeof f.reason === "string" && f.reason.includes(SITE_FIX_MISSING))
+    return "no automatic fix is offered because the fix needs a value specific to your server (for 5.2, the addresses it should listen on), and no approved policy profile with that value is selected. Add it under Site-specific fixes on the Policy Profile screen, approve the profile and select it, or fix it by hand as described below."
   if (f.status === "FAIL") return "no reviewed fix exists for this setting yet."
   return "the evidence is missing or out of date; collect a new snapshot before fixing."
+}
+
+// CIS remediation text for a FAIL that DBGuard will not fix (from records.json).
+type ManualFixProps = {
+  fix: any
+  item: any
+}
+
+function ManualFix({ fix, item }: ManualFixProps) {
+  return (
+    <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-3 space-y-1 text-sm">
+      <p className="font-medium">
+        Manual fix
+        {fix.cis_recommendation
+          ? ` · CIS ${fix.cis_recommendation}${
+              fix.cis_title ? `: ${fix.cis_title}` : ""
+            }`
+          : ""}
+      </p>
+      <p>
+        No automatic fix is offered for this control
+        {item.reason ? ` (DBGuard: ${item.reason})` : ""}. The DBA makes this
+        change by hand.
+      </p>
+      {fix.instructions && <p>{fix.instructions}</p>}
+      {fix.remediation_procedure ? (
+        <pre className="whitespace-pre-wrap break-words bg-white border rounded p-2 text-xs">
+          {fix.remediation_procedure}
+        </pre>
+      ) : (
+        <p className="text-xs text-slate-600">
+          The CIS remediation text is not available in this release.
+        </p>
+      )}
+    </div>
+  )
 }
 
 function fixIdOf(run: any) {

@@ -118,6 +118,109 @@ const CASES = {
     { code: "policy_missing", case: "no_profile" },
     "This control checks a value your company must choose, and no approved policy profile is selected for this assessment, so DBGuard can't check it. Approve a profile on the Policy Profile screen and select it.",
   ],
+  // ---- catalog checks (F6, 7.4): backend/app/services/spec_engine/catalog_checks.py
+  section_not_collected: [
+    {
+      code: "section_not_collected",
+      section: "functions",
+      gap_reason: "insufficient_privilege",
+    },
+    "The collector could not read 'functions' from this database (collector said: 'insufficient_privilege'), so DBGuard cannot judge this control and can't say PASS.",
+  ],
+  field_missing: [
+    { code: "field_missing", section: "roles", field: "rolconnlimit" },
+    "The snapshot has no 'rolconnlimit' in 'roles', so DBGuard cannot judge this control and can't say PASS.",
+  ],
+  manual_review: [
+    { code: "manual_review", evidence_count: 2 },
+    "CIS leaves this decision to a person. Review the 2 items listed below.",
+  ],
+  databases_not_covered: [
+    {
+      code: "databases_not_covered",
+      evidence_count: 1,
+      databases: ["postgres", "sales"],
+    },
+    "The snapshot only covers the database DBGuard connected to. Check these databases too: postgres and sales. 1 item from the connected database is listed below.",
+  ],
+  empty_review_set: [
+    { code: "empty_review_set", evidence_count: 0 },
+    "CIS asks a person to review each matching item, and nothing matched, so there is nothing to review.",
+  ],
+  unlimited_connections: [
+    { code: "unlimited_connections", role_count: 2 },
+    "2 login roles have no connection limit (-1). CIS counts any such account as a failure.",
+  ],
+  connection_limits_set: [
+    { code: "connection_limits_set", evidence_count: 3 },
+    "Every login role in scope has a connection limit.",
+  ],
+  archive_mode_off: [
+    { code: "archive_mode_off", archive_mode: "off" },
+    "WAL archiving is off (archive_mode is 'off'). CIS requires it to be on.",
+  ],
+  archive_destination_missing: [
+    { code: "archive_destination_missing" },
+    "archive_mode is on, but neither archive_command nor archive_library is set, so nothing is archived.",
+  ],
+  archive_destination_conflict: [
+    { code: "archive_destination_conflict" },
+    "Both archive_command and archive_library are set. PostgreSQL refuses to archive in that case.",
+  ],
+  archive_latest_failed: [
+    {
+      code: "archive_latest_failed",
+      last_failed_time: "2026-10-26T05:40:54+00:00",
+      last_archived_time: null,
+    },
+    "The most recent archive attempt failed (last failure 2026-10-26T05:40:54+00:00, last success never).",
+  ],
+  archive_standby: [
+    { code: "archive_standby" },
+    "This server is a standby. Check archiving on the primary, or confirm how this standby is meant to archive.",
+  ],
+  archive_never_run: [
+    { code: "archive_never_run", archived_count: 0, failed_count: 0 },
+    "Archiving is configured, but no WAL file has been archived yet and none has failed. Check again once the server has written some WAL.",
+  ],
+  archive_stats_reset_recent: [
+    {
+      code: "archive_stats_reset_recent",
+      stats_reset: "2026-10-26T05:40:54+00:00",
+      max_age_hours: 24,
+    },
+    "The archiver statistics were reset at 2026-10-26T05:40:54+00:00, within the last 24 hours, and nothing has been archived since, so DBGuard cannot tell whether archiving works.",
+  ],
+  archive_timestamp_missing: [
+    { code: "archive_timestamp_missing", field: "last_archived_time" },
+    "The archiver reports archived files but no time for the last one ('last_archived_time').",
+  ],
+  archive_timestamp_after_collection: [
+    {
+      code: "archive_timestamp_after_collection",
+      field: "last_archived_time",
+      collected_at: "2026-10-26T06:40:54Z",
+    },
+    "The last archive time is later than the snapshot time (2026-10-26T06:40:54Z). Check the server clock and collect again.",
+  ],
+  archive_older_than_max_age: [
+    {
+      code: "archive_older_than_max_age",
+      last_archived_time: "2026-10-24T06:40:54+00:00",
+      collected_at: "2026-10-26T06:40:54Z",
+      max_age_hours: 24,
+    },
+    "The last successful archive was at 2026-10-24T06:40:54+00:00, more than 24 hours before this snapshot (2026-10-26T06:40:54Z). On a quiet database this can be normal; otherwise check the archiver.",
+  ],
+  archive_recent: [
+    {
+      code: "archive_recent",
+      last_archived_time: "2026-10-26T06:35:54+00:00",
+      collected_at: "2026-10-26T06:40:54Z",
+      max_age_hours: 24,
+    },
+    "The last successful archive was at 2026-10-26T06:35:54+00:00, within 24 hours of the snapshot, with no later failure.",
+  ],
 }
 
 test("every known explanation code has a fixed sentence", () => {
@@ -259,6 +362,7 @@ test("condition_unknown explains each cause and refuses an unknown cause", () =>
 
 test("unknown codes and malformed explanations fall back to the generic unknown sentence", () => {
   assert.ok(GENERIC_UNKNOWN_SENTENCE.startsWith(UNKNOWN_LABEL))
+  // A fixed notice (Evidence.tsx renders it), never an explanation code.
   for (const bad of [
     undefined,
     null,
@@ -267,7 +371,7 @@ test("unknown codes and malformed explanations fall back to the generic unknown 
     [],
     {},
     { code: 7 },
-    { code: "section_not_collected" },
+    { code: "brand_new_code" },
     { code: "restore_test_reminder" },
     { code: "__proto__" },
     { code: "toString" },
@@ -419,4 +523,85 @@ test("policy_missing rows are flagged and collected for the banner", () => {
   assert.equal(why.unknown, false)
   assert.equal(isPolicyMissing(rows[0]), true)
   assert.equal(cisRule({ id: "plain" }), "plain")
+})
+
+// ---- catalog rows (F6, 7.4) ------------------------------------------------------
+// Catalog rows carry an explanation on every result, so every catalog row gets a
+// reason (Melvin: a plain-language reason on every row). Unknown ones carry the label.
+
+const catalogRow = (status, explanation) => ({
+  spec_id: "cis-pg17-v1.1.0:5.5",
+  status,
+  cis: {
+    recommendation: "5.5",
+    title: "Ensure per-account connection limits are used",
+  },
+  evidence_paths: ["baseline.roles"],
+  explanation,
+})
+
+test("every catalog row gets a reason, PASS and FAIL included", () => {
+  for (const [status, code] of [
+    ["PASS", "connection_limits_set"],
+    ["FAIL", "unlimited_connections"],
+    ["MANUAL", "manual_review"],
+  ]) {
+    const row = catalogRow(status, { ...CASES[code][0] })
+    assert.ok(needsExplanation(row), status)
+    const why = explainRow(row)
+    assert.equal(why.sentence, CASES[code][1], status)
+    assert.equal(why.unknown, false, status)
+    assert.equal(
+      why.cis,
+      "CIS 5.5: Ensure per-account connection limits are used",
+    )
+  }
+  // A setting row that passes still gets none (no catalog evidence paths).
+  assert.equal(
+    explainRow({ spec_id: "cis-pg17-v1.1.0:3.1.20", status: "PASS" }),
+    null,
+  )
+})
+
+test("unknown catalog rows carry the human-review label and never read as PASS", () => {
+  for (const status of ["GAPPED", "NOT_COLLECTED"]) {
+    for (const code of [
+      "section_not_collected",
+      "field_missing",
+      "wrong_pg_major",
+    ]) {
+      const why = explainRow(catalogRow(status, { ...CASES[code][0] }))
+      assert.equal(statusLabel(status), UNKNOWN_LABEL)
+      assert.equal(why.unknown, true, code)
+      assert.ok(why.sentence.startsWith(`${UNKNOWN_LABEL}. `), why.sentence)
+      assert.match(why.sentence, /can't say PASS/, code)
+    }
+  }
+})
+
+test("a catalog gap without a recorded reason does not invent one", () => {
+  const sentence = explanationSentence({
+    code: "section_not_collected",
+    section: "archiving",
+  })
+  assert.match(sentence, /'archiving'/)
+  assert.doesNotMatch(sentence, /collector said/)
+  // Without the section the sentence would name nothing: generic unknown instead.
+  assert.equal(
+    explanationSentence({ code: "section_not_collected" }),
+    GENERIC_UNKNOWN_SENTENCE,
+  )
+  assert.equal(
+    explanationSentence({ code: "field_missing", section: "roles" }),
+    GENERIC_UNKNOWN_SENTENCE,
+  )
+})
+
+test("catalog facts are quoted and clipped, never trusted as text", () => {
+  const sentence = explanationSentence({
+    code: "archive_mode_off",
+    archive_mode: "x".repeat(500),
+  })
+  assert.ok(sentence.length < 300, sentence)
+  assert.match(sentence, /…'/)
 })

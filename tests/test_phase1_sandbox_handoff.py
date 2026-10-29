@@ -21,11 +21,21 @@ def test_shared_engine_retains_authoritative_phase1_report(engine, snapshot):
     native = assess(engine.specs, snapshot, engine.records)
     calculated = engine.assess(snapshot)
     assert calculated['upstream_report'] == native
-    # 17 automated specs: 14 compliant, 3.1.20 and 3.1.25 FAIL, 3.1.11 NOT_APPLICABLE
+    # 17 automated setting specs: 14 compliant, 3.1.20 and 3.1.25 FAIL, 3.1.11 NOT_APPLICABLE
     # (log_destination 'stderr', no syslog). MANUAL: 9 policy specs (no approved profile,
     # policy_missing) + 3.1.12 and 7.2 (manual_checklist). 6.10 needs a capability.
-    assert native['summary'] == dict(PASS=14, FAIL=2, MANUAL=11, NEEDS_CAPABILITY=1,
+    # Catalog (F6) specs on the fixture's catalog sections: 4.10 PASS (every login role
+    # has a password), 5.5 FAIL (postgres at -1), 7.4 FAIL (archive_mode off), and 4.3,
+    # 4.4, 4.5, 4.6, 4.7, 4.9, 7.1 MANUAL.
+    assert native['summary'] == dict(PASS=15, FAIL=4, MANUAL=18, NEEDS_CAPABILITY=1,
                                      NOT_APPLICABLE=1, NOT_COLLECTED=0, STALE=0, ERROR=0)
+    catalog = {r['spec_id'].split(':')[1]: (r['result'], r['reason_code']) for r in native['results']
+               if 'evidence_paths' in r}
+    assert catalog == {'4.10': ('PASS', 'empty_review_set'), '5.5': ('FAIL', 'unlimited_connections'),
+                       '7.4': ('FAIL', 'archive_mode_off'), '4.3': ('MANUAL', 'manual_review'),
+                       '4.4': ('MANUAL', 'manual_review'), '4.5': ('MANUAL', 'databases_not_covered'),
+                       '4.6': ('MANUAL', 'databases_not_covered'), '4.7': ('MANUAL', 'databases_not_covered'),
+                       '4.9': ('MANUAL', 'manual_review'), '7.1': ('MANUAL', 'manual_review')}
     rows = {r['spec_id']: r for r in native['results']}
     assert (rows['cis-pg17-v1.1.0:3.1.11']['result'],
             rows['cis-pg17-v1.1.0:3.1.11']['reason_code']) == ('NOT_APPLICABLE', 'condition_false')
@@ -34,7 +44,7 @@ def test_shared_engine_retains_authoritative_phase1_report(engine, snapshot):
                                          '3.1.10', '3.1.13', '3.1.26')}
     assert rows['cis-pg17-v1.1.0:6.10']['result'] == 'NEEDS_CAPABILITY'
     assert {sid for sid, r in rows.items() if r['result'] == 'FAIL'} == {
-        'cis-pg17-v1.1.0:3.1.20', 'cis-pg17-v1.1.0:3.1.25'}
+        'cis-pg17-v1.1.0:3.1.20', 'cis-pg17-v1.1.0:3.1.25', 'cis-pg17-v1.1.0:5.5', 'cis-pg17-v1.1.0:7.4'}
     ref = TemplateReference(version=1, sha256='a'*64,
         evidence=[dict(document_id='test', version='1', sha256='b'*64)])
     request = build_handoff(engine, snapshot, ref, assessment=native)

@@ -307,7 +307,7 @@ class TestValidatorRejectsRedactedSettings:
 
     def test_every_installed_spec_still_validates(self):
         paths = sorted(SPECS_DIR.glob("*.yaml"))
-        assert len(paths) == 29
+        assert len(paths) == 39  # 29 + the 10 F6 catalog specs
         for path in paths:
             assert validate_spec(load_spec(path), RECORDS) == [], path.name
 

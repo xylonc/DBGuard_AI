@@ -144,7 +144,7 @@ def test_target_apply_query_screenshot_reassessment_and_rollback(tmp_path, monke
             assert rolled.returncode == 0, rolled.stderr
             from services.sandbox_poc.provenance import signature
 
-            names = [s["check"]["setting_name"] for s in r.engine.specs if "check" in s]
+            names = [s["check"]["setting_name"] for s in r.engine.specs if s.get("check", {}).get("kind") == "setting"]
             assert signature(r.engine.collect(target), names) == signature(
                 before, names
             )

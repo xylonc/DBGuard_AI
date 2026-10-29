@@ -133,3 +133,90 @@ def test_real_collector_to_review_bundle_and_exported_runner(tmp_path):
             (output/'review-bundle.zip').write_bytes(archive_response.content)
             (output/'collector-handoff.json').write_text(handoff.model_dump_json(indent=2))
     assert not docker('ps','-aq','--filter',f'label=dbguard.live-demo.run={resources.run_id}')
+
+
+# Fixed SQL for the disposable SOURCE only (never the sandbox, never a real target):
+# catalog objects the setting-only sandbox reconstruction will not have.
+SOURCE_ONLY_CATALOG_SQL = """
+CREATE ROLE dbguard_extra_login LOGIN CONNECTION LIMIT 3;
+CREATE FUNCTION public.dbguard_extra_definer() RETURNS integer
+    LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+    AS 'SELECT 1';
+"""
+
+
+def _collect_with_real_script(resources):
+    target = resources.target
+    folder = '/var/run/postgresql/collector'
+    docker('exec', target.name, 'mkdir', '-p', folder)
+    for name in ('dbguard-collect.sh', 'collect.sql'):
+        docker('exec', '-i', target.name, 'sh', '-c', f'cat > {folder}/{name}', stdin=(ROOT/'collector'/name).read_text())
+    docker('exec', '-i', target.name, 'sh', '-c', f'cat > {folder}/checks.json', stdin=resources.engine.manifest_text)
+    docker('exec', '-e', 'PGUSER=dbguard_poc', '-e', 'PGDATABASE=dbguard_sandbox',
+           '-e', 'TMPDIR=/var/run/postgresql', target.name, 'bash', f'{folder}/dbguard-collect.sh',
+           '-t', target.name, '-m', f'{folder}/checks.json', '-o', f'{folder}/source.json')
+    return from_collector_bundle(json.loads(docker('exec', target.name, 'cat', f'{folder}/source.json')),
+                                 resources.engine)
+
+
+def _rows(assessment):
+    return {r['spec_id']: r for r in assessment['upstream_report']['results']}
+
+
+def test_source_only_catalog_objects_do_not_block_a_setting_fix(tmp_path):
+    from services.sandbox_poc import shared
+    assert shared.SANDBOX_COMPARES_CATALOG is False
+    resources = DemoResources()
+    with TestClient(create_app(lambda: resources)) as client:
+        resources.target.sql(SOURCE_ONLY_CATALOG_SQL)
+        converted = _collect_with_real_script(resources)
+        resources.snapshot = converted
+        source = resources.engine.assess(converted)
+        rows = _rows(source)
+        # The source assessment shows the extra role and function in the 4.x/5.5 evidence.
+        assert {'rolname': 'dbguard_extra_login', 'rolsuper': False, 'rolvaliduntil': None,
+                'password_type': 'none'} in rows['cis-pg17-v1.1.0:4.4']['evidence']
+        definer = [e for e in rows['cis-pg17-v1.1.0:4.5']['evidence'] if e['name'] == 'dbguard_extra_definer']
+        assert definer == [{'schema': 'public', 'name': 'dbguard_extra_definer', 'identity_args': '',
+                            'owner': 'dbguard_poc', 'prosecdef': True, 'search_path': 'pg_catalog, pg_temp',
+                            'config_names': ['search_path'], 'acl': definer[0]['acl'], 'extension': None}]
+        assert '=X/dbguard_poc' in definer[0]['acl']  # default ACL: PUBLIC may EXECUTE
+        assert rows['cis-pg17-v1.1.0:4.10']['result'] == 'MANUAL'  # the extra role has no password
+        assert [e['rolname'] for e in rows['cis-pg17-v1.1.0:4.10']['evidence']] == ['dbguard_extra_login']
+        assert any(e.get('rolname') == 'dbguard_extra_login' and e['rolconnlimit'] == 3
+                   for e in rows['cis-pg17-v1.1.0:5.5']['evidence'])
+        assert source['findings']['cis-pg17-v1.1.0:3.1.20']['status'] == 'FAIL'
+
+        handoff = build_handoff(resources.engine, converted, resources.handoff.template_ref)
+        response = client.post('/api/v1/sandbox/runs', json=handoff.model_dump())
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result['status'] == 'VERIFIED', result
+        assert 'reproduction or rollback findings differ' not in json.dumps(result)
+        assert result['review_bundle']['status'] == 'READY', result.get('review_bundle')
+        archive_response = client.get(result['review_bundle']['url'])
+        assert archive_response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(archive_response.content)) as archive:
+            report = archive.read('report.html').decode('utf-8')
+        assert 'reproduction or rollback findings differ' not in report
+        assert 'Sandbox status: VERIFIED' in report
+        assert report.count('<tr><td>cis-') == 29  # the 29 non-catalog specs
+        assert 'dbguard_extra' not in report
+
+        # The difference was real: the sandbox reproduction has neither object.
+        attempt = result['attempts'][-1]
+        sandbox_rows = _rows(attempt['before_assessment'])
+        assert 'dbguard_extra_login' not in json.dumps(sandbox_rows['cis-pg17-v1.1.0:4.4']['evidence'])
+        assert 'dbguard_extra_definer' not in json.dumps(sandbox_rows['cis-pg17-v1.1.0:4.5']['evidence'])
+        assert sandbox_rows['cis-pg17-v1.1.0:4.10']['result'] == 'PASS'
+        assert attempt['before_assessment']['findings'] == source['findings']
+        assert attempt['after_assessment']['findings']['cis-pg17-v1.1.0:3.1.20']['status'] == 'PASS'
+        assert attempt['rollback_verified'] and attempt['cleanup']['verified']
+        for attempt in result['attempts']:
+            assert not docker('ps', '-aq', '--filter', f"label={LABEL}={attempt['run_id']}")
+    assert not docker('ps', '-aq', '--filter', f'label=dbguard.live-demo.run={resources.run_id}')
+    # Every container this test created (source target and each attempt) is gone. Checked by
+    # this run's own labels: other sessions may run labelled containers concurrently.
+    owned = [resources.target.run_id] + [a['run_id'] for a in result['attempts']]
+    assert len(owned) == len(set(owned)) >= 2
+    assert [run_id for run_id in owned if docker('ps', '-aq', '--filter', f'label={LABEL}={run_id}')] == []

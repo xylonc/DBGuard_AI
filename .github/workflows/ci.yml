@@ -1,0 +1,62 @@
+# Unit tests, spec validation and frontend checks on every pull request and on main.
+# Live tests (DBGUARD_POC_LIVE=1) need Docker sandboxes and stay on the developer's
+# machine; pytest.ini deselects `live` and `tier_b`, and the live files skip without
+# DBGUARD_POC_LIVE. No secrets are used. Actions are pinned by commit SHA.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Unit tests and spec validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install pinned dependencies
+        # The same lock file the demo installs into .venv-demo; uv is only for
+        # tests/test_assess.py::TestAssessCLI, which runs `uv run`.
+        run: |
+          python -m venv .venv-ci
+          .venv-ci/bin/python -m pip install -r requirements-demo.lock
+          .venv-ci/bin/python -m pip install uv==0.13.1
+          .venv-ci/bin/python -m pip check
+          echo "VIRTUAL_ENV=$PWD/.venv-ci" >> "$GITHUB_ENV"
+          echo "$PWD/.venv-ci/bin" >> "$GITHUB_PATH"
+      - name: Validate specs
+        run: python scripts/validate_specs.py catalog/specs/cis-pg17-v1.1.0
+      - name: Unit tests
+        run: python -m pytest -q
+
+  frontend:
+    name: Frontend typecheck and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test

@@ -20,6 +20,30 @@ from app.services.spec_engine.policy import profile_value_errors
 ROOT = Path(__file__).resolve().parents[2]
 
 
+# F6 sandbox scope (Melvin, 28 Oct: "Skip now, skeleton next week"): the sandbox
+# never recreates a target's roles, functions, grants or archiving, so catalog
+# checks are outside its findings map entirely: no-GAPPED guards, regressions and
+# reproduction/rollback equality ignore them. They stay in upstream_report, the
+# assessment and the UI. True would compare them again (for the planned
+# password-free skeleton of accounts, permissions and function stubs).
+SANDBOX_COMPARES_CATALOG = False
+
+
+# Collector sections that only catalog evaluators read (added for F6). A gap in
+# one of them cannot affect setting reconstruction or a setting check, so with
+# SANDBOX_COMPARES_CATALOG False it does not block the sandbox. Gaps in every
+# other section still do.
+CATALOG_ONLY_SECTIONS = frozenset({"functions", "archiving"})
+
+
+def blocking_gaps(snapshot: dict) -> list:
+    """baseline.gaps records that block the sandbox."""
+    gaps = snapshot["baseline"].get("gaps") or []
+    if SANDBOX_COMPARES_CATALOG:
+        return list(gaps)
+    return [g for g in gaps if not (isinstance(g, dict) and g.get("section") in CATALOG_ONLY_SECTIONS)]
+
+
 class ContractError(ValueError):
     """Invalid or unsupported input; retrying cannot repair it."""
 
@@ -74,6 +98,8 @@ class SpecEngine:
         self.manifest_text = manifest_text(self.manifest)
         self.manifest_hash = hashlib.sha256(self.manifest_text.encode()).hexdigest()
         self.hashes = {s["spec_id"]: spec_sha256(s) for s in self._specs}
+        self.catalog_ids = frozenset(s["spec_id"] for s in self._specs
+                                     if (s.get("check") or {}).get("kind") == "catalog")
         self.spec_set_hash = digest(self.hashes)
         self.baseline_sql = (ROOT / "collector/collect.sql").read_text()
         self.collector_hash = hashlib.sha256(self.baseline_sql.encode()).hexdigest()
@@ -126,12 +152,21 @@ class SpecEngine:
         statuses = {"PASS": "PASS", "FAIL": "FAIL", "MANUAL": "MANUAL_REVIEW",
                     "NEEDS_CAPABILITY": "MANUAL_REVIEW", "NOT_APPLICABLE": "NOT_APPLICABLE"}
         # cis/explanation pass through unchanged for N/A, GAPPED and policy_missing findings.
+        # Catalog rows keep theirs in upstream_report only: their facts (role counts,
+        # archiver times) differ between source and sandbox and must not be compared.
         findings = {row["spec_id"]: {"status": statuses.get(row["result"], "GAPPED"),
                                     "spec_hash": self.hashes[row["spec_id"]],
-                                    **{key: row[key] for key in ("cis", "explanation") if key in row}}
-                    for row in report["results"]}
+                                    **{key: row[key] for key in ("cis", "explanation")
+                                       if key in row and row["spec_id"] not in self.catalog_ids}}
+                    for row in report["results"]
+                    if SANDBOX_COMPARES_CATALOG or row["spec_id"] not in self.catalog_ids}
         return {"snapshot_hash": digest(snapshot), "spec_set_hash": self.spec_set_hash,
                 "findings": findings, "upstream_report": report}
+
+    def gapped_settings(self, findings: dict) -> list[str]:
+        """GAPPED non-catalog findings; the sandbox's no-GAPPED guards look at these only."""
+        return sorted(sid for sid, f in findings.items()
+                      if sid not in self.catalog_ids and f["status"] == "GAPPED")
 
     def bind_assessment(self, snapshot: dict, supplied: dict | None = None) -> dict:
         calculated = self.assess(snapshot)

@@ -11,7 +11,7 @@ from .provenance import reconstruct, reconstruction_plan, setting_rows, signatur
 from app.services.fix_unit_render import derive_rollback, render_action_script
 from app.services.setting_values import SettingValueError, check_setting_value
 from .runtime import DisposablePostgres
-from .shared import ContractError, SpecEngine, digest, is_regression, validate_contract
+from .shared import ContractError, SpecEngine, blocking_gaps, digest, is_regression, validate_contract
 from .templates import ApprovedTemplate
 from .adaptive import RevisionDecision, feedback_for
 
@@ -67,7 +67,7 @@ class RemediationLoop:
         spec, name, value = fix_scope(self.engine, control)
         if actual["findings"].get(control, {}).get("status") != "FAIL":
             raise ContractError("Selected control must be a reproduced source FAIL")
-        if any(f["status"] == "GAPPED" for f in actual["findings"].values()):
+        if self.engine.gapped_settings(actual["findings"]):
             raise ContractError("Cannot establish regression coverage with gapped controls")
         plan = reconstruction_plan(snapshot, self.engine.specs)
         rendered = self.template.render(name, value)
@@ -166,9 +166,9 @@ class RemediationLoop:
                     regressions = [sid for sid, finding in before_report["findings"].items()
                                    if sid != control and (
                                        is_regression(finding["status"], after_report["findings"][sid]["status"])
-                                       or after_report["findings"][sid]["status"] == "GAPPED")]
+                                       or sid in self.engine.gapped_settings(after_report["findings"]))]
                     record["regressions"] = regressions
-                    if after["baseline"].get("gaps"):
+                    if blocking_gaps(after):
                         raise RuntimeError("Post-apply collection has gaps")
                     if (after_report["findings"][control]["status"] != "PASS"
                             or regressions or not record["health_after_apply"]):
@@ -192,7 +192,7 @@ class RemediationLoop:
                     record["rollback_verified"] = (
                         signature(restored, plan["names"]) == plan["signature"]
                         and restored_report["findings"] == before_report["findings"]
-                        and not restored["baseline"].get("gaps")
+                        and not blocking_gaps(restored)
                         and record["health_after_rollback"])
                     if not record["rollback_verified"]:
                         raise RuntimeError("Exact rollback verification failed")

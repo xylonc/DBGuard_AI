@@ -50,9 +50,10 @@ class SandboxService:
             assessment = engine.bind_assessment(request.snapshot, request.assessment)
             if assessment["findings"].get(request.control_id, {}).get("status") != "FAIL":
                 raise ContractError("The selected supported control must be FAIL")
-            if any(f["status"] == "GAPPED" for f in assessment["findings"].values()):
-                overrides = [reason for f in assessment["findings"].values()
-                             if (reason := session_override_reason(f))]
+            gapped = engine.gapped_settings(assessment["findings"])
+            if gapped:
+                overrides = [reason for sid in gapped
+                             if (reason := session_override_reason(assessment["findings"][sid]))]
                 raise ContractError("Gapped controls cannot establish regression coverage"
                                     + (f". {overrides[0]}" if overrides else ""))
             fix_scope(engine, request.control_id)

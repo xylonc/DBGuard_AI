@@ -11,8 +11,9 @@ import threading
 import zipfile
 
 from app.services.fix_unit_validator import validate_fix_unit
+from app.services.spec_engine.policy import approval_text
 from .provenance import signature, setting_rows
-from .shared import ContractError, digest
+from .shared import ContractError, digest, is_regression
 from .workflow import CONTROL, template_action
 from app.services.fix_unit_render import derive_rollback, render_action, render_action_script
 
@@ -24,10 +25,13 @@ def require(condition, message):
         raise ContractError('Review bundle: ' + message)
 
 
-def canonical_apply(sql, name="log_connections"):
-    from .planning import POLICIES
+def canonical_apply(sql, name="log_connections", value=None):
+    """The tested statement, bound to the reviewed fix value (POLICIES or approved profile)."""
+    if value is None:
+        from .planning import POLICIES
+        value = POLICIES[name][0]
     action = template_action(sql, name)
-    require(action['value'] == POLICIES[name][0], 'apply value differs from reviewed policy')
+    require(action['value'] == value, 'apply value differs from reviewed policy')
     return render_action(action)
 
 
@@ -45,7 +49,7 @@ def build_review_bundle(handoff, result, engine):
     fix = result['fix_unit']
     require(result.get('fix_unit_hash') == digest(fix), 'fix-unit identity mismatch')
     require(not validate_fix_unit(fix), 'upstream fix-unit validation failed')
-    from .planning import fix_scope, risk_review
+    from .planning import SANDBOX_LIMITS, fix_scope, risk_review
     control = handoff.control_id
     _, name, value = fix_scope(engine, control)
     require(fix['spec_id'] == control and fix['fix_id'] == 'fix-'+name and fix['requires'] in ('reload','restart'), 'unsupported fix')
@@ -68,7 +72,7 @@ def build_review_bundle(handoff, result, engine):
     bound = engine.bind_assessment(handoff.snapshot, handoff.assessment)
     require(before['findings'] == bound['findings'] == restored['findings'], 'reproduction or rollback findings differ')
     require(after['findings'][control]['status'] == 'PASS', 'target did not pass')
-    regressions = [sid for sid, f in before['findings'].items() if sid != control and ((f['status'] == 'PASS' and after['findings'][sid]['status'] != 'PASS') or after['findings'][sid]['status'] == 'GAPPED')]
+    regressions = [sid for sid, f in before['findings'].items() if sid != control and (is_regression(f['status'], after['findings'][sid]['status']) or after['findings'][sid]['status'] == 'GAPPED')]
     require(not regressions and final.get('regressions') == [], 'regression evidence is invalid')
     prior = signature(handoff.snapshot, names)
     require(signature(final['before'], names) == prior == signature(final['rollback'], names), 'exact rollback provenance differs')
@@ -79,7 +83,9 @@ def build_review_bundle(handoff, result, engine):
     require(fix['apply'] == template_action(result['rendered_apply_sql'], name), 'typed action differs from tested template')
     require(final.get('rendered_apply_sql') == result['rendered_apply_sql'] and final.get('fix_unit_hash') == digest(fix), 'final attempt differs from exported fix')
     require(result['rendered_rollback_sql'] == render_action_script(fix['rollback']), 'rendered rollback differs')
-    apply_statements = canonical_apply(result['rendered_apply_sql'], name)
+    require(fix['apply']['value'] == value, 'apply value differs from the reviewed fix value')
+    require(result.get('policy_profile') == engine.policy_pin, 'policy profile differs from the tested run')
+    apply_statements = canonical_apply(result['rendered_apply_sql'], name, value)
     demo = is_fixture(result)
     risk = result.get('risk_review') or risk_review(engine, handoff.snapshot, control)
     config = {'fix_id': fix['fix_id'], 'database': handoff.snapshot['envelope']['database'],
@@ -87,13 +93,20 @@ def build_review_bundle(handoff, result, engine):
               'run_id':result['run_id'], 'control_id':control, 'setting':name, 'requires':fix['requires'],
               'target_id':handoff.snapshot['envelope']['target_id'], 'system_identifier':handoff.snapshot['baseline'].get('identity',{}).get('system_identifier'),
               'spec_set_hash':engine.spec_set_hash, 'snapshot_hash':result['snapshot_hash'],
+              'policy_profile':engine.policy_pin,
               'applied': signature(final['after'], names), 'apply_statements': apply_statements,
               'rollback_statements': [s+';' for s in render_action(fix['rollback'])]}
     rows = ''.join('<tr>'+''.join(f'<td>{escape(str(x))}</td>' for x in
                  (s['spec_id'], s['ref']['title'], before['findings'][s['spec_id']]['status'], after['findings'][s['spec_id']]['status'], restored['findings'][s['spec_id']]['status']))+'</tr>' for s in engine.specs)
     scope = 'DEMO FIXTURE APPROVAL — not human approval' if demo else 'Registry-approved template and evidence — DBA review still required'
+    # Reviewed server-side text only (planning.SANDBOX_LIMITS), e.g. 5.2 listen_addresses.
+    sandbox_limit = SANDBOX_LIMITS.get(name)
+    limit_html = f'<p class="notice"><strong>Sandbox limit:</strong> {escape(sandbox_limit)}</p>' if sandbox_limit else ''
+    limit_text = f'SANDBOX LIMIT: {sandbox_limit}\n\n' if sandbox_limit else ''
     risk_html = '<h2>Risk and prerequisites</h2><pre>'+escape(json.dumps(risk,indent=2))+'</pre>'
-    report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}.table{{overflow:auto}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p><p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}</p><h2>Before / after / rollback in the sandbox</h2><div class="table"><table><tr><th>Control</th><th>Title</th><th>Before</th><th>After fix</th><th>After rollback</th></tr>{rows}</table></div><p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p>{risk_html}<h2>DBA verification</h2><p>Run verify.sh after each complete fix. It opens fresh connections, reads the catalogue, tests a transaction and checks all scoped settings. Run the listed application checks separately.</p><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed configuration policies. Restart settings require a DBA-controlled restart on the target. Regression coverage is limited to the supplied specs. Configuration provenance is restored semantically, not byte-for-byte file formatting.</p><p>The script requires an explicit target connection and refuses configuration drift. A database name and matching settings do not uniquely identify a server: the DBA must verify the target. Advisory locking coordinates DBGuard runs only; other administrators can still change configuration.</p><p>After applying, recollect and reassess the target using the same specs. Review README.txt and the bundled evidence before running harden.sh.</p></body></html>'''
+    # The profile pin, with the DEMO approval label next to any approver name.
+    profile_line = approval_text(engine.policy_pin)
+    report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}.table{{overflow:auto}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p>{limit_html}<p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>Before / after / rollback in the sandbox</h2><div class="table"><table><tr><th>Control</th><th>Title</th><th>Before</th><th>After fix</th><th>After rollback</th></tr>{rows}</table></div><p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p>{risk_html}<h2>DBA verification</h2><p>Run verify.sh after each complete fix. It opens fresh connections, reads the catalogue, tests a transaction and checks all scoped settings. Run the listed application checks separately.</p><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed configuration policies. Restart settings require a DBA-controlled restart on the target. Regression coverage is limited to the supplied specs. Configuration provenance is restored semantically, not byte-for-byte file formatting.</p><p>The script requires an explicit target connection and refuses configuration drift. A database name and matching settings do not uniquely identify a server: the DBA must verify the target. Advisory locking coordinates DBGuard runs only; other administrators can still change configuration.</p><p>After applying, recollect and reassess the target using the same specs. Review README.txt and the bundled evidence before running harden.sh.</p></body></html>'''
     files = {'fix.json': json.dumps(config, indent=2).encode(),
              'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
              'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),
@@ -115,7 +128,7 @@ def build_review_bundle(handoff, result, engine):
                 'requires_dba_review':True, 'snapshot_hash':result['snapshot_hash'], 'spec_set_hash':engine.spec_set_hash,
                 'files':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
     files['manifest.json'] = json.dumps(manifest, indent=2).encode()
-    files['README.txt'] = (f'''{scope}\n\nReview report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]} --screenshots\n\nVerification captures actual database query output, not model-generated content.\nScreenshot dependencies: pip install playwright; python3 -m playwright install chromium.\nImages show a browser evidence viewer populated with actual query results.\nReview and perform application-specific checks in risk-review.json separately.\nFor restart settings, apply/rollback stages the configuration; the DBA restarts\nPostgreSQL outside this tool, then runs verify (or verify-rollback).\nRecollect the target with the original collector and reassess via the application.\n\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe runner checks PostgreSQL version, database name and configuration provenance.\nIt checks all scoped settings for drift before apply or rollback, and uses fresh\nconnections to verify the resulting settings and source. It never applies automatically.\nIf SQL executes but verification fails, inspect the server before retrying.\nRollback refuses drift; it is not a disaster recovery tool. Recollect and reassess\nthe real target after applying. The manifest detects accidental changes, not forgery.\n''').encode()
+    files['README.txt'] = (f'''{scope}\n{profile_line}\n\n{limit_text}Review report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]} --screenshots\n\nVerification captures actual database query output, not model-generated content.\nScreenshot dependencies: pip install playwright; python3 -m playwright install chromium.\nImages show a browser evidence viewer populated with actual query results.\nReview and perform application-specific checks in risk-review.json separately.\nFor restart settings, apply/rollback stages the configuration; the DBA restarts\nPostgreSQL outside this tool, then runs verify (or verify-rollback).\nRecollect the target with the original collector and reassess via the application.\n\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe runner checks PostgreSQL version, database name and configuration provenance.\nIt checks all scoped settings for drift before apply or rollback, and uses fresh\nconnections to verify the resulting settings and source. It never applies automatically.\nIf SQL executes but verification fails, inspect the server before retrying.\nRollback refuses drift; it is not a disaster recovery tool. Recollect and reassess\nthe real target after applying. The manifest detects accidental changes, not forgery.\n''').encode()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():

@@ -30,21 +30,32 @@ class PrepareRequest(StrictModel):
     control_id: str = 'cis-pg17-v1.1.0:3.1.20'
     retry_mode: Literal['repeat', 'adaptive'] = 'adaptive'
     retry_template_versions: list[int] = Field(default_factory=list, max_length=2)
+    # The user's active policy profile for this assessment (store hash); None = policy_missing.
+    policy_profile: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
 
 
-def assess_uploaded(store, snapshot_id, benchmark_id):
+def load_engine(benchmark_id, policy_profile=None):
+    from app.services.spec_engine import RecordsIndex, load_spec
     from .benchmarks import paths
-    directory, records = paths(benchmark_id)
-    if not directory.is_dir() or not records.is_file():
+    from .profiles import resolve_profile
+    directory, records_path = paths(benchmark_id)
+    if not directory.is_dir() or not records_path.is_file():
         raise ContractError('Exact benchmark specs/records are not installed')
-    engine = SpecEngine.load(directory, records)
+    records = RecordsIndex.load(records_path)
+    specs = [load_spec(p) for p in sorted(directory.glob('*.yaml'))]
+    return SpecEngine(specs, records, resolve_profile(records, specs, policy_profile))
+
+
+def assess_uploaded(store, snapshot_id, benchmark_id, policy_profile=None):
+    engine = load_engine(benchmark_id, policy_profile)
     bundle = store.load(snapshot_id).model_dump(mode='json', exclude_none=False)
     snapshot = from_collector_bundle(bundle, engine)
     return engine, snapshot, engine.assess(snapshot)
 
 
 def prepare_uploaded(store, service, request):
-    engine, snapshot, assessment = assess_uploaded(store, request.snapshot_id, request.benchmark_id)
+    engine, snapshot, assessment = assess_uploaded(store, request.snapshot_id, request.benchmark_id,
+                                                   request.policy_profile)
     assessment = engine.bind_assessment(snapshot, request.assessment)
     ref, _ = export_reference(service.registry_url, request.template_version,
                               request.evidence_ids, request.environment)

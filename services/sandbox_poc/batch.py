@@ -5,9 +5,11 @@ import json
 import hashlib
 import uuid
 import zipfile
-from .planning import recommend_order, fix_scope
+from html import escape
+from app.services.spec_engine.policy import approval_text
+from .planning import SANDBOX_LIMITS, recommend_order, fix_scope
 from .provenance import reconstruct, reconstruction_plan, signature
-from .shared import ContractError, digest
+from .shared import ContractError, digest, is_regression
 from .review_bundle import build_review_bundle, is_fixture
 from . import history
 
@@ -18,9 +20,10 @@ def run_batch(requests, service, requested_order=None):
     first = requests[0]
     if any(
         r.snapshot != first.snapshot or r.spec_set_hash != first.spec_set_hash
+        or r.policy_profile_sha256 != first.policy_profile_sha256
         for r in requests
     ):
-        raise ContractError("Batch fixes must share the same snapshot and exact specs")
+        raise ContractError("Batch fixes must share the same snapshot, exact specs and policy profile")
     controls = [r.control_id for r in requests]
     if len(set(controls)) != len(controls):
         raise ContractError("Duplicate controls in batch")
@@ -87,7 +90,7 @@ def run_batch(requests, service, requested_order=None):
             regressions = [
                 sid
                 for sid, f in prior["findings"].items()
-                if f["status"] == "PASS" and report["findings"][sid]["status"] != "PASS"
+                if is_regression(f["status"], report["findings"][sid]["status"])
             ]
             from .evidence_capture import verify_runtime
 
@@ -188,6 +191,7 @@ def run_batch(requests, service, requested_order=None):
         snapshot_hash=digest(first.snapshot),
         spec_set_hash=engine.spec_set_hash,
         spec_hashes=engine.hashes,
+        policy_profile=engine.policy_pin,
         fix_units=[r["fix_unit"] for r in results],
         demo_fixture_approval=any(is_fixture(r) for r in results),
     )
@@ -221,10 +225,15 @@ def run_batch(requests, service, requested_order=None):
     files["README.txt"] = (
         "All selected fixes passed individually and together in one disposable sandbox.\nApply one complete fix at a time in this order: "
         + ", ".join(output["recommended_order"])
+        + "\n" + approval_text(engine.policy_pin)
         + "\nVerify each before proceeding. Roll back in REVERSE order.\nThe per-fix guard expects the preceding fixes to remain applied. If a DBA chooses another order, create and test a new batch.\nIndividual report.html files show isolated tests; combined-evidence.json records the combined states.\nTarget changes have NOT been performed.\n"
+        + "".join(f"\nSANDBOX LIMIT ({f['fix_id']}): {SANDBOX_LIMITS[f['setting']]}\n"
+                  for f in ordered if f["setting"] in SANDBOX_LIMITS)
     ).encode()
     files["report.html"] = (
-        "<!doctype html><html><body><h1>Combined DBA review</h1><p>Sandbox verified. Target application NOT PERFORMED.</p><ol>"
+        "<!doctype html><html><body><h1>Combined DBA review</h1><p>Sandbox verified. Target application NOT PERFORMED.</p><p>"
+        + escape(approval_text(engine.policy_pin))
+        + "</p><ol>"
         + "".join(
             '<li><a href="'
             + f["fix_id"]

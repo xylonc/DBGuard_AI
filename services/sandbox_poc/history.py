@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 from datetime import datetime, timezone
-from .shared import ContractError
+from .shared import ContractError, is_regression
 
 
 def _connect():
@@ -107,6 +107,9 @@ def compare(run_id, fresh, engine):
         raise ContractError("PostgreSQL version changed")
     if engine.spec_set_hash != result["spec_set_hash"]:
         raise ContractError("Spec set changed; assessment is not comparable")
+    used = engine.policy.sha256 if engine.policy is not None else None
+    if used != record["handoff"].get("policy_profile_sha256"):
+        raise ContractError("Policy profile differs from the recorded run; assessment is not comparable")
     parse = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
     try:
         if parse(newenv["collected_at"]) <= parse(oldenv["collected_at"]):
@@ -125,8 +128,7 @@ def compare(run_id, fresh, engine):
     regressions = [
         k
         for k, v in before["findings"].items()
-        if v["status"] == "PASS"
-        and after["findings"].get(k, {}).get("status") != "PASS"
+        if is_regression(v["status"], after["findings"].get(k, {}).get("status"))
     ]
     gaps = [k for k, v in after["findings"].items() if v["status"] == "GAPPED"]
     verified = (

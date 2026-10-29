@@ -2,8 +2,9 @@
 import logging
 
 import psycopg2
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal
 from . import history
 from fastapi.responses import Response
@@ -16,7 +17,7 @@ from .handoff import SandboxHandoff
 from .service import SandboxService
 from .shared import ContractError
 from .adaptive import LLMReviser
-from .planning import LLMRiskReviewer, risk_review, recommend_order, fix_scope
+from .planning import LLMRiskReviewer, risk_review, recommend_order, fix_scope, manual_fix_reference, session_override_reason
 from .upstream import PrepareRequest, HandoffStore, assess_uploaded, prepare_uploaded
 from .readiness import check_readiness
 from app.services.snapshot_service import SnapshotStore, SnapshotNotFoundError
@@ -79,14 +80,22 @@ def download_bundle(run_id: str, service: SandboxService = Depends(get_service))
         "Cache-Control": "no-store"})
 
 
+# The user's active policy profile for one assessment: a profile hash from the
+# profile store. Default none, so every policy control is MANUAL (policy_missing).
+PROFILE_QUERY = Query(default=None, pattern=r'^[0-9a-f]{64}$',
+                      description='Policy profile hash chosen by the user; omitted = no profile (policy_missing)')
+
+
 @router.get('/api/v1/snapshots/{snapshot_id}/spec-assessment')
 def spec_assessment(snapshot_id: str,
                     benchmark_id: str = Query(default='cis-pg17-v1.1.0', pattern=r'^[a-z0-9]+(?:-[a-z0-9.]+)+$'),
+                    policy_profile: str | None = PROFILE_QUERY,
                     store: SnapshotStore = Depends(get_snapshot_store)):
     """Exact-spec assessment for the sandbox; legacy /assessment stays unchanged."""
     try:
-        engine, _, assessment = assess_uploaded(store, snapshot_id, benchmark_id)
+        engine, _, assessment = assess_uploaded(store, snapshot_id, benchmark_id, policy_profile)
         return {'snapshot_id': snapshot_id, 'benchmark_id': benchmark_id,
+                'policy_profile': engine.policy_pin,
                 'assessment': assessment, 'specs': engine.specs,
                 'scope': 'Installed specs only; not full benchmark coverage'}
     except SnapshotNotFoundError as exc:
@@ -145,22 +154,36 @@ def run_handoff(handoff_id: str, service: SandboxService = Depends(get_service))
 
 @router.get('/api/v1/snapshots/{snapshot_id}/fix-plan')
 def fix_plan(snapshot_id: str, benchmark_id: str = Query(default='cis-pg17-v1.1.0', pattern=r'^[a-z0-9]+(?:-[a-z0-9.]+)+$'),
-             review_with_llm: bool = False, store: SnapshotStore = Depends(get_snapshot_store), service: SandboxService = Depends(get_service)):
+             review_with_llm: bool = False, policy_profile: str | None = PROFILE_QUERY,
+             store: SnapshotStore = Depends(get_snapshot_store), service: SandboxService = Depends(get_service)):
     try:
-        engine, snapshot, assessment = assess_uploaded(store,snapshot_id,benchmark_id)
-        fixes=[];manual=[]
+        engine, snapshot, assessment = assess_uploaded(store,snapshot_id,benchmark_id,policy_profile)
+        fixes=[];manual=[];not_applicable=[]
         for sid,finding in assessment['findings'].items():
             if finding['status']=='PASS': continue
+            if finding['status']=='NOT_APPLICABLE':
+                # applies_when is false on clean evidence: neither a fix nor manual review.
+                spec=next((s for s in engine.specs if s['spec_id']==sid),{})
+                not_applicable.append({'spec_id':sid,'title':spec.get('ref',{}).get('title',sid),'tier':spec.get('tier'),
+                                       'status':'NOT_APPLICABLE','condition':spec.get('applies_when',{}).get('condition_quote')})
+                continue
             try:
-                if finding['status']!='FAIL': raise ContractError('Control requires capability or manual evidence')
+                if finding['status']!='FAIL': raise ContractError(session_override_reason(finding) or 'Control requires capability or manual evidence')
                 fixes.append(risk_review(engine,snapshot,sid,service.risk_reviewer if review_with_llm else None))
             except ContractError as exc:
                 spec=next((s for s in engine.specs if s['spec_id']==sid),{})
-                manual.append({'spec_id':sid,'title':spec.get('ref',{}).get('title',sid),'tier':spec.get('tier'),
-                               'status':finding['status'],'reason':str(exc)})
+                item={'spec_id':sid,'title':spec.get('ref',{}).get('title',sid),'tier':spec.get('tier'),
+                      'status':finding['status'],'reason':str(exc)}
+                if finding.get('explanation'):
+                    # Same structured facts as the assessment row, so the UI shows one plain reason.
+                    item['explanation']=finding['explanation']
+                if finding['status']=='FAIL':
+                    # No fix button: the DBA follows the CIS remediation (e.g. 5.2 without an approved address).
+                    item['manual_fix']=manual_fix_reference(engine,spec)
+                manual.append(item)
         if not review_with_llm:
             for fix in fixes: fix['llm']={'status':'NOT_REQUESTED'}
-        return {'snapshot_id':snapshot_id,'spec_set_hash':engine.spec_set_hash,'recommended_order':recommend_order(fixes),'manual_review':manual,
+        return {'snapshot_id':snapshot_id,'spec_set_hash':engine.spec_set_hash,'policy_profile':getattr(engine,'policy_pin',None),'recommended_order':recommend_order(fixes),'manual_review':manual,'not_applicable':not_applicable,
                 'ordering_basis':'Dependencies first, then lower operational risk; DBA decides security urgency and final order.'}
     except SnapshotNotFoundError: raise HTTPException(404,'Snapshot not found') from None
     except ContractError as exc: raise HTTPException(422,str(exc)) from exc
@@ -205,7 +228,8 @@ class ReassessmentRequest(BaseModel):
 @router.post('/api/v1/history/{run_id}/reassess')
 def reassess_run(run_id: str, request: ReassessmentRequest, store: SnapshotStore = Depends(get_snapshot_store)):
     try:
-        engine,snapshot,_=assess_uploaded(store,request.snapshot_id,request.benchmark_id)
+        recorded=history.get(run_id)['handoff'].get('policy_profile_sha256')
+        engine,snapshot,_=assess_uploaded(store,request.snapshot_id,request.benchmark_id,recorded)
         return history.compare(run_id,snapshot,engine)
     except (ContractError,SnapshotNotFoundError) as exc: raise HTTPException(422,str(exc)) from exc
 
@@ -314,3 +338,208 @@ def complete_evidence_bundle(run_id: str):
         z.writestr('history.json',json.dumps(item,indent=2))
         z.writestr('README.txt','The original sandbox bundle is preserved. history.json contains DBA statements, uploaded evidence reviews and server-computed target reassessments. Operator statements and uploaded images do not independently prove target health.\n')
     return Response(buf.getvalue(),media_type='application/zip',headers={'Content-Disposition':'attachment; filename="dbguard-complete-evidence.zip"'})
+
+
+# ---- policy profiles (UI only) ----------------------------------------------------
+# Human-facing lifecycle for policy profiles. These routes are deliberately NOT
+# exposed through the HERMES MCP bridge (services/dbguard_mcp/server.py has no tool
+# for them), and approval takes only a profile hash and the reviewer's name: no
+# profile values, no model output. An approved profile is never edited; an edit is
+# a new draft.
+
+def _profile_store(benchmark_id: str):
+    from app.services.spec_engine import RecordsIndex, load_spec
+    from .benchmarks import paths
+    from .profiles import profile_store
+    directory, records_path = paths(benchmark_id)
+    if not directory.is_dir() or not records_path.is_file():
+        raise ContractError('Exact benchmark specs/records are not installed')
+    return profile_store(RecordsIndex.load(records_path), [load_spec(p) for p in sorted(directory.glob('*.yaml'))])
+
+
+# Request limits for the policy-profile POST routes (drafts, validate-on-edit and
+# approvals). A profile holds at most one entry per installed spec (72 CIS PG17
+# recommendations), so these caps leave room without allowing unbounded input.
+MAX_PROFILE_BODY_BYTES = 64 * 1024
+MAX_PROFILE_ENTRIES = 100   # values / fixes entries
+MAX_PROFILE_ROLES = 500     # connection_limits.roles entries
+
+
+class _CappedBodyRequest(Request):
+    """Reads at most MAX_PROFILE_BODY_BYTES; a larger body is refused with 413 before parsing."""
+
+    async def body(self) -> bytes:
+        if not hasattr(self, '_body'):
+            declared = self.headers.get('content-length')
+            if declared is not None and (not declared.isdigit() or int(declared) > MAX_PROFILE_BODY_BYTES):
+                raise HTTPException(413, f'Policy profile request body exceeds {MAX_PROFILE_BODY_BYTES} bytes')
+            chunks, size = [], 0
+            async for chunk in self.stream():
+                size += len(chunk)
+                if size > MAX_PROFILE_BODY_BYTES:
+                    raise HTTPException(413, f'Policy profile request body exceeds {MAX_PROFILE_BODY_BYTES} bytes')
+                chunks.append(chunk)
+            self._body = b''.join(chunks)
+        return self._body
+
+
+class _CappedBodyRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def capped(request: Request):
+            return await handler(_CappedBodyRequest(request.scope, request.receive))
+        return capped
+
+
+# The policy-profile POST routes use the capped route class; included into router below.
+profile_router = APIRouter(tags=["sandbox-poc"], route_class=_CappedBodyRoute)
+
+
+class PolicyProfileDraft(BaseModel):
+    model_config = {'extra': 'forbid'}
+    profile_id: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+    values: dict = Field(default_factory=dict, max_length=MAX_PROFILE_ENTRIES)
+    fixes: dict | None = Field(default=None, max_length=MAX_PROFILE_ENTRIES)
+    connection_limits: dict | None = None
+    based_on: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+
+    @model_validator(mode='after')
+    def _cap_roles(self):
+        roles = (self.connection_limits or {}).get('roles')
+        if isinstance(roles, dict) and len(roles) > MAX_PROFILE_ROLES:
+            raise ValueError(f'connection_limits.roles must have at most {MAX_PROFILE_ROLES} entries')
+        return self
+
+
+class PolicyProfileApproval(BaseModel):
+    model_config = {'extra': 'forbid'}
+    approver_name: str = Field(min_length=1, max_length=120)
+
+
+
+def _profile_view(store, profile) -> dict:
+    """Summary plus displayed content. Both carry approval_auth next to approved_by."""
+    from app.services.spec_engine.policy import APPROVAL_AUTH
+    return {**store.summary(profile, store.source(profile)),
+            'profile': {**store.document(profile), 'approval_auth': APPROVAL_AUTH}}
+
+
+def _profile_controls(store) -> list[dict]:
+    """Read-only display data: the controls a profile can carry a value for.
+
+    ``policy_value``: parameterised specs with ``expected_from: policy`` (values[spec]).
+    ``site_fix``: automated specs whose reviewed fix value is site-specific (fixes[spec],
+    e.g. 5.2 listen_addresses). Spec text only; nothing here is model output.
+    """
+    from app.services.spec_engine.validate import uses_policy
+    from .planning import POLICIES, FROM_PROFILE
+    controls = []
+    for spec in store.specs:
+        check = spec.get('check')
+        if not isinstance(check, dict):
+            continue
+        if uses_policy(spec):
+            kind = 'policy_value'
+        elif spec.get('tier') == 'automated' and POLICIES.get(check.get('setting_name'), (None,))[0] == FROM_PROFILE:
+            kind = 'site_fix'
+        else:
+            continue
+        ref = spec.get('ref') or {}
+        item = {'spec_id': spec['spec_id'], 'kind': kind, 'recommendation': ref.get('recommendation'),
+                'title': ref.get('title'), 'setting_name': check.get('setting_name'),
+                'operator': check.get('operator'), 'pass_condition_quote': check.get('pass_condition_quote'),
+                'reason': spec.get('reason'), 'interpretation': spec.get('interpretation') or []}
+        if 'direction' in check:
+            item['direction'] = check['direction']
+        if kind == 'site_fix':
+            item['expected'] = check.get('expected')
+        applies_when = spec.get('applies_when')
+        if isinstance(applies_when, dict):
+            item['applies_when'] = {key: applies_when[key] for key in
+                                    ('setting_name', 'operator', 'expected', 'direction', 'condition_quote')
+                                    if key in applies_when}
+        controls.append(item)
+
+    def order(item):
+        parts = str(item.get('recommendation') or '').split('.')
+        return [int(p) if p.isdigit() else 0 for p in parts]
+    return sorted(controls, key=order)
+
+
+@router.get('/api/v1/benchmarks/{benchmark_id}/policy-profiles')
+def list_policy_profiles(benchmark_id: str):
+    from app.services.policy_profile_store import ProfileStoreError
+    try:
+        store = _profile_store(benchmark_id)
+        return {'profiles': store.list(), 'controls': _profile_controls(store)}
+    except (ContractError, ProfileStoreError) as exc: raise HTTPException(422, str(exc)) from exc
+
+
+@profile_router.post('/api/v1/benchmarks/{benchmark_id}/policy-profiles/validate')
+def validate_policy_profile_draft(benchmark_id: str, request: PolicyProfileDraft):
+    """Read-only: check a draft exactly as create_draft does, without storing or logging it.
+
+    Lets the UI validate on every edit without writing a draft each time. Returns
+    {valid, errors[]}; it never approves anything and takes no approver.
+    """
+    from app.services.policy_profile_store import ProfileNotFoundError, ProfileStoreError, _dump
+    from app.services.spec_engine.policy import PolicyProfileError, parse_profile, profile_value_errors
+    try:
+        store = _profile_store(benchmark_id)
+    except ContractError as exc: raise HTTPException(422, str(exc)) from exc
+    doc = {'profile_id': request.profile_id, 'benchmark': store.records.benchmark_id,
+           'approved_by': None, 'approved_at': None, 'values': request.values or {}}
+    if request.fixes:
+        doc['fixes'] = request.fixes
+    if request.connection_limits is not None:
+        doc['connection_limits'] = request.connection_limits
+    errors: list[str] = []
+    if request.based_on is not None:
+        try:
+            store.get(request.based_on)
+        except (ProfileNotFoundError, ProfileStoreError):
+            errors.append('Base policy profile not found')
+    try:
+        profile = parse_profile(_dump(doc), store.records, 'draft')
+    except PolicyProfileError as exc:
+        message = str(exc).removeprefix('draft: invalid policy profile: ').removeprefix('draft: ')
+        return {'valid': False, 'errors': errors + [part for part in message.split('; ') if part]}
+    errors += profile_value_errors(profile, store.specs, strict=True)
+    return {'valid': not errors, 'errors': errors}
+
+
+@router.get('/api/v1/benchmarks/{benchmark_id}/policy-profiles/{profile_ref}')
+def get_policy_profile(benchmark_id: str, profile_ref: str):
+    from app.services.policy_profile_store import ProfileNotFoundError, ProfileStoreError
+    try:
+        store = _profile_store(benchmark_id)
+        profile = store.get(profile_ref)
+        return _profile_view(store, profile)
+    except ProfileNotFoundError: raise HTTPException(404, 'Policy profile not found') from None
+    except (ContractError, ProfileStoreError) as exc: raise HTTPException(422, str(exc)) from exc
+
+
+@profile_router.post('/api/v1/benchmarks/{benchmark_id}/policy-profiles', status_code=201)
+def create_policy_profile_draft(benchmark_id: str, request: PolicyProfileDraft):
+    from app.services.policy_profile_store import ProfileNotFoundError, ProfileStoreError
+    try:
+        store = _profile_store(benchmark_id)
+        profile = store.create_draft(**request.model_dump())
+        return _profile_view(store, profile)
+    except ProfileNotFoundError: raise HTTPException(404, 'Base policy profile not found') from None
+    except (ContractError, ProfileStoreError) as exc: raise HTTPException(422, str(exc)) from exc
+
+
+@profile_router.post('/api/v1/benchmarks/{benchmark_id}/policy-profiles/{profile_ref}/approve')
+def approve_policy_profile(benchmark_id: str, profile_ref: str, request: PolicyProfileApproval):
+    from app.services.policy_profile_store import ProfileNotFoundError, ProfileStoreError
+    try:
+        store = _profile_store(benchmark_id)
+        profile = store.approve(profile_ref, request.approver_name)
+        return {**_profile_view(store, profile), 'approved_from': profile_ref}
+    except ProfileNotFoundError: raise HTTPException(404, 'Policy profile not found') from None
+    except (ContractError, ProfileStoreError) as exc: raise HTTPException(422, str(exc)) from exc
+
+
+router.include_router(profile_router)

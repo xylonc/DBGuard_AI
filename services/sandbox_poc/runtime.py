@@ -6,6 +6,7 @@ is accepted. DATABASE_URL is never used by this execution layer.
 from __future__ import annotations
 
 import json
+import re
 import os
 import secrets
 import subprocess
@@ -16,6 +17,11 @@ from .shared import ContractError
 
 DATA = "/var/lib/postgresql/data"
 LABEL = "dbguard.sandbox-poc.run"
+
+# Reviewed postmaster-context settings the sandbox may reconstruct, change and restart
+# for (see provenance.py, which re-exports this set). activate() restarts only when
+# every pending_restart setting is in this set.
+RESTART_SETTINGS = frozenset({"logging_collector", "listen_addresses"})
 
 
 def docker(*args: str, stdin: str | None = None, timeout: int = 60) -> str:
@@ -94,25 +100,67 @@ class DisposablePostgres:
             raise RuntimeError("PostgreSQL rejected reload request")
         # Postmaster settings need a controlled restart of this owned container.
         time.sleep(.15)
-        pending = self.sql("SELECT count(*) FROM pg_settings WHERE pending_restart;")
-        if int(pending) > 0:
-            self._assert_owned()
-            # Stop only PostgreSQL. PID 1 supervises its replacement, preserving tmpfs.
-            docker("exec", self.name, "pg_ctl", "-D", DATA, "-m", "fast", "-w", "stop")
-            deadline = time.monotonic() + 45
-            while time.monotonic() < deadline:
-                try:
-                    if self.sql("SELECT 1;") == "1": break
-                except RuntimeError: pass
-                time.sleep(.25)
-            else: raise RuntimeError("PostgreSQL did not return after restart")
+        pending = self.pending_restart()
+        if pending:
+            unreviewed = sorted(pending - RESTART_SETTINGS)
+            if unreviewed:
+                raise ContractError("Restart refused: settings outside the reviewed restart "
+                                    "allowlist are pending a restart: " + ", ".join(unreviewed))
+            self.restart()
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            # Every SHOW uses a fresh backend, including backend-context GUCs.
-            if all(self.sql(f"SHOW {name};") == value for name, value in expected.items()):
+            # Every query uses a fresh backend, including backend-context GUCs.
+            if all(self._effective(name, value) for name, value in expected.items()):
                 return
             time.sleep(0.1)
         raise RuntimeError("Reload did not produce expected effective values")
+
+    def pending_restart(self) -> set[str]:
+        """Names of the settings whose changed value waits for a restart (read-only query)."""
+        out = self.sql("SELECT coalesce(string_agg(name, ',' ORDER BY name), '') "
+                       "FROM pg_catalog.pg_settings WHERE pending_restart;")
+        return {name for name in out.split(",") if name}
+
+    def restart(self) -> None:
+        """Controlled restart of PostgreSQL inside this owned, run-labelled container only."""
+        self._assert_owned()
+        # Stop only PostgreSQL. PID 1 supervises its replacement, preserving tmpfs.
+        docker("exec", self.name, "pg_ctl", "-D", DATA, "-m", "fast", "-w", "stop")
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            try:
+                if self.sql("SELECT 1;") == "1": return
+            except RuntimeError: pass
+            time.sleep(.25)
+        raise RuntimeError("PostgreSQL did not return after restart")
+
+    def _effective(self, name: str, value: str) -> bool:
+        """The setting's effective value equals value, in SHOW or pg_settings.setting form.
+
+        Expected values come in two exact forms: fix values as SHOW prints them
+        ('1d', '10MB') and reconstructed/rollback values from pg_settings.setting
+        ('1440' min, '10240' kB). For unitless settings both forms are identical.
+        Values are compared here, never interpolated into SQL, and travel hex-encoded
+        so psql/docker output trimming cannot hide leading or trailing spaces (the
+        default log_line_prefix is '%m [%p] ').
+        """
+        if not re.fullmatch(r"[a-z_][a-z0-9_.]*", name):
+            raise ContractError("Unsupported setting name")
+        row = self.sql("SELECT encode(convert_to(current_setting(name), 'UTF8'), 'hex') || ',' || "
+                       "encode(convert_to(setting, 'UTF8'), 'hex') FROM pg_catalog.pg_settings "
+                       f"WHERE name = '{name}';")
+        return value.encode("utf-8").hex() in row.split(",")
+
+    def setting_sources(self, names: list[str]) -> dict:
+        """Live pg_settings source/sourcefile for the named settings (read-only query)."""
+        for name in names:
+            if not re.fullmatch(r"[a-z_][a-z0-9_.]*", name):
+                raise ContractError("Unsupported setting name")
+        listed = ", ".join(f"'{n}'" for n in names)
+        out = self.sql("SELECT coalesce(json_object_agg(name, json_build_object("
+                       "'source', source, 'sourcefile', sourcefile)), '{}') "
+                       f"FROM pg_catalog.pg_settings WHERE name IN ({listed});")
+        return json.loads(out)
 
     def health(self) -> bool:
         return self.sql("SELECT 1;") == "1"

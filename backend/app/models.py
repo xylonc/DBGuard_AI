@@ -216,6 +216,13 @@ class FindingStatus(str, Enum):
     MANUAL_REVIEW = "MANUAL_REVIEW"
     """Control requires human intervention and cannot be automated."""
 
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    """
+    The spec's applies_when condition is false on exact, collected evidence (for
+    example a syslog control when log_destination does not include syslog).
+    Unknown condition evidence is GAPPED, never NOT_APPLICABLE or PASS.
+    """
+
 
 # ============================================================================
 # Template-driven control metadata (replaces TypedAction)
@@ -261,7 +268,7 @@ class Finding(BaseModel):
         description="Unique control identifier (e.g., cis-pg17-v1.1.0:3.1.20 or DBGUARD-MD5-PASSWORDS)"
     )
     status: FindingStatus = Field(
-        description="Evaluation outcome: PASS, FAIL, GAPPED, or MANUAL_REVIEW"
+        description="Evaluation outcome: PASS, FAIL, GAPPED, MANUAL_REVIEW or NOT_APPLICABLE"
     )
     title: str = Field(
         description="Human-readable control title"
@@ -289,6 +296,15 @@ class Finding(BaseModel):
         default=None,
         description="JSON paths of evidence fields read (e.g., settings[name='log_connections'].setting)"
     )
+    cis: Optional[dict[str, str]] = Field(
+        default=None,
+        description="{recommendation, title} of the CIS control, for GAPPED, NOT_APPLICABLE and policy_missing findings"
+    )
+    explanation: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Structured facts (code plus spec/evidence values, never prose) explaining a GAPPED, "
+                    "NOT_APPLICABLE or policy_missing finding"
+    )
 
 
 class AssessmentSummary(BaseModel):
@@ -299,6 +315,7 @@ class AssessmentSummary(BaseModel):
     fail_count: int = Field(description="Number of FAIL findings")
     gapped_count: int = Field(description="Number of GAPPED findings")
     manual_review_count: int = Field(description="Number of MANUAL_REVIEW findings")
+    not_applicable_count: int = Field(default=0, description="Number of NOT_APPLICABLE findings")
 
 
 class AssessmentReport(BaseModel):
@@ -404,6 +421,21 @@ class SetConfigTemplateParams(BaseModel):
             "debug_pretty_print",
             "log_error_verbosity",
             "log_hostname",
+            # Wave 1b (F2/F3/F4): one entry per reviewed POLICIES setting in
+            # services/sandbox_poc/planning.py; values checked per setting below.
+            "log_min_messages",
+            "log_min_error_statement",
+            "log_line_prefix",
+            "log_destination",
+            "log_directory",
+            "log_filename",
+            "log_file_mode",
+            "log_rotation_age",
+            "log_rotation_size",
+            "syslog_facility",
+            "syslog_ident",
+            "log_timezone",
+            "listen_addresses",
             "password_encryption",
             "max_connections",
             "shared_buffers",
@@ -417,22 +449,34 @@ class SetConfigTemplateParams(BaseModel):
             raise ValueError(f"Invalid config parameter name: {v}. Must be one of {sorted(allowed_params)}")
         return v
     
-    @field_validator("param_value")
-    @classmethod
-    def validate_param_value(cls, v: str) -> str:
-        """Validate parameter value format."""
-        # Allow standard PostgreSQL boolean values
+    @model_validator(mode="after")
+    def validate_param_value(self) -> "SetConfigTemplateParams":
+        """Validate the value with the reviewed per-setting table.
+
+        Settings with an entry in app.services.setting_values.SETTING_ALLOWED_VALUES
+        (booleans and enums) or SETTING_VALUE_RULES use that rule; every value is
+        first checked against GLOBAL_FORBIDDEN. Settings without an entry keep the
+        historical rule below.
+        """
+        from app.services.setting_values import SettingValueError, check_setting_value, has_value_rule
+        v = self.param_value
+        try:
+            if has_value_rule(self.param_name):
+                check_setting_value(self.param_name, v)
+                return self
+            check_setting_value(self.param_name, v, fallback=None)
+        except SettingValueError as exc:
+            raise ValueError(f"Invalid parameter value: {exc}") from None
+        # Historical rule for settings without a reviewed entry.
         if v.lower() in ("on", "off", "true", "false", "yes", "no", "1", "0"):
-            return v
-        # Allow numeric values
+            return self
         try:
             float(v)
-            return v
+            return self
         except ValueError:
             pass
-        # Allow quoted-like strings that don't contain SQL injection patterns
         if "'" not in v and ";" not in v and "--" not in v and "/*" not in v:
-            return v
+            return self
         raise ValueError(f"Invalid parameter value: {v}")
 
 

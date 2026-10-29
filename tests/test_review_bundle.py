@@ -44,7 +44,7 @@ def test_bundle_is_bound_and_escapes_report(recorded, engine):
         assert json.loads(archive.read('fix.json'))['prior'] != json.loads(archive.read('fix.json'))['applied']
 
 
-@pytest.mark.parametrize('fault', ['failed','cleanup','rollback','hash','apply','evidence','assessment','provenance'])
+@pytest.mark.parametrize('fault', ['failed','cleanup','rollback','hash','apply','evidence','assessment','not_applicable','provenance'])
 def test_rejects_unbound_or_unsafe_bundle(recorded, engine, fault):
     result = recorded['result']
     if fault == 'failed': result['status'] = 'FAILED'
@@ -56,11 +56,17 @@ def test_rejects_unbound_or_unsafe_bundle(recorded, engine, fault):
         result['fix_unit_hash'] = digest(result['fix_unit'])
     if fault == 'evidence': result['template']['evidence'][0]['sha256'] = '0'*64
     if fault == 'assessment':
-        # Was next(iter(engine.hashes)), i.e. 3.1.14 with the original spec set. Pin it:
-        # with 3.1.11 sorted first, that choice already PASSed and the tamper was a no-op.
+        # Pin a finding that is non-PASS after the fix so the tamper is never a no-op.
+        # (3.1.14 was used while it was needs_capability; it is automated and PASSes now.)
+        # The run fixes 3.1.20 only, so 3.1.25 (log_statement 'none') still FAILs.
         findings = result['attempts'][0]['after_assessment']['findings']
-        assert findings['cis-pg17-v1.1.0:3.1.14']['status'] != 'PASS'
-        findings['cis-pg17-v1.1.0:3.1.14']['status'] = 'PASS'
+        assert findings['cis-pg17-v1.1.0:3.1.25']['status'] == 'FAIL'
+        findings['cis-pg17-v1.1.0:3.1.25']['status'] = 'PASS'
+    if fault == 'not_applicable':
+        # A NOT_APPLICABLE finding forged to PASS must be refused as well.
+        findings = result['attempts'][0]['after_assessment']['findings']
+        assert findings['cis-pg17-v1.1.0:3.1.11']['status'] == 'NOT_APPLICABLE'
+        findings['cis-pg17-v1.1.0:3.1.11']['status'] = 'PASS'
     if fault == 'provenance': result['attempts'][0]['rollback']['baseline']['file_settings'] = []
     with pytest.raises(ContractError):
         build_review_bundle(SandboxHandoff(**recorded['handoff']), result, engine)

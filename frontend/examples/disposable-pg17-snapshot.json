@@ -1,5 +1,19 @@
 {
   "baseline": {
+    "archiving": {
+      "archive_command_is_set": false,
+      "archive_library": "",
+      "archive_mode": "off",
+      "stat_archiver": {
+        "archived_count": 0,
+        "failed_count": 0,
+        "last_archived_time": null,
+        "last_archived_wal": null,
+        "last_failed_time": null,
+        "last_failed_wal": null,
+        "stats_reset": "2026-10-29T10:02:40.595132+00:00"
+      }
+    },
     "connections": [
       {
         "application_name": "psql",
@@ -186,6 +200,7 @@
       }
     ],
     "foreign_servers": [],
+    "functions": [],
     "gaps": [],
     "hba_rules": [
       {
@@ -319,7 +334,7 @@
       "lc_ctype": "en_US.utf8",
       "server_encoding": "UTF8",
       "server_version_num": 170011,
-      "system_identifier": "7701749458884481056",
+      "system_identifier": "7702028102580490272",
       "version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
       "wal_segment_size": "16MB"
     },
@@ -366,6 +381,21 @@
         "class": "S2",
         "field": "pg_hba_file_rules.options",
         "note": "ldapbindpasswd and radiussecret masked; rule structure preserved."
+      },
+      {
+        "class": "S0",
+        "field": "pg_proc.prosrc",
+        "note": "Function bodies are never selected."
+      },
+      {
+        "class": "S2",
+        "field": "pg_proc.proconfig",
+        "note": "Setting names only; the search_path value is the one value returned, unmasked."
+      },
+      {
+        "class": "S0",
+        "field": "archiving.archive_command",
+        "note": "Never returned in the archiving section; only archive_command_is_set (boolean)."
       },
       {
         "class": "S0",
@@ -2177,7 +2207,7 @@
       }
     ],
     "uptime": {
-      "postmaster_start_time": "2026-10-28T16:01:24.246134+00:00",
+      "postmaster_start_time": "2026-10-29T10:02:41.042233+00:00",
       "uptime_seconds": 1
     }
   },
@@ -2359,9 +2389,9 @@
   },
   "envelope": {
     "can_read_pg_authid": true,
-    "collected_at": "2026-10-28T16:01:24Z",
+    "collected_at": "2026-10-29T10:02:41Z",
     "collected_by": "dbguard_poc",
-    "collector_sha256": "79f5422c42ef53a53c36cb4581cd6e28cf6de4681db8786b7d53c9ea7e857319",
+    "collector_sha256": "7b6a4d31eb375d3747d7302286abdfd8c4c0323e946e189709a40c7c0fbb1797",
     "collector_version": "2.0.0-sql",
     "database": "dbguard_sandbox",
     "deployment_type": "self-managed",
@@ -2375,6 +2405,6 @@
       "sha256": "8d11cbcbc8f58c49f5d546ef5518dd1f66beae54cc3961c14ae3def4daa76ae0"
     },
     "schema_version": "0.3.0",
-    "target_id": "dbguard-poc-fb310e8cabfa4fb097d018ba50fe3478"
+    "target_id": "dbguard-poc-18e130515602430f911530d62e25ae9a"
   }
 }

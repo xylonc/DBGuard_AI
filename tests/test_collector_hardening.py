@@ -39,7 +39,8 @@ PINNED_SETTINGS = ("search_path", "standard_conforming_strings")
 # Every function collect.sql defines. All live in pg_temp and are called
 # qualified, so neither a target schema nor search_path can substitute them.
 HELPERS = ("mask_secrets", "is_secret_setting", "sanitise_setting", "parse_conninfo", "try_jsonb",
-           "try_reason", "run_checks", "sql_password_types", "sql_hba", "sql_ident", "sql_file_settings")
+           "try_reason", "run_checks", "sql_password_types", "sql_hba", "sql_ident", "sql_file_settings",
+           "sql_functions", "sql_archiving")
 MASKING_HELPERS = ("mask_secrets", "is_secret_setting", "sanitise_setting", "parse_conninfo")
 META_LINE = re.compile(r"[ \t]*\\")
 DOLLAR_TAG = re.compile(r"\$([A-Za-z_][A-Za-z_0-9]*)?\$")

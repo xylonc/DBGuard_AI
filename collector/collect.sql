@@ -398,6 +398,64 @@ CREATE FUNCTION pg_temp.sql_file_settings() RETURNS text AS $$
     $q$;
 $$ LANGUAGE sql IMMUTABLE;
 
+-- Functions that run with elevated privileges or pinned settings (CIS 4.5).
+-- Same predicate as the CIS audit query. Never prosrc: a function body can
+-- embed credentials. Of proconfig only the setting NAMES are returned, plus
+-- the search_path value, which is what makes a SECURITY DEFINER function
+-- safe or hijackable. Every other value is withheld.
+CREATE FUNCTION pg_temp.sql_functions() RETURNS text AS $$
+    SELECT $q$
+        SELECT coalesce(jsonb_agg(jsonb_build_object(
+            'schema',        n.nspname,
+            'name',          p.proname,
+            'identity_args', pg_get_function_identity_arguments(p.oid),
+            'kind',          p.prokind,
+            'language',      l.lanname,
+            'prosecdef',     p.prosecdef,
+            'config_names',  coalesce((SELECT jsonb_agg(split_part(c, '=', 1) ORDER BY ord)
+                              FROM unnest(p.proconfig) WITH ORDINALITY AS u(c, ord)), '[]'::jsonb),
+            'search_path',   (SELECT substring(c from position('=' in c) + 1)
+                              FROM unnest(p.proconfig) c
+                              WHERE split_part(c, '=', 1) = 'search_path' LIMIT 1),
+            'owner',         pg_get_userbyid(p.proowner),
+            -- A NULL proacl is the default, in which PUBLIC may EXECUTE; it is
+            -- expanded so null never stands for "no grants".
+            'acl',           coalesce(p.proacl, acldefault('f', p.proowner))::text[],
+            'extension',     (SELECT e.extname FROM pg_depend d
+                              JOIN pg_extension e ON e.oid = d.refobjid
+                              WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid
+                                AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e')
+        ) ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)), '[]'::jsonb)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_language  l ON l.oid = p.prolang
+        WHERE p.prosecdef OR p.proconfig IS NOT NULL
+    $q$;
+$$ LANGUAGE sql IMMUTABLE;
+
+-- WAL archiving state (CIS 7.4). archive_command is a shell command and is
+-- NEVER returned, masked or not: only whether it is set. SHOW reports
+-- '(disabled)' while archive_mode is off, exactly as the CIS query expects.
+-- archive_library does not exist before PG15; it is then null, not an error.
+CREATE FUNCTION pg_temp.sql_archiving() RETURNS text AS $$
+    SELECT $q$
+        SELECT jsonb_build_object(
+            'archive_mode',           current_setting('archive_mode'),
+            'archive_library',        current_setting('archive_library', true),
+            'archive_command_is_set', current_setting('archive_command') NOT IN ('', '(disabled)'),
+            'stat_archiver', (SELECT jsonb_build_object(
+                'archived_count',     archived_count,
+                'last_archived_wal',  last_archived_wal,
+                'last_archived_time', last_archived_time,
+                'failed_count',       failed_count,
+                'last_failed_wal',    last_failed_wal,
+                'last_failed_time',   last_failed_time,
+                'stats_reset',        stats_reset)
+              FROM pg_stat_archiver)
+        )
+    $q$;
+$$ LANGUAGE sql IMMUTABLE;
+
 -- ===========================================================================
 -- 3. The bundle.
 -- ===========================================================================
@@ -660,6 +718,9 @@ SELECT jsonb_pretty(jsonb_build_object(
     FROM pg_event_trigger
 ),
 
+-- Functions with SECURITY DEFINER or a SET clause. Names, owner, ACL only.
+'functions',        pg_temp.try_jsonb(pg_temp.sql_functions()),
+
 -- ---- authentication -------------------------------------------------------
 -- ldapbindpasswd and radiussecret are masked in options.
 'hba_rules',        pg_temp.try_jsonb(pg_temp.sql_hba()),
@@ -690,6 +751,9 @@ SELECT jsonb_pretty(jsonb_build_object(
         SELECT pg_temp.parse_conninfo(nullif(current_setting('primary_conninfo', true), '')) $q$),
     'in_recovery', pg_is_in_recovery()
 ),
+
+-- ---- WAL archiving: mode, library, command presence, archiver counters ---
+'archiving',        pg_temp.try_jsonb(pg_temp.sql_archiving()),
 
 -- ---- operational baseline: aggregated, no query text ever ----------------
 'connections', pg_temp.try_jsonb($q$
@@ -762,6 +826,20 @@ SELECT jsonb_pretty(jsonb_build_object(
                )
         WHERE NOT pg_has_role(current_user,'pg_read_all_settings','MEMBER')
           AND NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
+        UNION ALL
+        SELECT jsonb_build_object(
+                   'section','functions',
+                   'reason', pg_temp.try_reason(pg_temp.sql_functions()),
+                   'remediation','pg_proc is readable by every role by default; restore SELECT on pg_proc, pg_namespace, pg_language, pg_depend and pg_extension.'
+               )
+        WHERE pg_temp.try_reason(pg_temp.sql_functions()) IS NOT NULL
+        UNION ALL
+        SELECT jsonb_build_object(
+                   'section','archiving',
+                   'reason', pg_temp.try_reason(pg_temp.sql_archiving()),
+                   'remediation','archive_mode, archive_library, archive_command or pg_stat_archiver could not be read. Null here does NOT mean archiving is off.'
+               )
+        WHERE pg_temp.try_reason(pg_temp.sql_archiving()) IS NOT NULL
     ) q
 ),
 
@@ -781,6 +859,12 @@ SELECT jsonb_pretty(jsonb_build_object(
         'note','Policy expressions can embed literals: only whether one is set and its length.'),
     jsonb_build_object('field','pg_hba_file_rules.options','class','S2',
         'note','ldapbindpasswd and radiussecret masked; rule structure preserved.'),
+    jsonb_build_object('field','pg_proc.prosrc','class','S0',
+        'note','Function bodies are never selected.'),
+    jsonb_build_object('field','pg_proc.proconfig','class','S2',
+        'note','Setting names only; the search_path value is the one value returned, unmasked.'),
+    jsonb_build_object('field','archiving.archive_command','class','S0',
+        'note','Never returned in the archiving section; only archive_command_is_set (boolean).'),
     jsonb_build_object('field','pg_stat_activity.query','class','S0',
         'note','Query text can contain plaintext credentials from DDL. Never selected.')
 ),

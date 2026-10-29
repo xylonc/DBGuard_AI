@@ -9,7 +9,7 @@ from html import escape
 from app.services.spec_engine.policy import approval_text
 from .planning import SANDBOX_LIMITS, recommend_order, fix_scope
 from .provenance import reconstruct, reconstruction_plan, signature
-from .shared import ContractError, digest, is_regression
+from .shared import ContractError, blocking_gaps, digest, is_regression
 from .review_bundle import build_review_bundle, is_fixture
 from . import history
 
@@ -105,7 +105,7 @@ def run_batch(requests, service, requested_order=None):
             if (
                 report["findings"][fix["spec_id"]]["status"] != "PASS"
                 or regressions
-                or after["baseline"].get("gaps")
+                or blocking_gaps(after)
                 or not checks["passed"]
             ):
                 raise ContractError(

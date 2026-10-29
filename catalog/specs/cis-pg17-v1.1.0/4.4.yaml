@@ -1,0 +1,16 @@
+spec_id: "cis-pg17-v1.1.0:4.4"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.4"
+  title: "Lock Out Accounts if Not Currently in Use"
+  source_sha256: "584241f02672f6e564bc2ed92e0dd29ccc2caacaa7b1b013d87bc4ab1f4d6af7"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and whether a login role is inactive is not recorded in the catalog; a human marks each listed login role as in use or not"
+check:
+  kind: catalog
+  evaluator: login_roles
+  pass_condition_quote: "Inactive accounts should not be shown in the output."

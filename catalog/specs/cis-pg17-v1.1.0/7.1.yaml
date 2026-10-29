@@ -1,0 +1,16 @@
+spec_id: "cis-pg17-v1.1.0:7.1"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "7.1"
+  title: "Ensure a replication-only user is created and used for streaming replication"
+  source_sha256: "0be6ea4ad7f6e73b1e376874f4014467e5cb2bf9387e8535c1801e590357c48b"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and the audit gives no fail sentence; a human confirms the listed replication roles are dedicated replication-only users"
+check:
+  kind: catalog
+  evaluator: replication_roles
+  pass_condition_quote: "Check which users currently have the replication permission:"

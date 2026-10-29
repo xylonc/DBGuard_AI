@@ -181,6 +181,15 @@ def fix_plan(snapshot_id: str, benchmark_id: str = Query(default='cis-pg17-v1.1.
                     # No fix button: the DBA follows the CIS remediation (e.g. 5.2 without an approved address).
                     item['manual_fix']=manual_fix_reference(engine,spec)
                 manual.append(item)
+        # Catalog checks (F6) are outside the sandbox findings map; list them from
+        # the full report so the DBA still sees them as not fixable.
+        statuses={'FAIL':'FAIL','MANUAL':'MANUAL_REVIEW','NEEDS_CAPABILITY':'MANUAL_REVIEW'}
+        for row in (assessment.get('upstream_report') or {}).get('results', []):
+            if row['spec_id'] not in assessment['findings'] and row['result']!='PASS':
+                manual.append({'spec_id':row['spec_id'],'title':row.get('title') or row['spec_id'],'tier':row.get('tier'),
+                               'status':statuses.get(row['result'],'GAPPED'),'kind':'catalog',
+                               'reason':'Assessment-only catalog check',
+                               **({'explanation':row['explanation']} if row.get('explanation') else {})})
         if not review_with_llm:
             for fix in fixes: fix['llm']={'status':'NOT_REQUESTED'}
         return {'snapshot_id':snapshot_id,'spec_set_hash':engine.spec_set_hash,'policy_profile':getattr(engine,'policy_pin',None),'recommended_order':recommend_order(fixes),'manual_review':manual,'not_applicable':not_applicable,

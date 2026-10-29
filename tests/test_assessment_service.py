@@ -29,10 +29,14 @@ from catalog.controls.assess.registry import CONTROL_REGISTRY, LEGACY_CONTROL_ID
 LOG_CONNECTIONS = "cis-pg17-v1.1.0:3.1.20"
 PUBLIC_SCHEMA = "DBGUARD-PUBLIC-SCHEMA-CREATE"
 MD5 = "DBGUARD-MD5-PASSWORDS"
-# 29 installed CIS PG17 specs (17 automated, 9 parameterised policy specs,
-# 1 needs_capability, 2 manual_checklist) + 2 supplementary checks.
-TOTAL_CONTROLS = 31
+# 39 installed CIS PG17 specs (17 automated setting checks, 9 parameterised policy
+# specs, 1 needs_capability, 2 manual_checklist, 10 F6 catalog checks) + 2
+# supplementary checks.
+TOTAL_CONTROLS = 41
 AUTOMATED_SPECS = 17
+# F6 catalog checks (4.3-4.10, 5.5, 7.1, 7.4). base_snapshot has no identity or
+# catalog sections, so each of them is GAPPED (never PASS) in these tests.
+CATALOG_SPECS = 10
 # MANUAL_REVIEW without an approved policy profile: 9 policy specs (policy_missing),
 # 6.10 (needs_capability), 3.1.12 and 7.2 (manual_checklist).
 NON_AUTOMATED_SPECS = 12
@@ -400,7 +404,7 @@ class TestAssessmentSummary:
         assert report.summary.total == TOTAL_CONTROLS
         assert report.summary.pass_count == 19  # 17 automated specs + public schema + md5
         assert report.summary.fail_count == 0
-        assert report.summary.gapped_count == 0
+        assert report.summary.gapped_count == CATALOG_SPECS  # no catalog sections collected
         assert report.summary.not_applicable_count == 0
         # 9 policy specs without an approved profile, 6.10, 3.1.12 and 7.2.
         assert report.summary.manual_review_count == NON_AUTOMATED_SPECS
@@ -439,7 +443,7 @@ class TestAssessmentSummary:
         assert report.summary.total == TOTAL_CONTROLS
         assert report.summary.pass_count == 17  # 16 automated specs + public schema
         assert report.summary.fail_count == 1
-        assert report.summary.gapped_count == 0
+        assert report.summary.gapped_count == CATALOG_SPECS  # no catalog sections collected
         assert report.summary.manual_review_count == 13  # md5 passwords + NON_AUTOMATED_SPECS
 
     def test_summary_counts_gapped_results(self, assessment_service, base_snapshot):
@@ -462,7 +466,7 @@ class TestAssessmentSummary:
         assert report.summary.pass_count == 0
         assert report.summary.fail_count == 0
         assert report.summary.not_applicable_count == 0
-        assert report.summary.gapped_count == AUTOMATED_SPECS + 1  # + public schema
+        assert report.summary.gapped_count == AUTOMATED_SPECS + 1 + CATALOG_SPECS  # + public schema + catalog
         assert report.summary.manual_review_count == NON_AUTOMATED_SPECS + 1  # + md5
 
 

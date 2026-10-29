@@ -13,7 +13,7 @@ import zipfile
 from app.services.fix_unit_validator import validate_fix_unit
 from app.services.spec_engine.policy import approval_text
 from .provenance import signature, setting_rows
-from .shared import ContractError, digest, is_regression
+from .shared import ContractError, blocking_gaps, digest, is_regression
 from .workflow import CONTROL, template_action
 from app.services.fix_unit_render import derive_rollback, render_action, render_action_script
 
@@ -60,7 +60,7 @@ def build_review_bundle(handoff, result, engine):
     require(template['registry_name'] == ref.registry_name and template['version'] == ref.version and template['sha256'] == ref.sha256, 'template reference mismatch')
     pins = [{k: e.get(k) for k in ('document_id', 'version', 'sha256')} for e in template['evidence']]
     require(pins == [p.model_dump() for p in ref.evidence], 'evidence reference mismatch')
-    names = [s['check']['setting_name'] for s in engine.specs if 'check' in s]
+    names = [s['check']['setting_name'] for s in engine.specs if 'check' in s and s['check'].get('kind') != 'catalog']
     attempts = result['attempts']
     require(1 <= len(attempts) <= 3 and all(a.get('cleanup', {}).get('verified') is True for a in attempts), 'attempt cleanup is incomplete')
     final = attempts[-1]
@@ -72,11 +72,11 @@ def build_review_bundle(handoff, result, engine):
     bound = engine.bind_assessment(handoff.snapshot, handoff.assessment)
     require(before['findings'] == bound['findings'] == restored['findings'], 'reproduction or rollback findings differ')
     require(after['findings'][control]['status'] == 'PASS', 'target did not pass')
-    regressions = [sid for sid, f in before['findings'].items() if sid != control and (is_regression(f['status'], after['findings'][sid]['status']) or after['findings'][sid]['status'] == 'GAPPED')]
+    regressions = [sid for sid, f in before['findings'].items() if sid != control and (is_regression(f['status'], after['findings'][sid]['status']) or sid in engine.gapped_settings(after['findings']))]
     require(not regressions and final.get('regressions') == [], 'regression evidence is invalid')
     prior = signature(handoff.snapshot, names)
     require(signature(final['before'], names) == prior == signature(final['rollback'], names), 'exact rollback provenance differs')
-    require(not any(s['baseline'].get('gaps') for s in (final['before'], final['after'], final['rollback'])), 'collection has gaps')
+    require(not any(blocking_gaps(s) for s in (final['before'], final['after'], final['rollback'])), 'collection has gaps')
     require(fix['rollback'] == derive_rollback(fix['prior_state'], fix['apply']), 'rollback differs from source-aware plan')
     row = setting_rows(handoff.snapshot)[name]
     require(fix['prior_state'] == {k: row.get(v) for k, v in {'value':'setting','source':'source','sourcefile':'sourcefile','context':'context'}.items()}, 'prior state differs from source')
@@ -97,7 +97,11 @@ def build_review_bundle(handoff, result, engine):
               'applied': signature(final['after'], names), 'apply_statements': apply_statements,
               'rollback_statements': [s+';' for s in render_action(fix['rollback'])]}
     rows = ''.join('<tr>'+''.join(f'<td>{escape(str(x))}</td>' for x in
-                 (s['spec_id'], s['ref']['title'], before['findings'][s['spec_id']]['status'], after['findings'][s['spec_id']]['status'], restored['findings'][s['spec_id']]['status']))+'</tr>' for s in engine.specs)
+                 (s['spec_id'], s['ref']['title'], before['findings'][s['spec_id']]['status'], after['findings'][s['spec_id']]['status'], restored['findings'][s['spec_id']]['status']))+'</tr>' for s in engine.specs if s['spec_id'] in before['findings'])
+    from app.services.spec_engine.catalog_checks import notices_for
+    # Fixed, reviewed notices (e.g. 7.4's restore-test reminder) for the DBA, never model output.
+    notice_html = ''.join(f'<p class="notice">{escape(s["spec_id"])}: {escape(n["text"])}</p>'
+                          for s in engine.specs if s['spec_id'] in before['findings'] for n in notices_for(s['ref']['recommendation']))
     scope = 'DEMO FIXTURE APPROVAL — not human approval' if demo else 'Registry-approved template and evidence — DBA review still required'
     # Reviewed server-side text only (planning.SANDBOX_LIMITS), e.g. 5.2 listen_addresses.
     sandbox_limit = SANDBOX_LIMITS.get(name)
@@ -106,7 +110,7 @@ def build_review_bundle(handoff, result, engine):
     risk_html = '<h2>Risk and prerequisites</h2><pre>'+escape(json.dumps(risk,indent=2))+'</pre>'
     # The profile pin, with the DEMO approval label next to any approver name.
     profile_line = approval_text(engine.policy_pin)
-    report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}.table{{overflow:auto}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p>{limit_html}<p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>Before / after / rollback in the sandbox</h2><div class="table"><table><tr><th>Control</th><th>Title</th><th>Before</th><th>After fix</th><th>After rollback</th></tr>{rows}</table></div><p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p>{risk_html}<h2>DBA verification</h2><p>Run verify.sh after each complete fix. It opens fresh connections, reads the catalogue, tests a transaction and checks all scoped settings. Run the listed application checks separately.</p><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed configuration policies. Restart settings require a DBA-controlled restart on the target. Regression coverage is limited to the supplied specs. Configuration provenance is restored semantically, not byte-for-byte file formatting.</p><p>The script requires an explicit target connection and refuses configuration drift. A database name and matching settings do not uniquely identify a server: the DBA must verify the target. Advisory locking coordinates DBGuard runs only; other administrators can still change configuration.</p><p>After applying, recollect and reassess the target using the same specs. Review README.txt and the bundled evidence before running harden.sh.</p></body></html>'''
+    report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}.table{{overflow:auto}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p>{limit_html}<p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>Before / after / rollback in the sandbox</h2><div class="table"><table><tr><th>Control</th><th>Title</th><th>Before</th><th>After fix</th><th>After rollback</th></tr>{rows}</table></div>{notice_html}<p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p>{risk_html}<h2>DBA verification</h2><p>Run verify.sh after each complete fix. It opens fresh connections, reads the catalogue, tests a transaction and checks all scoped settings. Run the listed application checks separately.</p><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed configuration policies. Restart settings require a DBA-controlled restart on the target. Regression coverage is limited to the supplied specs. Configuration provenance is restored semantically, not byte-for-byte file formatting.</p><p>The script requires an explicit target connection and refuses configuration drift. A database name and matching settings do not uniquely identify a server: the DBA must verify the target. Advisory locking coordinates DBGuard runs only; other administrators can still change configuration.</p><p>After applying, recollect and reassess the target using the same specs. Review README.txt and the bundled evidence before running harden.sh.</p></body></html>'''
     files = {'fix.json': json.dumps(config, indent=2).encode(),
              'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
              'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),

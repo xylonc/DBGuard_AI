@@ -17,7 +17,10 @@ from test_sandbox_poc import engine, snapshot, run_fake
 def recorded(engine, snapshot):
     snapshot['envelope'].update(collector_version='unit-fixture', collected_at='2026-09-22T00:00:00Z',
         collected_by='unit-fixture', is_superuser=True, target_id='<script>alert(1)</script>')
-    snapshot['baseline']['roles'] = []
+    # roles come from the shared fixture (real collector rows, bootstrap superuser oid 10).
+    # An empty roles list is a collector contract violation and GAPs every role-based
+    # catalog control, which blocks the loop, so it is no longer emptied here.
+    assert any(r['oid'] == '10' for r in snapshot['baseline']['roles'])
     for row in snapshot['baseline']['settings']:
         row.update(vartype='bool' if row['setting'] in ('on','off') else 'enum', unit=None, sanitised=False)
     result, _ = run_fake(engine, snapshot, [None])
@@ -42,6 +45,48 @@ def test_bundle_is_bound_and_escapes_report(recorded, engine):
         assert b'&lt;script&gt;' in archive.read('report.html')
         assert b'FAIL' in archive.read('report.html')
         assert json.loads(archive.read('fix.json'))['prior'] != json.loads(archive.read('fix.json'))['applied']
+
+
+
+def test_report_has_no_catalog_rows_or_7_4_notice_by_default(recorded, engine):
+    from app.services.spec_engine.catalog_checks import RESTORE_TEST_REMINDER
+    from html import escape
+    from services.sandbox_poc import shared
+    assert shared.SANDBOX_COMPARES_CATALOG is False
+    assert 'cis-pg17-v1.1.0:7.4' in {s['spec_id'] for s in engine.specs}
+    data = build_review_bundle(SandboxHandoff(**recorded['handoff']), recorded['result'], engine)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        report = archive.read('report.html').decode('utf-8')
+    catalog = [s['spec_id'] for s in engine.specs if s.get('check', {}).get('kind') == 'catalog']
+    assert len(catalog) == 10
+    assert report.count('<tr><td>cis-') == 29  # the 29 non-catalog specs
+    for sid in catalog:
+        assert f'<td>{sid}</td>' not in report
+    # 7.4 is not shown in the sandbox report, so neither is its reminder.
+    assert '<p class="notice">cis-' not in report
+    assert escape(RESTORE_TEST_REMINDER) not in report and RESTORE_TEST_REMINDER not in report
+
+
+def test_report_shows_the_fixed_7_4_restore_test_reminder_once_when_catalog_compared(engine, snapshot, monkeypatch):
+    from html import escape
+    from app.services.spec_engine.catalog_checks import RESTORE_TEST_REMINDER
+    from services.sandbox_poc import shared
+    from test_sandbox_guard_scope import recorded_run
+    monkeypatch.setattr(shared, 'SANDBOX_COMPARES_CATALOG', True)
+    handoff, result = recorded_run(engine, snapshot)
+    data = build_review_bundle(handoff, result, engine)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        report = archive.read('report.html').decode('utf-8')
+    escaped = escape(RESTORE_TEST_REMINDER)
+    assert escaped != RESTORE_TEST_REMINDER  # the apostrophe in "PostgreSQL's" must be escaped
+    assert report.count(escaped) == 1
+    assert RESTORE_TEST_REMINDER not in report
+    assert report.count(f'<p class="notice">cis-pg17-v1.1.0:7.4: {escaped}</p>') == 1
+    # No other spec carries a notice paragraph.
+    assert report.count('<p class="notice">cis-') == 1
+    # It follows the findings table.
+    assert report.index('</table>') < report.index(escaped)
+    assert report.count('<tr><td>cis-') == 39  # all 39 specs
 
 
 @pytest.mark.parametrize('fault', ['failed','cleanup','rollback','hash','apply','evidence','assessment','not_applicable','provenance'])

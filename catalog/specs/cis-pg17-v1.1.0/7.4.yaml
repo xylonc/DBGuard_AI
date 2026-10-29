@@ -1,0 +1,26 @@
+spec_id: "cis-pg17-v1.1.0:7.4"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "7.4"
+  title: "Ensure WAL archiving is configured and functional"
+  source_sha256: "b6d1cca64a3a641cb5069814998c4bfb13a0a3d35396f6f5fe88747054ccbbd2"
+tier: automated
+reason: null
+check:
+  kind: catalog
+  evaluator: wal_archiving
+  pass_condition_quote: "If no rows are returned, as shown, this is a failure. If rows are returned, note that `archive_mode` must be 'on' and either `archive_command` or `archive_library` must be set for WAL archiving to be fully enabled."
+interpretation:
+  - "archive_mode `always` is accepted as enabled, alongside `on`. This is wider than CIS's literal 'on'. PostgreSQL treats `always` as enabled, and it also archives during recovery."
+  - "Having both archive_command and archive_library set is a FAIL, because PostgreSQL 16+ refuses to archive in that case (verified on 17.11: the archiver exits FATAL and failed_count stays 0, so only the configuration can show it). \"either ... or\" is read as exclusive. This is stricter than CIS's literal text."
+  - "CIS verifies function by watching that `archived_count`, `last_archived_wal`, and `last_archived_time` are changing while `failed_count`, `last_failed_wal`, and `last_failed_time` are not changing. One snapshot cannot watch, so DBGuard uses a proxy: the last success is within the maximum age of the collection time and no failure is later than it. Requiring this for PASS is stricter than CIS, which presents the check as optional ('one can')."
+  - "The age window is wider than live watching: a stalled archiver with no recorded failure passes until the window expires. PASS needs both the configuration and this proxy."
+  - "The maximum age is 24 hours, a default Melvin approved at Gate 1 (docs/gates/F6-gate1.md). A policy profile may change it only once that profile is approved. Until then the 24-hour default applies."
+  - "A last failure later than the last success is a FAIL: the latest copy failed. Recorded failures with no success ever archived are also a FAIL. This is stricter: CIS has no fail sentence for function."
+  - "Configuration FAILs apply first, on primaries and standbys alike. After that, the result is MANUAL, not PASS or FAIL, when the evidence is unclear: the server is a standby (in recovery), nothing has ever been archived and nothing has failed, the archiver statistics were reset within the maximum age and nothing has been archived since, the last success is older than the maximum age with no later failure, or a needed timestamp is missing or later than the collection time."
+  - "The collection time is the server's `now()` at the start of collection, so an archive during collection can give a cautious MANUAL. If the snapshot has no collection time, the result is GAPPED."
+  - "Success means the command or library reported success. DBGuard does not see the command text or the archive destination, so a command that copies nothing still PASSes, as it would under the CIS audit."

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 from datetime import datetime, timezone
-from .shared import ContractError, is_regression
+from .shared import ContractError, blocking_gaps, is_regression
 
 
 def _connect():
@@ -130,7 +130,7 @@ def compare(run_id, fresh, engine):
         for k, v in before["findings"].items()
         if is_regression(v["status"], after["findings"].get(k, {}).get("status"))
     ]
-    gaps = [k for k, v in after["findings"].items() if v["status"] == "GAPPED"]
+    gaps = engine.gapped_settings(after["findings"])
     verified = (
         bool(controls)
         and all(
@@ -138,7 +138,7 @@ def compare(run_id, fresh, engine):
         )
         and not regressions
         and not gaps
-        and not fresh["baseline"].get("gaps")
+        and not blocking_gaps(fresh)
     )
     verdict = {
         "status": (

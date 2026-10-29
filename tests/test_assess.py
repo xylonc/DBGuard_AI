@@ -46,6 +46,12 @@ specs_by_id = {s["spec_id"]: s for s in specs_list}
 # Automated specs (tier == "automated")
 automated_specs = [s for s in specs_list if s.get("tier") == "automated"]
 
+# Automated setting checks: the only specs with a proof (break/fix values) and a
+# manifest entry. Catalog checks (F6) read baseline sections and never have a proof;
+# they are covered by tests/test_catalog_checks.py.
+setting_specs = [s for s in automated_specs if s["check"]["kind"] == "setting"]
+catalog_specs = [s for s in specs_list if s.get("check", {}).get("kind") == "catalog"]
+
 # Non-automated specs (needs_capability, manual_checklist, parameterised)
 non_automated_specs = [s for s in specs_list if s.get("tier") != "automated"]
 
@@ -192,7 +198,7 @@ class TestAssessDecisionTable:
 class TestAssessRealSpecs:
     """Test (b): Real specs with proof.fix as result expect PASS."""
 
-    @pytest.mark.parametrize("spec", automated_specs, ids=lambda s: s["spec_id"])
+    @pytest.mark.parametrize("spec", setting_specs, ids=lambda s: s["spec_id"])
     def test_automated_spec_with_fix_value_passes(self, spec):
         """For each automated spec, use proof.fix.value as result and expect PASS."""
         check = spec.get("check", {})
@@ -219,7 +225,7 @@ class TestAssessRealSpecs:
             f"Expected PASS for {spec['spec_id']} with fix value {fix_value}, got {result_row['result']}"
         )
 
-    @pytest.mark.parametrize("spec", automated_specs, ids=lambda s: s["spec_id"])
+    @pytest.mark.parametrize("spec", setting_specs, ids=lambda s: s["spec_id"])
     def test_automated_spec_with_break_value_fails(self, spec):
         """For each automated spec, use proof.break.value as result and expect FAIL."""
         check = spec.get("check", {})
@@ -255,6 +261,23 @@ class TestAssessRealSpecs:
         """The syslog condition is on exactly 3.1.10, 3.1.11 and 3.1.13 (Gate 1 ruling A6)."""
         assert sorted(s["spec_id"] for s in specs_list if "applies_when" in s) == [
             "cis-pg17-v1.1.0:3.1.10", "cis-pg17-v1.1.0:3.1.11", "cis-pg17-v1.1.0:3.1.13"]
+    def test_setting_specs_cover_every_automated_spec_with_proof(self):
+        """The break/fix parametrisation only drops catalog specs, never a setting spec."""
+        assert len(setting_specs) == 17
+        assert {s["spec_id"] for s in automated_specs} - {s["spec_id"] for s in setting_specs} == {
+            "cis-pg17-v1.1.0:5.5", "cis-pg17-v1.1.0:7.4"}
+        assert all("proof" in s for s in setting_specs)
+
+    @pytest.mark.parametrize("spec", catalog_specs, ids=lambda s: s["spec_id"])
+    def test_catalog_spec_has_no_proof_and_rejects_one(self, spec):
+        """Catalog checks never get a fix, so a proof on one is a validation error."""
+        from app.services.spec_engine import validate_spec
+        assert "proof" not in spec
+        assert validate_spec(spec, records) == []
+        with_proof = copy.deepcopy(spec)
+        with_proof["proof"] = {"break": {"setting_name": "x", "value": "1"},
+                               "fix": {"setting_name": "x", "value": "2"}}
+        assert validate_spec(with_proof, records) == ["check.kind 'catalog' must not have proof present"]
 
     def test_non_automated_tier_results(self):
         """Non-automated specs get their tier's result, even with compliant-looking evidence.
@@ -268,7 +291,18 @@ class TestAssessRealSpecs:
             "manual_checklist": ("MANUAL", "tier_manual"),
         }
         seen_tiers = set()
+        # Catalog checks (F6) are decided by their evaluator, not the tier: they are
+        # covered in test_catalog_checks.py. Here they must still never PASS or read
+        # as a plain MANUAL on a snapshot without their catalog sections.
+        catalog_manual = [s for s in non_automated_specs if s["spec_id"] in {c["spec_id"] for c in catalog_specs}]
+        assert sorted(s["ref"]["recommendation"] for s in catalog_manual) == [
+            "4.10", "4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "7.1"]
+        for spec in catalog_manual:
+            row = assess([copy.deepcopy(spec)], make_snapshot_with_checks({}), records)["results"][0]
+            assert (row["result"], row["reason_code"]) == ("NOT_COLLECTED", "section_not_collected"), spec["spec_id"]
         for spec in non_automated_specs:
+            if spec in catalog_manual:
+                continue
             tier = spec.get("tier", "")
             seen_tiers.add(tier)
             spec_copy = copy.deepcopy(spec)
@@ -595,8 +629,8 @@ class TestAssessLiveSnapshot:
 
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
 
-        # Load spec files for the automated specs in the snapshot
-        automated_spec_ids = [s["spec_id"] for s in automated_specs]
+        # Load spec files for the automated setting specs in the snapshot
+        automated_spec_ids = [s["spec_id"] for s in setting_specs]
         loaded_specs = [specs_by_id[sid] for sid in automated_spec_ids if sid in specs_by_id]
 
         report = assess(loaded_specs, snapshot, records)
@@ -611,6 +645,96 @@ class TestAssessLiveSnapshot:
             assert row["result"] in ("PASS", "FAIL"), (
                 f"Unexpected result {row['result']} for automated spec {row['spec_id']}"
             )
+
+    def test_live_snapshot_catalog_outcomes(self):
+        """Catalog specs on the real collector fixture, checked against the fixture's data.
+
+        The fixture was re-recorded from a disposable PG17 with the applied collector,
+        so it has `functions` and `archiving`. Every catalog spec is now evaluated:
+        none is NOT_COLLECTED.
+        """
+        snapshot = json.loads((REPO_ROOT / "tests" / "fixtures" / "phase1" / "snapshot-pg17-live.json")
+                              .read_text(encoding="utf-8"))
+        baseline = snapshot["baseline"]
+        assert baseline["gaps"] == []
+        rows = {r["spec_id"].split(":")[1]: r for r in assess(catalog_specs, snapshot, records)["results"]}
+        assert set(rows) == {"4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4"}
+        assert not [rec for rec, r in rows.items() if r["result"] == "NOT_COLLECTED"]
+
+        # 4.5: a fresh cluster has no SECURITY DEFINER / SET-clause function, but the
+        # postgres database is connectable and not covered, so MANUAL (never PASS).
+        assert baseline["functions"] == []
+        assert [(d["datname"], d["datallowconn"], d["datistemplate"]) for d in baseline["databases"]] == [
+            ("dbguard_sandbox", True, False), ("postgres", True, False),
+            ("template0", False, True), ("template1", True, True)]
+        assert rows["4.5"]["result"] == "MANUAL"
+        assert rows["4.5"]["explanation"] == {"code": "databases_not_covered", "evidence_count": 0,
+                                              "databases": ["postgres"]}
+        assert rows["4.5"]["evidence"] == []
+
+        # 7.4: the collector reports archive_mode off with zero archiver counters.
+        assert baseline["archiving"]["archive_mode"] == "off"
+        assert baseline["archiving"]["archive_command_is_set"] is False
+        assert baseline["archiving"]["stat_archiver"]["archived_count"] == 0
+        assert baseline["archiving"]["stat_archiver"]["failed_count"] == 0
+        assert rows["7.4"]["result"] == "FAIL"
+        assert rows["7.4"]["reason_code"] == "archive_mode_off"
+        assert rows["7.4"]["explanation"] == {"code": "archive_mode_off", "archive_mode": "off"}
+        assert rows["7.4"]["evidence"] == [{"archive_mode": "off", "archive_library": "",
+                                            "archive_command_is_set": False}]
+
+        # The fixture's only non-predefined role is the bootstrap superuser (oid 10).
+        own = [r for r in baseline["roles"] if not r["rolname"].startswith("pg_")]
+        assert [(r["rolname"], r["oid"], r["rolcanlogin"], r["rolconnlimit"], r["rolsuper"]) for r in own] == [
+            ("dbguard_poc", "10", True, -1, True)]
+
+        # 5.5: dbguard_poc logs in with rolconnlimit -1 -> FAIL; pg_* roles are out of scope.
+        assert rows["5.5"]["result"] == "FAIL"
+        assert rows["5.5"]["reason_code"] == "unlimited_connections"
+        assert rows["5.5"]["explanation"] == {"code": "unlimited_connections", "role_count": 1}
+        assert rows["5.5"]["evidence"] == [{
+            "type": "in_scope", "rolname": "dbguard_poc", "rolconnlimit": -1, "rolsuper": True,
+            "unlimited": True, "superuser_limit_not_enforced": True, "limit_zero_blocks_login": False}]
+
+        # 4.10: password_types says dbguard_poc has scram-sha-256 -> nothing to review.
+        assert baseline["password_types"] == [
+            {"password_type": "scram-sha-256", "rolname": "dbguard_poc", "rolvaliduntil": None}]
+        assert rows["4.10"]["result"] == "PASS"
+        assert rows["4.10"]["explanation"] == {"code": "empty_review_set", "evidence_count": 0}
+
+        # 4.3 / 4.9: the one admin role, flagged as the bootstrap superuser.
+        assert rows["4.3"]["result"] == "MANUAL"
+        assert rows["4.3"]["evidence"] == [{
+            "rolname": "dbguard_poc", "rolsuper": True, "rolcreaterole": True, "rolcreatedb": True,
+            "rolreplication": True, "rolbypassrls": True, "rolcanlogin": True, "bootstrap_superuser": True}]
+        assert rows["4.9"]["evidence"] == [
+            {"rolname": "dbguard_poc", "rolcanlogin": True, "bootstrap_superuser": True}]
+        assert rows["4.4"]["evidence"] == [{"rolname": "dbguard_poc", "rolsuper": True,
+                                            "rolvaliduntil": None, "password_type": "scram-sha-256"}]
+
+        # 4.6 / 4.7: connected to dbguard_sandbox; postgres also accepts connections
+        # (template0/template1 are templates and are not listed).
+        assert snapshot["envelope"]["database"] == "dbguard_sandbox"
+        for rec in ("4.6", "4.7"):
+            assert rows[rec]["result"] == "MANUAL"
+            assert rows[rec]["explanation"]["code"] == "databases_not_covered"
+            assert rows[rec]["explanation"]["databases"] == ["postgres"]
+        assert baseline["object_acls"] == [] and baseline["rls_policies"] == []
+        assert rows["4.6"]["evidence"] == [{"type": "superuser", "rolname": "dbguard_poc", "rolcanlogin": True}]
+        assert rows["4.7"]["evidence"] == [{"type": "bypass_role", "rolname": "dbguard_poc",
+                                            "reasons": ["bypassrls", "superuser"], "rolsuper": True,
+                                            "owned_non_forced_tables": []}]
+
+        # 7.1: the replication superuser, the three hba lines for database "replication"
+        # (124, 125, 126, all trust) and the recovery state. No primary_conninfo.
+        assert rows["7.1"]["result"] == "MANUAL"
+        hba_lines = [r["line_number"] for r in baseline["hba_rules"] if r["database"] == ["replication"]]
+        assert hba_lines == [124, 125, 126]
+        ev = rows["7.1"]["evidence"]
+        assert [e["type"] for e in ev] == ["replication_role"] + ["replication_hba_rule"] * 3 + ["recovery_state"]
+        assert [e["line_number"] for e in ev if e["type"] == "replication_hba_rule"] == hba_lines
+        assert all(e["auth_method"] == "trust" for e in ev if e["type"] == "replication_hba_rule")
+        assert ev[-1] == {"type": "recovery_state", "in_recovery": False}
 
 
 class TestAssessCLI:

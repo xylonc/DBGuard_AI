@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:4.5"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.5"
+  title: "Ensure excessive function privileges are revoked"
+  source_sha256: "8c5d4e7ca285472e19eeaea41e29009801e291ee380a8436b45e980eef285e7e"
+tier: manual_checklist
+reason: "Although CIS marks this Automated, the fail sentence depends on whether elevation is 'not required or ... expressly forbidden by organizational guidance', which no catalog snapshot can decide"
+check:
+  kind: catalog
+  evaluator: elevated_functions
+  pass_condition_quote: "In the query results, a `prosecdef` value of '`t`' on a row indicates that that function uses privilege elevation. If elevation privileges are utilized which are not required or are expressly forbidden by organizational guidance, this is a fail."
+interpretation:
+  - "Only functions that are both named `pgaudit%` and owned by the pgaudit extension are excluded. This is stricter than CIS's name-only exclusion."
+  - "PASS is reported only when no function matches and no other connectable, non-template database exists. Otherwise the uncovered databases are listed and the result is MANUAL. This is stricter than CIS, whose query covers only the database psql connects to."

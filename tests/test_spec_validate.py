@@ -417,9 +417,10 @@ class TestValidateSpecsScript:
     def test_cli_reports_ok_for_every_committed_spec(self):
         result = self.run_cli(SPEC_DIR)
         spec_files = sorted(SPEC_DIR.glob("*.yaml"))
-        assert len(spec_files) == 29, [p.name for p in spec_files]
+        # 29 setting/policy/manual specs + 10 F6 catalog specs (4.3-4.10, 5.5, 7.1, 7.4).
+        assert len(spec_files) == 39, [p.name for p in spec_files]
         ok_lines = [line for line in result.stdout.splitlines() if line.startswith("OK ")]
-        assert len(ok_lines) == 29, result.stdout
+        assert len(ok_lines) == 39, result.stdout
         # one OK line per committed spec file, none missing or duplicated
         assert sorted(ok_lines) == sorted(set(ok_lines)), result.stdout
         assert result.returncode == 0, result.stdout

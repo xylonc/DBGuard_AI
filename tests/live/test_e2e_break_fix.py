@@ -143,7 +143,8 @@ def get_automated_specs(spec_dir: Path) -> list[str]:
     for yaml_path in sorted(spec_dir.glob("*.yaml")):
         with open(yaml_path) as f:
             spec = yaml.safe_load(f)
-        if spec.get("tier") == "automated":
+        # Setting checks only: catalog checks (F6) have no setting_name or proof.
+        if spec.get("tier") == "automated" and spec["check"].get("kind") == "setting":
             spec_ids.append(spec["spec_id"])
     return spec_ids
 

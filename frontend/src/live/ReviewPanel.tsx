@@ -313,6 +313,9 @@ const SITE_FIX_MISSING = "site-specific fix value not supplied"
 // Plain-language reason a non-passing control gets no automatic fix. `row` is the
 // matching assessment row; its structured explanation is preferred when present.
 export function manualReason(f: any, row?: any) {
+  // Catalog checks (F6) are assessment-only.
+  if (f.kind === "catalog" || Array.isArray(f.evidence))
+    return "DBGuard only reports this from catalog evidence and never changes roles, privileges or archiving; a person must act on it."
   if (row && isPolicyMissing(row))
     return `${POLICY_MISSING_LABEL}. ${explanationSentence(row.explanation)}`
   if (statusKind(f.status) === "unknown")

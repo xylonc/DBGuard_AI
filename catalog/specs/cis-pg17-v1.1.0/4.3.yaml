@@ -1,0 +1,16 @@
+spec_id: "cis-pg17-v1.1.0:4.3"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.3"
+  title: "Ensure excessive administrative privileges are revoked"
+  source_sha256: "c135d810ca5f6b8dd44c1f336b3c0974ec6e2a8425a00b2f9626225e258aca04"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and 'excessive' administrative privileges is a per-role judgement; the audit gives only an example fail, not a mechanical rule"
+check:
+  kind: catalog
+  evaluator: roles_with_admin_attributes
+  pass_condition_quote: "While this example demonstrated excessive administrative privileges granted to a single user, a comprehensive audit should be conducted to inspect all database users for excessive administrative privileges."

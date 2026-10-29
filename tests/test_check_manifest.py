@@ -56,18 +56,21 @@ class TestCheckManifest:
     """Test rules for the check manifest contract."""
 
     def test_committed_specs_give_exactly_the_collected_checks_and_non_collected_are_absent(self):
-        """29 specs give 26 spec checks + 3 condition entries; 6.10, 3.1.12 and 7.2 are absent."""
+        """39 specs give 26 spec checks + 3 condition entries; 6.10, 3.1.12, 7.2 and the 10
+        F6 catalog specs (which read baseline sections, not a manifest query) are absent."""
         records = RecordsIndex.load(RECORDS_PATH)
         manifest = build_manifest(SPEC_DIR, records)
 
         assert manifest["manifest_version"] == 1
         assert manifest["benchmark_id"] == "cis-pg17-v1.1.0"
-        assert len(list(SPEC_DIR.glob("*.yaml"))) == 29
+        assert len(list(SPEC_DIR.glob("*.yaml"))) == 39
         assert len(manifest["checks"]) == 29
 
         spec_ids = [c["spec_id"] for c in manifest["checks"]]
         # 6.10 is needs_capability; 3.1.12 and 7.2 are manual_checklist: never collected
-        for absent in ("cis-pg17-v1.1.0:6.10", "cis-pg17-v1.1.0:3.1.12", "cis-pg17-v1.1.0:7.2"):
+        catalog = [f"cis-pg17-v1.1.0:{n}" for n in ("4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10",
+                                                    "5.5", "7.1", "7.4")]
+        for absent in ("cis-pg17-v1.1.0:6.10", "cis-pg17-v1.1.0:3.1.12", "cis-pg17-v1.1.0:7.2", *catalog):
             assert absent not in spec_ids
             assert absent + "#applies_when" not in spec_ids
         # 3.1.14 is automated now (severity operator), so it is collected

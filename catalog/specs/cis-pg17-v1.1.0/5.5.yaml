@@ -1,0 +1,20 @@
+spec_id: "cis-pg17-v1.1.0:5.5"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "5.5"
+  title: "Ensure per-account connection limits are used"
+  source_sha256: "03413e729adb366342e8966bb05672238f987983c9e46c12acbabb2ef6dbb919"
+tier: automated
+reason: null
+check:
+  kind: catalog
+  evaluator: role_connection_limits
+  pass_condition_quote: "Any user with a connection limit of `-1` should be considered a failure."
+interpretation:
+  - "Roles in scope are login roles whose names do not start with the literal prefix `pg_` (the predefined roles). CIS's pattern treats `_` as a wildcard and would also skip roles such as `pgbouncer` and `pgadmin`. This is stricter than the literal query."
+  - "Roles that cannot log in are excluded, because \"Any user\" and the CIS remediation, which sets a limit on each user account, refer to accounts that can connect. They are listed for information only. This is narrower than the literal CIS audit, which has no login filter."
+  - "Superusers stay in scope even though PostgreSQL does not enforce rolconnlimit for them. The evidence says so. This matches the literal CIS rule."

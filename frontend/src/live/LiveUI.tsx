@@ -19,6 +19,7 @@ import {
   statusKind,
   statusLabel,
 } from "./explanations"
+import { CatalogEvidence } from "./Evidence"
 import { useEffect, useState, type ReactNode } from "react"
 import { assessmentPath, useLive } from "@/store/liveStore"
 import { useWorkflow } from "@/store/workflowStore"
@@ -179,6 +180,7 @@ export function Results({
                       )}
                     </div>
                   )}
+                  <CatalogEvidence row={r} />
                 </td>
                 <td className="p-2">
                   <FindingBadge value={r.status} />

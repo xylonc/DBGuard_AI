@@ -113,7 +113,7 @@ class DemoResources:
 
     def source_evidence(self):
         snapshot = self.engine.collect(self.target)
-        names = [s["check"]["setting_name"] for s in self.engine.specs if "check" in s]
+        names = [s["check"]["setting_name"] for s in self.engine.specs if "check" in s and s["check"].get("kind") != "catalog"]
         return dict(assessment=self.engine.assess(snapshot),
                     source_unchanged=signature(snapshot, names) == signature(self.snapshot, names),
                     registry_unchanged=self.registry_signature() == self.registry_before,

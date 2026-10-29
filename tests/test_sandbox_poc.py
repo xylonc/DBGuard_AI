@@ -10,6 +10,7 @@ from services.sandbox_poc.provenance import FILES, reconstruction_plan
 from services.sandbox_poc.shared import ContractError, ROOT, SpecEngine
 from services.sandbox_poc.templates import ApprovedTemplate
 from services.sandbox_poc.workflow import CONTROL, RemediationLoop
+from tests.catalog_fixtures import catalog_sections
 
 
 @pytest.fixture
@@ -42,7 +43,10 @@ def snapshot(engine):
     for spec in engine.specs:
         sid = spec["spec_id"]
         entry = {"spec_hash": engine.hashes[sid], "query": "not applicable", "status": "not_collected"}
-        if "check" in spec:
+        # Only setting checks are collected through the manifest; catalog checks
+        # (F6) read baseline sections and have no setting_name or query.
+        is_setting = spec.get("check", {}).get("kind") == "setting"
+        if is_setting:
             name = spec["check"]["setting_name"]
             value = values[name]
             entry.update(query=spec["check"]["query"], status="ok", result=value)
@@ -53,7 +57,7 @@ def snapshot(engine):
                                  "pending_restart": False})
                 files.append({"name": name, "setting": value, "sourcefile": FILES[0],
                               "applied": True, "error": None})
-        if "check" in spec:
+        if is_setting:
             checks[sid] = entry
         condition = spec.get("applies_when")
         if condition is not None:
@@ -66,7 +70,11 @@ def snapshot(engine):
                          "collector_sha256": engine.collector_hash,
                          "manifest": {"sha256": engine.manifest_hash, "manifest_version": 1,
                                       "benchmark_id": engine.records.benchmark_id, "check_count": len(checks)}},
-            "baseline": {"identity": {"server_version_num": 170000}, "settings": settings,
+            # Catalog (F6) checks read these sections; without them every catalog
+            # finding is GAPPED and the loop refuses to run (gapped controls). As in
+            # real collector output, the connected database ("test") is listed.
+            "baseline": {**catalog_sections(connected="test"),
+                         "identity": {"server_version_num": 170000}, "settings": settings,
                          "file_settings": files, "gaps": []}, "checks": checks}
 
 

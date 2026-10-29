@@ -130,7 +130,7 @@ def test_api_uses_real_registry_and_restores_exact_source(registry, live_client,
         assert result["template"]["approved_by"] == "INTEGRATION_TEST_ONLY"
         assert all(a["rollback_verified"] and a["cleanup"]["verified"] for a in result["attempts"])
         assert target.sql("SHOW log_connections;") == "off"
-        names = [s["check"]["setting_name"] for s in spec_engine.specs if "check" in s]
+        names = [s["check"]["setting_name"] for s in spec_engine.specs if s.get("check", {}).get("kind") == "setting"]
         assert signature(spec_engine.collect(target), names) == signature(snapshot, names)
         assert registry_state(registry) == before_registry
         with closing(psycopg2.connect(registry["url"])) as conn:

@@ -1,0 +1,16 @@
+spec_id: "cis-pg17-v1.1.0:4.10"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.10"
+  title: "Ensure all accounts that can log in have passwords"
+  source_sha256: "0ccd913ae68b1d3fa0a0bc5758ee331aebd1792e1f6bf2e9fb5a50510576304e"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and each listed role must be verified to authenticate only via a non-password pg_hba.conf method, which the catalog alone cannot show"
+check:
+  kind: catalog
+  evaluator: login_roles_without_password
+  pass_condition_quote: "For each role returned, verify that it authenticates exclusively through a non-password method configured in `pg_hba.conf` (such as certificate, GSSAPI, or LDAP authentication). Any returned role that is not verified to use such a method is a fail."

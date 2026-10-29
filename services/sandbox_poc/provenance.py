@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .runtime import DATA, RESTART_SETTINGS
-from .shared import ContractError
+from .shared import ContractError, blocking_gaps
 
 FILES = (f"{DATA}/postgresql.conf", f"{DATA}/postgresql.auto.conf")
 FIELDS = ("setting", "source", "sourcefile", "context", "pending_restart")
@@ -77,7 +77,7 @@ def _shadowed_duplicate(row: dict, files: list[dict]) -> bool:
 
 
 def reconstruction_plan(snapshot: dict, specs: list[dict]) -> dict:
-    names = [s["check"]["setting_name"] for s in specs if "check" in s]
+    names = [s["check"]["setting_name"] for s in specs if "check" in s and s["check"].get("kind") != "catalog"]
     rows = setting_rows(snapshot)
     if len(rows) != len(snapshot["baseline"].get("settings") or []):
         raise ContractError("Duplicate setting provenance")
@@ -86,7 +86,7 @@ def reconstruction_plan(snapshot: dict, specs: list[dict]) -> dict:
     files = snapshot["baseline"].get("file_settings")
     if files is None:
         raise ContractError("File-setting evidence is required")
-    if snapshot["baseline"].get("gaps"):
+    if blocking_gaps(snapshot):
         raise ContractError("The first milestone requires an ungapped source snapshot")
     selected = [r for r in files if r.get("name") in names]
     seen = set()

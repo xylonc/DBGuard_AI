@@ -32,6 +32,7 @@ The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.jso
 
 2. **Secret redaction**: The `pg_temp.sanitise_setting()` function never returns the text of a setting that can carry a secret. `pg_temp.is_secret_setting()` marks as secret: the seven built-in settings (`archive_command`, `restore_command`, `archive_cleanup_command`, `recovery_end_command`, `primary_conninfo`, `ssl_passphrase_command`, `krb_server_keyfile`); every dotted custom or extension setting except an exact list of 28 reviewed pgaudit, set_user, pg_stat_statements and plpgsql names; and any plain name the server does not recognise (e.g. a config-file typo). Names compare lower-cased under the C collation, and a missing name fails closed. For those settings `setting`, `reset_val`, `boot_val`, `file_settings`, `role_settings` entries and manifest check results read `***REDACTED*** (set, N characters)`; NULL, '' and `(disabled)` pass through. Connection strings are additionally parsed to an allowlist of safe keys (`*_conninfo_parsed`), and `rls_policies` expressions are redacted the same way.
 
+3. **Catalog sections for F6 and 7.4**: `functions` lists functions with SECURITY DEFINER or a SET clause (schema, name, identity arguments, kind, language, `prosecdef`, owner, ACL with the default expanded, extension, the setting NAMES from `proconfig` and the `search_path` value only). `prosrc` is never selected. `archiving` holds `archive_mode`, `archive_library`, `archive_command_is_set` (a boolean: the command text is never shipped) and the `pg_stat_archiver` counters and times. Either section is `null` with a `gaps` entry when it could not be read; `[]` means collected and empty.
 #
 ## check manifest v1
 
@@ -109,11 +110,13 @@ The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.jso
 7. **Reason and tier-dependent keys**:
    - `tier == "automated"`: `reason` must be `null`, `check` (with a literal `expected`) and `proof` are required
    - `tier == "parameterised"`: `reason` must be a non-empty string; `check` is optional and, if present, uses `expected_from: policy` (no `expected`); `proof` is forbidden (break/fix come from the policy profile)
-   - `manual_checklist`, `needs_capability`: `reason` must be a non-empty string; `check`, `proof` and `applies_when` are forbidden
+   - `manual_checklist`, `needs_capability`: `reason` must be a non-empty string; `check`, `proof` and `applies_when` are forbidden, except that `manual_checklist` may carry a catalog check (7a)
+
+7a. **Catalog check** (`check.kind: catalog`, F6 and 7.4): exactly `{kind, evaluator, pass_condition_quote}`. `evaluator` names a fixed entry in `backend/app/services/spec_engine/catalog_checks.py` `REGISTRY`, bound to one recommendation and the tiers it allows (`automated` or `manual_checklist`); `pass_condition_quote` is verbatim audit text and the evaluator's `quote_tokens` must be whole tokens in it. A catalog spec never has `proof`, `applies_when`, `setting_name`, `query` or `expected_from`, is never in the check manifest, and is never fixed.
 
 8. **Check object** (automated tier, or parameterised with a policy value):
    - Required keys: `kind`, `setting_name`, `query`, `operator`, `pass_condition_quote`, and exactly one of `expected` (automated) or `expected_from: policy` (parameterised)
-   - `kind` must be `"setting"` (current only)
+   - `kind` must be `"setting"` (or `"catalog"`, rule 7a)
    - `setting_name` must match pattern `^[a-z_][a-z0-9_.]*$`
    - `query` must be `"SHOW " + setting_name`
    - `operator` must be a key of `OPERATORS` in `backend/app/services/spec_engine/operators.py` (table below); `direction` is required with `severity` and forbidden otherwise
@@ -344,7 +347,9 @@ The assessment report is the output of the `assess()` function. It contains:
 
 ### Decision order:
 
-The result for each spec is determined in this order (returns at first match; `assess._decide`):
+A catalog check (`check.kind: catalog`) is decided by its evaluator (`catalog_checks.evaluate`) instead of the order below: PASS, FAIL or MANUAL on complete evidence, otherwise NOT_COLLECTED. A `null` section, a matching `gaps` entry, a roles list without the bootstrap superuser or a databases list without the connected database is never PASS. `reason_code` is the explanation code (table below).
+
+For every other spec, the result is determined in this order (returns at first match; `assess._decide`):
 
 1. **MANUAL** `tier_manual`: tier `manual_checklist`, or `parameterised` without a policy check
 2. **NEEDS_CAPABILITY** `tier_needs_capability`: tier `needs_capability`
@@ -376,6 +381,7 @@ All evidence problems are decided before the condition, so NOT_APPLICABLE is onl
 | ERROR | `status_error` / `condition_status_error` | Entry status is `error` |
 | ERROR | `non_string_result` / `condition_non_string_result` | Entry status is `ok` but result is not a string |
 | ERROR | `operator_error` / `condition_operator_error` | The operator cannot interpret the value |
+| PASS / FAIL / MANUAL / NOT_COLLECTED | catalog codes (`empty_review_set`, `connection_limits_set`, `unlimited_connections`, `manual_review`, `databases_not_covered`, `archive_*`, `section_not_collected`, `field_missing`, `wrong_pg_major`) | Catalog checks: the evaluator's explanation code |
 
 ### Output shape:
 
@@ -398,7 +404,10 @@ Each result row contains:
 | observed | string | Observed result when status is ok |
 | condition | object | `applies_when` specs: `{setting_name, operator, expected, direction?, observed?}` |
 | cis | object | With `explanation`: `{recommendation, title}` from the spec ref |
-| explanation | object | NOT_APPLICABLE, NOT_COLLECTED, STALE, ERROR and MANUAL `policy_missing` rows only: structured facts, never prose |
+| explanation | object | NOT_APPLICABLE, NOT_COLLECTED, STALE, ERROR and MANUAL `policy_missing` rows, and every catalog row: structured facts, never prose |
+| evidence | array | Catalog rows: the rows the evaluator read, as names and attributes (never hashes, function bodies, policy expressions or archive_command text) |
+| evidence_paths | array | Catalog rows: baseline paths the evaluator read |
+| notices | array | Catalog rows: fixed, reviewed notices shown whatever the result; 7.4 always carries `restore_test_reminder` |
 
 ### Explanations (`explanation`)
 
@@ -416,8 +425,9 @@ Facts only, from the spec, the policy profile and the collected evidence; the UI
 | `session_override` | value set per role, database or session | `evidence, setting_name, source` (`pg_settings.source`) |
 | `redacted_secret_setting` | the collector redacted the value (it can carry a secret) | `evidence, setting_name` |
 | `policy_missing` | MANUAL `policy_missing` | `case: no_profile \| profile_unapproved \| no_value_for_spec`, `profile_id` when a profile exists |
+| catalog codes | every catalog row | the code plus facts such as `section`, `gap_reason`, `field`, `evidence_count`, `databases`, `role_count`, `archive_mode`, archiver counters and times, `collected_at`, `max_age_hours` (`assessment-report-v1.json` lists them all) |
 
-The sandbox projection copies `cis` and `explanation` unchanged into `findings[spec_id]`. The offline ASSESS controls (`catalog/controls/assess/spec_controls.py`) put the same shapes on `Finding.cis` / `Finding.explanation` and add three codes that only arise from `pg_settings` rows: `sanitised` (`setting_name`), `wrong_pg_major` (`spec_pg_major, snapshot_pg_major`), and `unit_or_non_text_value` with `unit, vartype`; a missing settings section is `not_collected` with `entry_status: section_unavailable` and the collector `gap_reason`. Both read `session_override` from the same rule (`spec_engine/sources.py`) and give GAPPED, never PASS or FAIL. No spec may check, or use as `applies_when`, a setting the collector sets in its own session (`search_path`, `standard_conforming_strings`; `validate_spec`), or a setting the collector redacts: the seven secret-bearing built-ins and every dotted name not on the reviewed list (`spec_engine/redaction.py`, pinned to `pg_temp.is_secret_setting` by a test). A redacted value that still reaches either path is `redacted_secret_setting`, GAPPED.
+The sandbox projection copies `cis` and `explanation` unchanged into `findings[spec_id]`, except for catalog rows: while `SANDBOX_COMPARES_CATALOG` is `False` (`services/sandbox_poc/shared.py`, Melvin's Gate 2 ruling) catalog specs are left out of `findings` entirely, and gap records for the `functions` and `archiving` sections do not block a sandbox run. Their facts never enter `findings`, because role counts and archiver times differ between source and sandbox. The offline ASSESS controls (`catalog/controls/assess/spec_controls.py`) put the same shapes on `Finding.cis` / `Finding.explanation` and add three codes that only arise from `pg_settings` rows: `sanitised` (`setting_name`), `wrong_pg_major` (`spec_pg_major, snapshot_pg_major`), and `unit_or_non_text_value` with `unit, vartype`; a missing settings section is `not_collected` with `entry_status: section_unavailable` and the collector `gap_reason`. Both read `session_override` from the same rule (`spec_engine/sources.py`) and give GAPPED, never PASS or FAIL. No spec may check, or use as `applies_when`, a setting the collector sets in its own session (`search_path`, `standard_conforming_strings`; `validate_spec`), or a setting the collector redacts: the seven secret-bearing built-ins and every dotted name not on the reviewed list (`spec_engine/redaction.py`, pinned to `pg_temp.is_secret_setting` by a test). A redacted value that still reaches either path is `redacted_secret_setting`, GAPPED.
 
 ### Determinism:
 

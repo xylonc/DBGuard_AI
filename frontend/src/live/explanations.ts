@@ -5,9 +5,10 @@
 // explanation falls back to a safe generic "Unknown: needs human review" sentence and
 // is never presented as passing.
 //
-// Adding a code (the F6 branch will add section_not_collected, field_missing,
-// manual_review, databases_not_covered, empty_review_set, restore_test_reminder):
-// add one entry to TEMPLATES below and one case to tests/explanations.test.mjs.
+// Adding a code: add one entry to TEMPLATES below and one case to
+// tests/explanations.test.mjs. Catalog checks (F6, 7.4) explain every result,
+// PASS and FAIL included; their fixed notices (7.4's restore-test reminder) are
+// rendered by Evidence.tsx, not here.
 // This file must stay free of React and "@/" imports so node --test can load it.
 
 export const UNKNOWN_LABEL = "Unknown: needs human review"
@@ -82,6 +83,21 @@ function version(value: unknown): string {
 function joinAnd(items: string[]): string {
   if (items.length <= 1) return items.join("")
   return items.slice(0, -1).join(", ") + " and " + items[items.length - 1]
+}
+
+function count(value: unknown, one: string, many: string): string {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : 0
+  return n === 1 ? `1 ${one}` : `${n} ${many}`
+}
+
+function hours(value: unknown): string {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? String(value)
+    : "the configured number of"
+}
+
+function time(value: unknown): string {
+  return typeof value === "string" && value ? clip(value) : "an unknown time"
 }
 
 function list(value: unknown): string[] {
@@ -219,8 +235,64 @@ const TEMPLATES: Record<string, Template> = {
       return `The selected policy profile ${profile} has no value for this control, so DBGuard can't check it. Add a value in a new profile version and approve it.`
     return null
   },
-  // F6 codes go here: section_not_collected, field_missing, manual_review,
-  // databases_not_covered, empty_review_set, restore_test_reminder.
+  // ---- catalog checks (F6 roles and privileges, 7.4 WAL archiving) ----
+  section_not_collected: (f) => {
+    if (typeof f?.section !== "string" || !f.section) return null
+    const why =
+      typeof f?.gap_reason === "string" && f.gap_reason
+        ? ` (collector said: ${quoteValue(f.gap_reason)})`
+        : ""
+    return `The collector could not read ${quoteValue(f?.section)} from this database${why}, so DBGuard cannot judge this control and can't say PASS.`
+  },
+  field_missing: (f) =>
+    typeof f?.section !== "string" ||
+    !f.section ||
+    typeof f?.field !== "string" ||
+    !f.field
+      ? null
+      : `The snapshot has no ${quoteValue(f?.field)} in ${quoteValue(f?.section)}, so DBGuard cannot judge this control and can't say PASS.`,
+  manual_review: (f) =>
+    typeof f?.evidence_count === "number" && f.evidence_count > 0
+      ? `CIS leaves this decision to a person. Review the ${count(f.evidence_count, "item", "items")} listed below.`
+      : "CIS leaves this decision to a person. Nothing matched, but CIS still asks someone to confirm.",
+  databases_not_covered: (f) =>
+    `The snapshot only covers the database DBGuard connected to. Check these databases too: ${
+      joinAnd(list(f?.databases).map((d) => clip(d))) || "none listed"
+    }. ${count(f?.evidence_count, "item", "items")} from the connected database ${
+      f?.evidence_count === 1 ? "is" : "are"
+    } listed below.`,
+  empty_review_set: () =>
+    "CIS asks a person to review each matching item, and nothing matched, so there is nothing to review.",
+  unlimited_connections: (f) =>
+    `${count(f?.role_count, "login role has", "login roles have")} no connection limit (-1). CIS counts any such account as a failure.`,
+  connection_limits_set: () =>
+    "Every login role in scope has a connection limit.",
+  archive_mode_off: (f) =>
+    `WAL archiving is off (archive_mode is ${quoteValue(f?.archive_mode)}). CIS requires it to be on.`,
+  archive_destination_missing: () =>
+    "archive_mode is on, but neither archive_command nor archive_library is set, so nothing is archived.",
+  archive_destination_conflict: () =>
+    "Both archive_command and archive_library are set. PostgreSQL refuses to archive in that case.",
+  archive_latest_failed: (f) =>
+    `The most recent archive attempt failed (last failure ${time(f?.last_failed_time)}, last success ${
+      typeof f?.last_archived_time === "string" && f.last_archived_time
+        ? clip(f.last_archived_time)
+        : "never"
+    }).`,
+  archive_standby: () =>
+    "This server is a standby. Check archiving on the primary, or confirm how this standby is meant to archive.",
+  archive_never_run: () =>
+    "Archiving is configured, but no WAL file has been archived yet and none has failed. Check again once the server has written some WAL.",
+  archive_stats_reset_recent: (f) =>
+    `The archiver statistics were reset at ${time(f?.stats_reset)}, within the last ${hours(f?.max_age_hours)} hours, and nothing has been archived since, so DBGuard cannot tell whether archiving works.`,
+  archive_timestamp_missing: (f) =>
+    `The archiver reports archived files but no time for the last one (${quoteValue(f?.field)}).`,
+  archive_timestamp_after_collection: (f) =>
+    `The last archive time is later than the snapshot time (${time(f?.collected_at)}). Check the server clock and collect again.`,
+  archive_older_than_max_age: (f) =>
+    `The last successful archive was at ${time(f?.last_archived_time)}, more than ${hours(f?.max_age_hours)} hours before this snapshot (${time(f?.collected_at)}). On a quiet database this can be normal; otherwise check the archiver.`,
+  archive_recent: (f) =>
+    `The last successful archive was at ${time(f?.last_archived_time)}, within ${hours(f?.max_age_hours)} hours of the snapshot, with no later failure.`,
 }
 
 export const KNOWN_CODES = Object.keys(TEMPLATES)
@@ -273,10 +345,21 @@ export function isPolicyMissing(row: any): boolean {
   )
 }
 
-// NOT_APPLICABLE, every unknown row, and every policy_missing row get a reason.
+// Catalog rows carry an explanation on every result (PASS and FAIL included).
+export function isCatalogRow(row: any): boolean {
+  return Array.isArray(row?.evidence_paths) || row?.kind === "catalog"
+}
+
+// NOT_APPLICABLE, every unknown row, every policy_missing row and every catalog
+// row get a reason.
 export function needsExplanation(row: any): boolean {
   const kind = statusKind(row?.status)
-  return kind === "not_applicable" || kind === "unknown" || isPolicyMissing(row)
+  return (
+    kind === "not_applicable" ||
+    kind === "unknown" ||
+    isPolicyMissing(row) ||
+    isCatalogRow(row)
+  )
 }
 
 export type RowExplanation = {

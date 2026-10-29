@@ -225,7 +225,8 @@ def load_spec_controls(definition_cls, benchmark_id: str = DEFAULT_BENCHMARK) ->
             cis_title=f"{ref['recommendation']} {ref['title']}",
             description=f"{ref['benchmark']} v{ref['benchmark_version']} recommendation {ref['recommendation']}",
             severity=None,
-            rule_func=_setting_rule(spec, policy) if automated else _manual_rule(spec),
+            rule_func=(_catalog_rule(spec) if _is_catalog(spec)  # F6 block below
+                       else _setting_rule(spec, policy) if automated else _manual_rule(spec)),
             template_id="SET_CONFIG_PARAMETER" if automated else "MANUAL_PROCEDURE",
             template_version=1,
             is_automatable=automated,
@@ -235,3 +236,50 @@ def load_spec_controls(definition_cls, benchmark_id: str = DEFAULT_BENCHMARK) ->
     if not controls:
         raise ValueError(f"No specs installed for {benchmark_id}")
     return controls
+
+
+# ---- F6: catalog check kind -------------------------------------------------
+# Kept in one block so it rebases cleanly. A catalog finding never maps to a fix
+# template: control_metadata is always MANUAL_PROCEDURE, is_automatable False,
+# for every status including FAIL.
+
+_CATALOG_STATUS = {"PASS": FindingStatus.PASS, "FAIL": FindingStatus.FAIL,
+                   "GAPPED": FindingStatus.GAPPED, "MANUAL": FindingStatus.MANUAL_REVIEW}
+_CATALOG_RATIONALE = {
+    "PASS": "The catalog check passed on the collected evidence.",
+    "FAIL": "The catalog check failed on the collected evidence.",
+    "GAPPED": "The evidence this check needs was not collected.",
+    "MANUAL": "A person must review the listed evidence.",
+}
+
+
+def _is_catalog(spec: dict) -> bool:
+    check = spec.get("check")
+    return isinstance(check, dict) and check.get("kind") == "catalog"
+
+
+def _catalog_rule(spec: dict):
+    from app.services.spec_engine import catalog_checks
+
+    spec_id, ref = spec["spec_id"], spec["ref"]
+
+    def rule(snapshot: dict[str, Any]) -> Finding:
+        # The offline ASSESS path passes a flat collector bundle (sections at the
+        # top level, plus "envelope"); the evaluator expects v0.3.0's baseline.
+        if isinstance(snapshot.get("baseline"), dict):
+            native = snapshot
+        else:
+            native = {"envelope": snapshot.get("envelope") or {}, "baseline": snapshot}
+        outcome = catalog_checks.evaluate(spec, native)
+        result = outcome["result"]
+        return Finding(
+            control_id=spec_id, status=_CATALOG_STATUS[result], title=ref["title"],
+            rationale=" ".join([_CATALOG_RATIONALE[result], *(n["text"] for n in outcome["notices"])]),
+            evidence_found=outcome["evidence"],
+            control_metadata=ControlMetadata(template_id="MANUAL_PROCEDURE", template_version=1,
+                                             is_automatable=False, risk_level="medium",
+                                             requires_dba_review=True),
+            is_gapped=result == "GAPPED", evidence_paths=outcome["evidence_paths"],
+            cis={"recommendation": ref["recommendation"], "title": ref["title"]},
+            explanation=outcome["explanation"])
+    return rule

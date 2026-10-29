@@ -23,12 +23,13 @@ from .operators import (
     SEVERITY_SCALES,
     evaluate,
 )
+from .catalog_checks import REGISTRY as CATALOG_REGISTRY
 from .records import RecordsIndex
 from .redaction import COLLECTOR_SECRET_SETTINGS, collector_redacts
 from .sources import COLLECTOR_PINNED_SETTINGS
 
 TIERS = ("automated", "parameterised", "manual_checklist", "needs_capability")
-CHECK_KINDS = ("setting",)
+CHECK_KINDS = ("setting", "catalog")
 SCHEMA_VERSIONS = (1, 2)
 
 TOP_REQUIRED = ("spec_id", "schema_version", "authored_by", "ref", "tier", "reason")
@@ -277,6 +278,11 @@ def validate_spec(spec: Any, records: RecordsIndex) -> list[str]:
         elif not (_is_str(spec["reason"]) and spec["reason"].strip()):
             errors.append(f"tier {tier!r} requires reason to be a non-empty string")
 
+    # F6: a catalog check has its own rules (block below), then stops here.
+    if _is_catalog_check(spec):
+        _validate_catalog_spec(spec, record, tier, tier_valid, errors)
+        return errors
+
     # Which tiers may carry a check: automated (literal expected + proof) and
     # parameterised (expected_from: policy, no proof). Everything else has none.
     policy_check = tier == "parameterised" and "check" in spec
@@ -447,3 +453,61 @@ def _applies_when_errors(cond: Any, check: Any, record: dict | None, ref: Any) -
                 errors.append("applies_when.condition_quote not found in audit_procedure, description or "
                               f"rationale for {ref['recommendation']!r}")
     return errors
+
+
+# ---- F6: catalog check kind ------------------------------------------------
+# Kept in one block so it rebases cleanly onto the main branch's validate.py.
+# A catalog check names a fixed evaluator from catalog_checks.REGISTRY; it has
+# no SQL, no setting and never a proof, because catalog checks never get a fix.
+
+CATALOG_CHECK_KEYS = ("kind", "evaluator", "pass_condition_quote")
+CATALOG_TIERS = ("automated", "manual_checklist")
+
+
+def _is_catalog_check(spec: dict) -> bool:
+    check = spec.get("check")
+    return isinstance(check, dict) and check.get("kind") == "catalog"
+
+
+def _validate_catalog_spec(spec: dict, record, tier, tier_valid: bool, errors: list[str]) -> None:
+    if "proof" in spec:
+        errors.append("check.kind 'catalog' must not have proof present")
+    if "applies_when" in spec:
+        errors.append("check.kind 'catalog' must not have applies_when present")
+    if tier_valid and tier not in CATALOG_TIERS:
+        # parameterised and needs_capability keep the old rule: no check at all.
+        errors.append(f"tier {tier!r} must not have check present")
+    _validate_catalog_check(spec, spec["check"], record, tier if tier_valid else None, errors)
+
+
+def _validate_catalog_check(spec: dict, check: dict, record, tier, errors: list[str]) -> None:
+    _check_keys(check, CATALOG_CHECK_KEYS, CATALOG_CHECK_KEYS, "check", errors)
+    ref = spec.get("ref") if isinstance(spec.get("ref"), dict) else {}
+
+    evaluator = check.get("evaluator")
+    entry = CATALOG_REGISTRY.get(evaluator) if _is_str(evaluator) else None
+    if "evaluator" in check and entry is None:
+        errors.append(f"check.evaluator must be one of {tuple(CATALOG_REGISTRY)}, got {evaluator!r}")
+    if entry is not None:
+        if ref.get("recommendation") != entry.recommendation:
+            errors.append(
+                f"check.evaluator {evaluator!r} serves recommendation {entry.recommendation!r}, "
+                f"not {ref.get('recommendation')!r}"
+            )
+        if tier is not None and tier not in entry.tiers:
+            errors.append(f"check.evaluator {evaluator!r} does not support tier {tier!r} (allowed: {entry.tiers})")
+
+    if "pass_condition_quote" not in check:
+        return
+    quote = check["pass_condition_quote"]
+    if not (_is_str(quote) and quote.strip()):
+        errors.append("check.pass_condition_quote must be a non-empty string")
+        return
+    normalized_quote = _normalize_whitespace(quote)
+    if record is not None:
+        audit = record.get("audit_procedure") or ""
+        if normalized_quote not in _normalize_whitespace(audit):
+            errors.append(f"pass_condition_quote not found in audit_procedure for {ref.get('recommendation')!r}")
+    for token in entry.quote_tokens if entry is not None else ():
+        if not _is_whole_token(token, normalized_quote):
+            errors.append(f"evaluator constant {token!r} is not a whole token in pass_condition_quote")

@@ -14,6 +14,7 @@ from typing import Any
 
 from jsonschema import Draft7Validator
 
+from . import catalog_checks
 from .manifest import collects_evidence, condition_check_id
 from .operators import evaluate
 from .policy import PolicyProfile, policy_entry, profile_value_errors, site_fix
@@ -292,7 +293,11 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
         # Determine result using _decide
         entry = snapshot_checks.get(spec_id)
         condition = snapshot_checks.get(condition_check_id(spec_id))
-        result, reason_code = _decide(spec, entry, spec_hash, condition, policy, settings)
+        catalog = _catalog_outcome(spec, snapshot)  # F6 block below; None for setting checks
+        if catalog is None:
+            result, reason_code = _decide(spec, entry, spec_hash, condition, policy, settings)
+        else:
+            result, reason_code = catalog["result"], catalog["reason_code"]
 
         # Build result row
         row: dict[str, Any] = {
@@ -302,12 +307,15 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
             "result": result,
             "reason_code": reason_code,
         }
-        explanation = _explain(spec, result, reason_code, entry, condition, spec_hash, policy, settings)
-        if explanation is not None:
-            row["cis"] = {"recommendation": ref.get("recommendation"), "title": title}
-            row["explanation"] = explanation
+        if catalog is not None:
+            row.update(catalog["row"])
+        else:
+            explanation = _explain(spec, result, reason_code, entry, condition, spec_hash, policy, settings)
+            if explanation is not None:
+                row["cis"] = {"recommendation": ref.get("recommendation"), "title": title}
+                row["explanation"] = explanation
 
-        if collects_evidence(spec) and entry is not None:
+        if catalog is None and collects_evidence(spec) and entry is not None:
             check = spec.get("check", {})
             row["setting_name"] = check.get("setting_name")
             row["operator"] = check.get("operator")
@@ -425,3 +433,33 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
     }
 
     return report
+
+
+# ---- F6: catalog check kind -------------------------------------------------
+# Kept in one block so it rebases cleanly onto the main branch's assess.py.
+
+_CATALOG_RESULTS = {"PASS": "PASS", "FAIL": "FAIL", "MANUAL": "MANUAL", "GAPPED": "NOT_COLLECTED"}
+
+
+def _catalog_outcome(spec: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Result for a catalog check, or None when the spec is not one.
+
+    GAPPED maps to NOT_COLLECTED; reason_code is the explanation code. The row
+    gains evidence, evidence_paths, explanation, cis and notices, never setting keys.
+    """
+    check = spec.get("check")
+    if not (isinstance(check, dict) and check.get("kind") == "catalog"):
+        return None
+    outcome = catalog_checks.evaluate(spec, snapshot)
+    ref = spec.get("ref", {})
+    return {
+        "result": _CATALOG_RESULTS[outcome["result"]],
+        "reason_code": outcome["explanation"]["code"],
+        "row": {
+            "evidence": outcome["evidence"],
+            "evidence_paths": outcome["evidence_paths"],
+            "explanation": outcome["explanation"],
+            "cis": {"recommendation": ref.get("recommendation"), "title": ref.get("title")},
+            "notices": outcome["notices"],
+        },
+    }

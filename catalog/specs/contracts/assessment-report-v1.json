@@ -231,7 +231,7 @@
           "reason_code": {
             "description": "Short code explaining the result.",
             "type": "string",
-            "enum": ["hash_mismatch", "no_entry", "status_not_collected", "status_error", "non_string_result", "operator_true", "operator_false", "operator_error", "tier_manual", "tier_needs_capability", "policy_missing", "condition_no_entry", "condition_hash_mismatch", "condition_status_not_collected", "condition_status_error", "condition_non_string_result", "condition_operator_error", "condition_false", "session_override", "condition_session_override", "redacted_secret_setting", "condition_redacted_secret_setting"]
+            "enum": ["hash_mismatch", "no_entry", "status_not_collected", "status_error", "non_string_result", "operator_true", "operator_false", "operator_error", "tier_manual", "tier_needs_capability", "policy_missing", "condition_no_entry", "condition_hash_mismatch", "condition_status_not_collected", "condition_status_error", "condition_non_string_result", "condition_operator_error", "condition_false", "session_override", "condition_session_override", "redacted_secret_setting", "condition_redacted_secret_setting", "wrong_pg_major", "section_not_collected", "field_missing", "manual_review", "databases_not_covered", "empty_review_set", "unlimited_connections", "connection_limits_set", "archive_mode_off", "archive_destination_missing", "archive_destination_conflict", "archive_standby", "archive_latest_failed", "archive_stats_reset_recent", "archive_never_run", "archive_timestamp_missing", "archive_timestamp_after_collection", "archive_older_than_max_age", "archive_recent"]
           },
           "setting_name": {
             "description": "PostgreSQL setting name (specs with a check, when an entry was collected).",
@@ -284,8 +284,31 @@
               "observed": { "type": "string" }
             }
           },
+          "evidence": {
+            "description": "Catalog checks only: the rows the evaluator read, as names and attributes (never hashes, function bodies, policy expressions or archive_command text).",
+            "type": "array",
+            "items": { "type": "object" }
+          },
+          "notices": {
+            "description": "Catalog checks only: fixed, reviewed notices for the recommendation, shown whatever the result (7.4: restore_test_reminder).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "text"],
+              "properties": {
+                "code": { "enum": ["restore_test_reminder"] },
+                "text": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "evidence_paths": {
+            "description": "Catalog checks only: baseline paths the evaluator read.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
           "cis": {
-            "description": "Present with explanation: the CIS recommendation from the spec ref.",
+            "description": "Present with explanation (always on catalog checks): the CIS recommendation from the spec ref.",
             "type": "object",
             "additionalProperties": false,
             "required": ["recommendation", "title"],
@@ -295,12 +318,12 @@
             }
           },
           "explanation": {
-            "description": "Structured facts (never prose) for NOT_APPLICABLE, NOT_COLLECTED, STALE, ERROR and MANUAL policy_missing results, so the UI can explain them. Facts come only from the spec, the profile and the collected evidence.",
+            "description": "Structured facts (never prose) for NOT_APPLICABLE, NOT_COLLECTED, STALE, ERROR and MANUAL policy_missing results, and for every catalog check (code equals reason_code), so the UI can explain them. Facts come only from the spec, the profile and the collected evidence.",
             "type": "object",
             "additionalProperties": false,
             "required": ["code"],
             "properties": {
-              "code": { "enum": ["condition_false", "condition_unknown", "policy_missing", "not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting"] },
+              "code": { "enum": ["condition_false", "condition_unknown", "policy_missing", "not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting", "wrong_pg_major", "section_not_collected", "field_missing", "manual_review", "databases_not_covered", "empty_review_set", "unlimited_connections", "connection_limits_set", "archive_mode_off", "archive_destination_missing", "archive_destination_conflict", "archive_standby", "archive_latest_failed", "archive_stats_reset_recent", "archive_never_run", "archive_timestamp_missing", "archive_timestamp_after_collection", "archive_older_than_max_age", "archive_recent"] },
               "cause": { "description": "condition_unknown only: the evidence problem with the condition setting.", "enum": ["not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting"] },
               "case": { "description": "policy_missing only.", "enum": ["no_profile", "profile_unapproved", "no_value_for_spec"] },
               "profile_id": { "type": "string", "minLength": 1 },
@@ -315,7 +338,24 @@
               "spec_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
               "collected_spec_hash": { "type": ["string", "null"] },
               "error": { "description": "Collector-reported error text.", "type": ["string", "null"] },
-              "source": { "description": "session_override only: pg_settings.source of the setting in the collector's session (per role, database or session; null if not a string).", "type": ["string", "null"] }
+              "source": { "description": "session_override only: pg_settings.source of the setting in the collector's session (per role, database or session; null if not a string).", "type": ["string", "null"] },
+              "section": { "description": "Catalog checks: the baseline section.", "type": "string", "minLength": 1 },
+              "gap_reason": { "type": "string" },
+              "field": { "type": "string", "minLength": 1 },
+              "spec_pg_major": { "type": "integer" },
+              "snapshot_pg_major": { "type": "integer" },
+              "evidence_count": { "type": "integer", "minimum": 0 },
+              "databases": { "type": "array", "items": { "type": "string" } },
+              "sections_not_collected": { "type": "array", "items": { "type": "string" } },
+              "role_count": { "type": "integer", "minimum": 0 },
+              "archive_mode": { "type": "string" },
+              "archived_count": { "type": "integer", "minimum": 0 },
+              "failed_count": { "type": "integer", "minimum": 0 },
+              "last_archived_time": { "type": ["string", "null"] },
+              "last_failed_time": { "type": ["string", "null"] },
+              "stats_reset": { "type": ["string", "null"] },
+              "collected_at": { "type": "string" },
+              "max_age_hours": { "type": "integer", "minimum": 1 }
             }
           }
         }

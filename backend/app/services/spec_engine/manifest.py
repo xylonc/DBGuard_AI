@@ -65,8 +65,12 @@ def condition_check_id(spec_id: str) -> str:
 
 
 def collects_evidence(spec: dict) -> bool:
-    """Automated specs and parameterised specs with a policy check are collected."""
-    return spec.get("tier") in ("automated", "parameterised") and isinstance(spec.get("check"), dict)
+    """Automated specs and parameterised specs with a policy check are collected.
+
+    Catalog checks (F6) read the collected baseline sections, not a manifest query.
+    """
+    return (spec.get("tier") in ("automated", "parameterised") and isinstance(spec.get("check"), dict)
+            and spec["check"].get("kind") == "setting")
 
 
 def manifest_from_specs(specs: list[dict], records: RecordsIndex) -> dict:

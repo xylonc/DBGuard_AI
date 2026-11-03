@@ -329,6 +329,9 @@ ALTER EXTENSION pg_trgm ADD TABLE w2x.ext_cfg;
 CREATE TABLE w2x.orders (id integer);
 ALTER TABLE w2x.orders OWNER TO w2x_owner;
 GRANT INSERT, UPDATE ON w2x.orders TO w2x_app;
+CREATE FUNCTION w2x.ext_fn() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1';
+ALTER EXTENSION pg_trgm ADD FUNCTION w2x.ext_fn();
+CREATE FUNCTION w2x.plain_fn() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1';
 """
 
 
@@ -344,6 +347,11 @@ def test_collector_records_the_owning_extension_of_a_table():
     assert 'extension' in rows['orders'] and rows['orders']['extension'] is None and rows['orders']['acl']
     # Every collected row carries the key ([] vs null rule: null means "no owning extension").
     assert all('extension' in r for r in snapshot['baseline']['object_acls'])
+    # The login account is recorded beside collected_by (equal here: no SET ROLE).
+    assert snapshot['envelope']['login_role'] == snapshot['envelope']['collected_by']
+    functions = {f['name']: f for f in snapshot['baseline']['functions'] if f['schema'] == 'w2x'}
+    assert functions['ext_fn']['extension'] == 'pg_trgm'
+    assert 'extension' in functions['plain_fn'] and functions['plain_fn']['extension'] is None
     assert any(e['extname'] == 'pg_trgm' and e['schema'] == 'w2x' for e in snapshot['baseline']['extensions'])
     # With the field present, only the extension-owned table is excluded; the ordinary
     # table in the same schema now gets rehearsable proposals.
@@ -355,6 +363,14 @@ def test_collector_records_the_owning_extension_of_a_table():
     assert all(p['rehearsable'] for p in plan['proposals'] if p['fix_type'] == 'table_revoke_dml'
                and p['target']['schema'] == 'w2x')
     owned = [n for n in plan['notes'] if n['code'] == 'extension_owned' and (n['target'] or {}).get('schema') == 'w2x']
-    assert [n['target']['table'] for n in owned] == ['ext_cfg'] and owned[0]['extension'] == 'pg_trgm'
+    owned_tables = [n for n in owned if 'table' in n['target']]
+    assert [n['target']['table'] for n in owned_tables] == ['ext_cfg']
+    assert owned_tables[0]['extension'] == 'pg_trgm'
+    # The extension-owned function is noted too; the ordinary one gets proposals.
+    owned_functions = [n['target'].get('function') or n['target'].get('name') for n in owned if 'table' not in n['target']]
+    assert owned_functions == ['ext_fn'], owned
+    fn_targets = {p['target'].get('function') or p['target'].get('name') for p in plan['proposals']
+                  if p['fix_type'].startswith('function_') and p['target']['schema'] == 'w2x'}
+    assert fn_targets == {'plain_fn'}, fn_targets
     assert not [n for n in plan['notes'] if n['code'] == 'possibly_extension_owned'
                 and (n['target'] or {}).get('schema') == 'w2x']

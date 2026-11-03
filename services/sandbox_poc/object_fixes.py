@@ -296,8 +296,14 @@ class _Plan:
         self.engine = engine
         self.snapshot = snapshot
         envelope = snapshot.get("envelope") if isinstance(snapshot.get("envelope"), dict) else {}
-        collected_by = envelope.get("collected_by")
-        self.collector = collected_by if isinstance(collected_by, str) and collected_by else None
+        # The collecting account (current_user) and, when recorded, the login account
+        # (session_user; differs after SET ROLE). Both are protected; an unusable value
+        # makes the collector unknown. Older snapshots have no login_role key.
+        names = [envelope.get("collected_by")]
+        if "login_role" in envelope:
+            names.append(envelope.get("login_role"))
+        valid = all(isinstance(n, str) and n for n in names)
+        self.collectors = frozenset(names) if valid else None
         self.roles = {r.get("rolname"): r for r in _rows(snapshot, "roles") or []
                       if isinstance(r.get("rolname"), str)}
         self.proposals: list[dict] = []
@@ -349,10 +355,10 @@ class _Plan:
             self.note(spec, "bootstrap_superuser", {"role": name})
             return True
         if removes_access:
-            if self.collector is None:
+            if self.collectors is None:
                 self.note(spec, "collecting_role_unknown")
                 return True
-            if name == self.collector:
+            if name in self.collectors:
                 self.note(spec, "collecting_role", {"role": name})
                 return True
         # An unrenderable name is still listed, marked not rehearsable by the dry render.
@@ -418,7 +424,7 @@ def _connection_limits(ctx: _Plan, spec: dict, outcome: dict) -> None:  # 5.5
         notes = []
         if limit == 0:
             notes.append("A limit of 0 stops this account from logging in at all.")
-        if name == ctx.collector:
+        if ctx.collectors and name in ctx.collectors:
             notes.append("DBGuard collects with this account; keep the limit above what collection needs.")
         ctx.propose(spec, "role_connection_limit", {"role": name},
                     {"role_name": name, "connection_limit": limit}, {"rolconnlimit": row["rolconnlimit"]},

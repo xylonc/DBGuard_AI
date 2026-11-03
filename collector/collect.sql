@@ -424,7 +424,10 @@ CREATE FUNCTION pg_temp.sql_functions() RETURNS text AS $$
             'extension',     (SELECT e.extname FROM pg_depend d
                               JOIN pg_extension e ON e.oid = d.refobjid
                               WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid
-                                AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e')
+                                AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e'
+                              -- One owning extension per object; LIMIT 1 keeps a corrupted
+                              -- pg_depend from gapping the section. Any non-null blocks a fix.
+                              ORDER BY e.extname LIMIT 1)
         ) ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)), '[]'::jsonb)
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -469,6 +472,9 @@ SELECT jsonb_pretty(jsonb_build_object(
     'target_id',           :'target_id',
     'database',            current_database(),
     'collected_by',        current_user,
+    -- The login account; differs from collected_by after SET ROLE. Both are
+    -- protected from lock-out fixes (NOLOGIN, power removal).
+    'login_role',          session_user,
     'is_superuser',        (SELECT rolsuper FROM pg_roles WHERE rolname = current_user),
     'has_pg_monitor',      pg_has_role(current_user,'pg_monitor','MEMBER'),
     'has_read_all_settings', pg_has_role(current_user,'pg_read_all_settings','MEMBER'),

@@ -8,6 +8,7 @@ import {
 } from "react"
 import { api, request, type Service } from "@/adapters/live"
 import { profileRefQuery } from "@/live/profileForm"
+import { objectFixRequest } from "@/live/objectFixes"
 // The approved policy profile the user chose for assessments (default none). Only
 // its hash is sent; the backend resolves it from the profile store.
 export type ChosenProfile = {
@@ -15,6 +16,29 @@ export type ChosenProfile = {
   profile_id: string
   approved_by: string | null
   approved_at: string | null
+}
+// A per-object fix chosen for the single-fix test. It belongs to the snapshot and
+// profile it was proposed for; only fix_id is ever sent (the server re-derives it).
+export type ChosenObjectFix = {
+  fix_id: string
+  spec_id: string
+  title: string
+  // Approved template version from the fix plan; null means use the manual field.
+  template_version: number | null
+  snapshot_id: string
+  profile_ref: string | null
+}
+export function activeObjectFix(s: {
+  objectFix: ChosenObjectFix | null
+  snapshot: any
+  policyProfile: ChosenProfile | null
+}): ChosenObjectFix | null {
+  const f = s.objectFix
+  return f &&
+    f.snapshot_id === s.snapshot?.snapshot_id &&
+    f.profile_ref === (s.policyProfile?.profile_ref ?? null)
+    ? f
+    : null
 }
 export function assessmentPath(
   snapshotId: string,
@@ -39,6 +63,9 @@ type LiveState = {
   benchmark: string
   environment: string
   templateVersion: number
+  // Version of the approved per-object fix templates (role_nologin, ...).
+  objectTemplateVersion: number
+  objectFix: ChosenObjectFix | null
   evidenceIds: string
   alternativeTemplates: string
   controlId: string
@@ -64,6 +91,8 @@ const fresh = (): LiveState => ({
   benchmark: "cis-pg17-v1.1.0",
   environment: "test",
   templateVersion: 1,
+  objectTemplateVersion: 1,
+  objectFix: null,
   evidenceIds: "",
   alternativeTemplates: "",
   controlId: "cis-pg17-v1.1.0:3.1.20",
@@ -274,7 +303,29 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       if (!s.snapshot || !s.assessment)
         throw new Error("Assess the selected snapshot first")
       let id = s.handoffId
-      if (!id) {
+      const objectFix = activeObjectFix(s)
+      if (!id && objectFix) {
+        const prep = await api(
+          s.service,
+          "/api/v1/sandbox/handoffs",
+          objectFixRequest(
+            {
+              snapshot_id: s.snapshot.snapshot_id,
+              benchmark_id: s.benchmark,
+              environment: s.environment,
+              evidence_ids: s.evidenceIds
+                .split(",")
+                .map((x) => x.trim())
+                .filter(Boolean),
+              policy_profile: s.policyProfile?.profile_ref ?? null,
+            },
+            objectFix.template_version ?? s.objectTemplateVersion,
+            objectFix.fix_id,
+          ),
+        )
+        id = prep.handoff_id
+        patch({ handoffId: id })
+      } else if (!id) {
         const prep = await api(s.service, "/api/v1/sandbox/handoffs", {
           snapshot_id: s.snapshot.snapshot_id,
           benchmark_id: s.benchmark,

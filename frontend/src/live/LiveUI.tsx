@@ -21,7 +21,7 @@ import {
 } from "./explanations"
 import { CatalogEvidence } from "./Evidence"
 import { useEffect, useState, type ReactNode } from "react"
-import { assessmentPath, useLive } from "@/store/liveStore"
+import { activeObjectFix, assessmentPath, useLive } from "@/store/liveStore"
 import { useWorkflow } from "@/store/workflowStore"
 import {
   api,
@@ -274,6 +274,7 @@ export function LiveWorkflow() {
     "Verify target",
   ]
   const busy = !!s.busy || !!s.chatJob
+  const objectFix = activeObjectFix(s)
   const done = [
     !!s.assessment,
     false,
@@ -490,9 +491,21 @@ export function LiveWorkflow() {
         )}
         {step === 5 && (
           <>
-            <FixPlan />
+            <FixPlan
+              onOpenPolicy={() => {
+                setPolicyOpen(true)
+                setWorkflowStep(4)
+              }}
+            />
             <Card title="Reviewed fix references">
-              <p>Selected control: {s.controlId}</p>
+              {objectFix ? (
+                <p>
+                  Selected fix: <strong>{objectFix.title}</strong> (per-object
+                  fix for {objectFix.spec_id}; only its fix id is sent)
+                </p>
+              ) : (
+                <p>Selected control: {s.controlId}</p>
+              )}
               <label className="block text-sm">
                 Environment
                 <input
@@ -518,6 +531,22 @@ export function LiveWorkflow() {
                 />
               </label>
               <label className="block text-sm">
+                Per-object fix template version (used only when the server
+                reports no approved version)
+                <input
+                  type="number"
+                  min="1"
+                  className={input}
+                  value={s.objectTemplateVersion}
+                  disabled={busy || s.service === "demo"}
+                  onChange={(e) =>
+                    live.configure({
+                      objectTemplateVersion: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label className="block text-sm">
                 Evidence document IDs (comma separated)
                 <input
                   className={input}
@@ -532,7 +561,7 @@ export function LiveWorkflow() {
                 Retry policy
                 <select
                   className={input}
-                  disabled={busy || !!s.handoffId}
+                  disabled={busy || !!s.handoffId || !!objectFix}
                   value={s.retryMode}
                   onChange={(e) => patch({ retryMode: e.target.value })}
                 >
@@ -546,13 +575,24 @@ export function LiveWorkflow() {
                 <input
                   className={input}
                   value={s.alternativeTemplates}
-                  disabled={busy || !!s.handoffId || s.retryMode !== "adaptive"}
+                  disabled={
+                    busy ||
+                    !!s.handoffId ||
+                    s.retryMode !== "adaptive" ||
+                    !!objectFix
+                  }
                   placeholder="set_config_parameter__alternative:1"
                   onChange={(e) =>
                     live.configure({ alternativeTemplates: e.target.value })
                   }
                 />
               </label>
+              {objectFix && (
+                <p className="text-xs text-slate-500">
+                  A per-object fix is tested once with its approved template: no
+                  retries or alternative templates.
+                </p>
+              )}
               <p className="text-xs text-slate-500">
                 Maximum three attempts. Each test uses a fresh baseline.
                 Adaptive execution is limited to approved candidates; a
@@ -640,6 +680,13 @@ export function RunResult() {
         <Badge value={r.status} />
         <span className="text-xs break-all">Run: {r.run_id}</span>
       </div>
+      {r.kind === "object" && (
+        <p className="text-sm">
+          Per-object fix:{" "}
+          <strong>{r.proposal?.title ?? r.fix_unit?.fix_id}</strong> ·{" "}
+          {r.fix_unit?.verify?.predicate}
+        </p>
+      )}
       {s.assessment && (
         <Results
           assessment={s.assessment}

@@ -870,9 +870,10 @@ function ConnectionLimits({
   return (
     <Card title="Connection limits (groundwork for CIS 5.5)">
       <p className="text-sm">
-        Stored with the profile for later fix proposals. DBGuard does not check
-        or change connection limits yet. Superusers ignore connection limits, so
-        a limit on a superuser role has no effect.
+        Once this profile is approved, these limits become proposed CIS 5.5
+        fixes for login roles without a limit, which you can test in the
+        sandbox. Superusers ignore connection limits, so a limit on a superuser
+        role has no effect.
       </p>
       <label className="block text-sm max-w-xs">
         Default limit for login roles (blank = none)

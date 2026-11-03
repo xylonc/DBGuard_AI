@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react"
 import { api, request, findings } from "@/adapters/live"
-import { useLive } from "@/store/liveStore"
+import { activeObjectFix, useLive } from "@/store/liveStore"
 import { Card, Raw } from "./LiveUI"
+import { ObjectProposals } from "./ObjectProposals"
+import {
+  MAX_BATCH,
+  batchFixes,
+  objectTemplateVersionFor,
+  isObjectFixId,
+  isObjectUnit,
+  objectAfterCombined,
+} from "./objectFixes"
 import {
   POLICY_MISSING_LABEL,
   UNKNOWN_LABEL,
@@ -12,12 +21,34 @@ import {
 } from "./explanations"
 import { profileRefQuery } from "./profileForm"
 const button = "rounded bg-teal-700 text-white px-4 py-2 disabled:opacity-40"
-export function FixPlan() {
+type FixPlanProps = {
+  // Opens the Policy Profile screen (for COMPANY POLICY MISSING notes).
+  onOpenPolicy?: () => void
+}
+export function FixPlan({ onOpenPolicy }: FixPlanProps) {
   const live = useLive(),
     s = live.state
   const [customOrder, setCustomOrder] = useState(false)
+  // Selection keys: a setting fix's control id, or an object fix's fix_id.
   const [plan, setPlan] = useState<any>(null),
     [selected, setSelected] = useState<string[]>([])
+  const chosenObject = activeObjectFix(s)
+  const groups: any[] = Array.isArray(plan?.object_proposals)
+    ? plan.object_proposals
+    : []
+  const proposalsById = new Map<string, any>(
+    groups.flatMap((g) =>
+      (g.proposals ?? []).map((p: any) => [p.fix_id, p] as [string, any]),
+    ),
+  )
+  const toggle = (key: string, on: boolean) =>
+    setSelected(on ? [...selected, key] : selected.filter((x) => x !== key))
+  function selectionLabel(key: string) {
+    if (isObjectFixId(key)) return proposalsById.get(key)?.title ?? key
+    return (
+      plan?.recommended_order.find((f: any) => f.spec_id === key)?.title ?? key
+    )
+  }
   // The combined result lives in the shared store so DBA review (step 6) shows it too.
   const batch = currentBatch(s)
   useEffect(() => {
@@ -110,7 +141,8 @@ export function FixPlan() {
                 />
               </details>
               <div className="flex flex-wrap gap-4 items-center border-t pt-3">
-                {(s.controlId || "cis-pg17-v1.1.0:3.1.20") === f.spec_id ? (
+                {!chosenObject &&
+                (s.controlId || "cis-pg17-v1.1.0:3.1.20") === f.spec_id ? (
                   <span className="rounded bg-teal-700 text-white px-4 py-2">
                     ✓ This fix runs in the single-fix test below
                   </span>
@@ -118,7 +150,9 @@ export function FixPlan() {
                   <button
                     className="rounded border border-teal-700 text-teal-700 px-4 py-2 disabled:opacity-40"
                     disabled={!!s.busy || !!s.handoffId}
-                    onClick={() => live.configure({ controlId: f.spec_id })}
+                    onClick={() =>
+                      live.configure({ controlId: f.spec_id, objectFix: null })
+                    }
                   >
                     Use for single-fix test
                   </button>
@@ -128,19 +162,22 @@ export function FixPlan() {
                     aria-label={"Include " + f.setting + " in combined test"}
                     type="checkbox"
                     checked={selected.includes(f.spec_id)}
-                    onChange={(e) =>
-                      setSelected(
-                        e.target.checked
-                          ? [...selected, f.spec_id]
-                          : selected.filter((x) => x !== f.spec_id),
-                      )
-                    }
+                    onChange={(e) => toggle(f.spec_id, e.target.checked)}
                   />
                   Add to combined test
                 </label>
               </div>
             </section>
           ))}
+          {groups.length > 0 && (
+            <ObjectProposals
+              groups={groups}
+              templateVersions={plan.object_template_versions}
+              selected={selected}
+              onToggle={toggle}
+              onOpenPolicy={onOpenPolicy}
+            />
+          )}
           {plan.manual_review.length > 0 && (
             <section className="border border-amber-300 rounded p-4 space-y-2">
               <h3 className="font-semibold">Not fixable automatically</h3>
@@ -155,7 +192,15 @@ export function FixPlan() {
                     <li key={f.spec_id}>
                       <strong>{f.title || f.spec_id}</strong>{" "}
                       <span className="text-sm">({f.spec_id})</span>:{" "}
-                      {manualReason(f, row)}
+                      {manualReason(
+                        f,
+                        row,
+                        groups.some(
+                          (g) =>
+                            g.spec_id === f.spec_id &&
+                            (g.proposals ?? []).length > 0,
+                        ),
+                      )}
                       {f.manual_fix && (
                         <ManualFix fix={f.manual_fix} item={f} />
                       )}
@@ -207,7 +252,7 @@ export function FixPlan() {
               {customOrder &&
                 selected.map((sid, index) => (
                   <p key={sid}>
-                    {index + 1}. {sid}{" "}
+                    {index + 1}. {selectionLabel(sid)}{" "}
                     <button
                       className="text-teal-700 underline"
                       disabled={index === 0 || !!s.busy}
@@ -228,35 +273,49 @@ export function FixPlan() {
           )}
           <button
             className={button}
-            disabled={!!s.busy || selected.length < 2}
+            disabled={
+              !!s.busy || selected.length < 2 || selected.length > MAX_BATCH
+            }
             onClick={() =>
               void live.action(
                 "Testing fixes individually and together",
                 async () => {
                   live.patch({ batch: null })
                   const b = await api(s.service, "/api/v1/sandbox/batches", {
+                    // Object fixes are ordered by their own fix_id.
                     requested_order: customOrder
-                      ? selected.map(
-                          (sid) =>
-                            plan.recommended_order.find(
-                              (f: any) => f.spec_id === sid,
-                            ).fix_id,
+                      ? selected.map((sid) =>
+                          isObjectFixId(sid)
+                            ? sid
+                            : plan.recommended_order.find(
+                                (f: any) => f.spec_id === sid,
+                              ).fix_id,
                         )
                       : null,
-                    fixes: selected.map((control_id) => ({
-                      snapshot_id: s.snapshot.snapshot_id,
-                      benchmark_id: s.benchmark,
-                      template_version: s.templateVersion,
-                      evidence_ids: s.evidenceIds
-                        .split(",")
-                        .map((v: string) => v.trim())
-                        .filter(Boolean),
-                      environment: s.environment,
-                      retry_mode: s.retryMode,
-                      retry_template_versions: [],
-                      control_id,
-                      policy_profile: s.policyProfile?.profile_ref ?? null,
-                    })),
+                    // Object fixes send only object_fix_id; never params.
+                    fixes: batchFixes(
+                      selected,
+                      {
+                        snapshot_id: s.snapshot.snapshot_id,
+                        benchmark_id: s.benchmark,
+                        environment: s.environment,
+                        evidence_ids: s.evidenceIds
+                          .split(",")
+                          .map((v: string) => v.trim())
+                          .filter(Boolean),
+                        policy_profile: s.policyProfile?.profile_ref ?? null,
+                      },
+                      {
+                        templateVersion: s.templateVersion,
+                        retryMode: s.retryMode,
+                      },
+                      (fixId: string) =>
+                        objectTemplateVersionFor(
+                          plan,
+                          fixId,
+                          s.objectTemplateVersion,
+                        ),
+                    ),
                   })
                   live.patch({
                     batch: {
@@ -271,7 +330,9 @@ export function FixPlan() {
           >
             {selected.length < 2
               ? "Combined test: tick at least two fixes"
-              : `Test ${selected.length} selected fixes together`}
+              : selected.length > MAX_BATCH
+                ? `Combined test: tick at most ${MAX_BATCH} fixes`
+                : `Test ${selected.length} selected fixes together`}
           </button>
         </>
       )}
@@ -312,10 +373,12 @@ const SITE_FIX_MISSING = "site-specific fix value not supplied"
 
 // Plain-language reason a non-passing control gets no automatic fix. `row` is the
 // matching assessment row; its structured explanation is preferred when present.
-export function manualReason(f: any, row?: any) {
-  // Catalog checks (F6) are assessment-only.
+export function manualReason(f: any, row?: any, objectFixes = false) {
+  // Catalog checks (F6): per-object fixes, when offered, are listed separately.
+  if ((f.kind === "catalog" || Array.isArray(f.evidence)) && objectFixes)
+    return 'DBGuard does not fix this check as a whole. Fixes for single accounts or objects are offered above under "Proposed fixes for accounts and permissions"; anything not listed there needs a person.'
   if (f.kind === "catalog" || Array.isArray(f.evidence))
-    return "DBGuard only reports this from catalog evidence and never changes roles, privileges or archiving; a person must act on it."
+    return "DBGuard only reports this from catalog evidence and does not change it as a whole; a person must act on anything not offered as a per-object fix."
   if (row && isPolicyMissing(row))
     return `${POLICY_MISSING_LABEL}. ${explanationSentence(row.explanation)}`
   if (statusKind(f.status) === "unknown")
@@ -383,6 +446,10 @@ export function CombinedReview() {
   const order: string[] = batch.recommended_order ?? units.map((u) => u.fix_id)
   const combinedOk = batch.combined_test?.status === "VERIFIED"
   const after = batch.sandbox_after_findings ?? {}
+  // Object fixes: the title from their risk review (server-derived text).
+  const reviews: any[] = Array.isArray(batch.risk_reviews)
+    ? batch.risk_reviews
+    : []
   const rows = order
     .map((fid) => units.find((u) => u.fix_id === fid))
     .filter(Boolean)
@@ -421,6 +488,8 @@ export function CombinedReview() {
               const alone =
                 runs.find((r) => fixIdOf(r) === u.fix_id)?.status ?? "NOT RUN"
               const ok = alone === "VERIFIED" && combinedOk
+              const object = isObjectUnit(u)
+              const review = reviews.find((r) => r?.fix_id === u.fix_id)
               return (
                 <tr
                   key={u.fix_id}
@@ -429,11 +498,29 @@ export function CombinedReview() {
                   <td className="py-2 pr-3">{i + 1}</td>
                   <td className="py-2 pr-3">{u.spec_id}</td>
                   <td className="py-2 pr-3">
-                    {u.params?.param_name}: {u.prior_state?.value} →{" "}
-                    {u.params?.param_value} · {u.requires}
+                    {object ? (
+                      <>
+                        {review?.title ??
+                          runs.find((r) => fixIdOf(r) === u.fix_id)?.proposal
+                            ?.title ??
+                          u.fix_id}
+                        <span className="block text-xs text-slate-600">
+                          Object fix · {u.verify?.predicate}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {u.params?.param_name}: {u.prior_state?.value} →{" "}
+                        {u.params?.param_value} · {u.requires}
+                      </>
+                    )}
                   </td>
                   <td className="py-2 pr-3">{alone}</td>
-                  <td className="py-2 pr-3">{after[u.spec_id] ?? "NOT RUN"}</td>
+                  <td className="py-2 pr-3">
+                    {object
+                      ? objectAfterCombined(batch, u.fix_id)
+                      : (after[u.spec_id] ?? "NOT RUN")}
+                  </td>
                   <td className="py-2">
                     {ok
                       ? "Review, then apply with the combined bundle"

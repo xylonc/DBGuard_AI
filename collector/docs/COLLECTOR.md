@@ -246,6 +246,12 @@ public-schema `CREATE` control is per-database. On a multi-database cluster the
 current collector assesses one database and silently misses the rest. Accepted
 for now; a multi-database loop in the wrapper is the planned fix.
 
+**`object_acls` is not gap-wrapped.** Each row carries `extension`: the owning
+extension's name, or null when the relation belongs to none (`pg_depend`
+deptype `e`). The section is a plain subquery, so it is collected in full or the
+run aborts; a null `extension` therefore always means "not extension-owned",
+never "not checked". Per-object fixes are never offered for a non-null value.
+
 **Runtime gotcha — `context = superuser-backend`.** Settings with this context are
 fixed at backend start time. A long-lived session can honestly report a value that
 no longer matches the cluster's configured state. Cross-check against

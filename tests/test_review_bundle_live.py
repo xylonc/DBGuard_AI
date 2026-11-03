@@ -182,7 +182,9 @@ def test_source_only_catalog_objects_do_not_block_a_setting_fix(tmp_path):
                             'config_names': ['search_path'], 'acl': definer[0]['acl'], 'extension': None}]
         assert '=X/dbguard_poc' in definer[0]['acl']  # default ACL: PUBLIC may EXECUTE
         assert rows['cis-pg17-v1.1.0:4.10']['result'] == 'MANUAL'  # the extra role has no password
-        assert [e['rolname'] for e in rows['cis-pg17-v1.1.0:4.10']['evidence']] == ['dbguard_extra_login']
+        # The demo source also carries the planted sample logins (demo.DEMO_SAMPLE_OBJECTS).
+        assert [e['rolname'] for e in rows['cis-pg17-v1.1.0:4.10']['evidence']] == [
+            'app_admin', 'dbguard_extra_login', 'old_report', 'web']
         assert any(e.get('rolname') == 'dbguard_extra_login' and e['rolconnlimit'] == 3
                    for e in rows['cis-pg17-v1.1.0:5.5']['evidence'])
         assert source['findings']['cis-pg17-v1.1.0:3.1.20']['status'] == 'FAIL'

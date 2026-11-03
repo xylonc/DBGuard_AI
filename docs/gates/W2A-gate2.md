@@ -84,3 +84,8 @@ All on the final code, 3 Nov 2026:
 4. The coverage wording for 4.3, 4.4, 4.5, 4.6, 4.9, 4.10 and 5.5 is now "per-object fixes the DBA picks" (done in this PR).
 
 The six object templates remain `DEMO_FIXTURE_ONLY`; real use needs a named human approval of each template.
+
+## Follow-ups (rulings 2 and 3), branch `melvin/wave2a-collector-followups`
+- **Collector:** the envelope records `login_role` (`session_user`) beside `collected_by`; both are protected from lock-out fixes, and an unusable value means "collector unknown" (no access-removal fixes). The functions extension lookup has `ORDER BY e.extname LIMIT 1`. Contract `snapshot-v0.3.0.json` gains optional `login_role`. db-security-reviewer: PASS WITH NOTES; all four notes fixed (older-snapshot test, a real live function assertion, `docs/CONTRACTS.md`, refreshed `frontend/examples/disposable-pg17-snapshot.json`).
+- **Demo sample objects:** the disposable demo source plants `app_admin` (CREATEDB, CREATEROLE), `old_report`, `web` (logins without passwords), `app.orders` writable by PUBLIC and a SECURITY DEFINER `app.refresh_totals()`. Demo walkthrough, 3 Nov: step 5 offered fixes for all six fix types' rules. A combined test of `log_connections` + "Stop old_report from logging in" + "Revoke INSERT, UPDATE, DELETE on app.orders from PUBLIC" was **VERIFIED**, and step 6 showed both object fixes as "Change holds".
+- **Tests:** unit 2979 passed; live collector, object, demo, bundle and API suites passed with 0 containers left.

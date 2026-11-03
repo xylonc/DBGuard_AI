@@ -443,3 +443,10 @@ class TestApprovedTemplateVersions:
         query, params = seen["sql"][-1]
         assert "status = 'active'" in query and "approved_by IS NOT NULL" in query and "max(version)" in query
         assert params == (sorted(templates.OBJECT_TEMPLATE_NAMES),)
+
+
+def test_demo_sample_objects_are_fixed_text_without_passwords():
+    from services.sandbox_poc.demo import DEMO_SAMPLE_OBJECTS
+    statements = [s.strip() for s in DEMO_SAMPLE_OBJECTS.split(";") if s.strip()]
+    assert statements and all(s.split()[0] in ("CREATE", "ALTER", "GRANT") for s in statements)
+    assert "PASSWORD" not in DEMO_SAMPLE_OBJECTS.upper()

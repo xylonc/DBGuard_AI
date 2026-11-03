@@ -35,6 +35,21 @@ from .collector_intake import from_collector_bundle
 
 DEMO_LABEL = "dbguard.live-demo.run"
 
+# Planted in the disposable demo source only (Melvin, 3 Nov), so a viewer can pick and
+# test a per-object fix end to end. Fixed text, no passwords: the login roles have none.
+DEMO_SAMPLE_OBJECTS = """
+CREATE ROLE app_admin LOGIN CREATEDB CREATEROLE;
+CREATE ROLE old_report LOGIN;
+CREATE ROLE web LOGIN;
+CREATE SCHEMA app AUTHORIZATION app_admin;
+CREATE TABLE app.orders (id integer);
+ALTER TABLE app.orders OWNER TO app_admin;
+GRANT INSERT, UPDATE, DELETE ON app.orders TO PUBLIC;
+CREATE FUNCTION app.refresh_totals() RETURNS integer LANGUAGE sql
+  SECURITY DEFINER SET search_path = pg_catalog AS 'SELECT 1';
+ALTER FUNCTION app.refresh_totals() OWNER TO app_admin;
+"""
+
 
 class DemoResources:
     """Owns only a newly created registry and disposable source; closes both."""
@@ -104,6 +119,7 @@ class DemoResources:
         self.target.write_config("postgresql.conf", "\nlog_connections='on'\nlog_disconnections='on'\n")
         self.target.sql("ALTER SYSTEM SET log_connections='off';")
         self.target.activate({"log_connections": "off", "log_disconnections": "on"})
+        self.target.sql(DEMO_SAMPLE_OBJECTS)
         self.collector_bundle = collect_owned_target(self.target, self.engine)
         self.snapshot = from_collector_bundle(self.collector_bundle, self.engine)
         self.handoff = build_handoff(self.engine, self.snapshot, TemplateReference(

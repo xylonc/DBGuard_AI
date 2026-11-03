@@ -1,0 +1,9 @@
+-- Purpose: Stop PUBLIC from executing one SECURITY DEFINER function (CIS 4.5).
+-- Hardening Action: Revoke EXECUTE from PUBLIC; the DBA grants specific roles separately.
+-- Only offered when the collected evidence shows PUBLIC has EXECUTE.
+-- Rollback (action rollback) grants EXECUTE to PUBLIC again.
+{% if action == "apply" -%}
+REVOKE EXECUTE ON FUNCTION {{ schema_name | ident }}.{{ function_name | ident }}({{ arg_types | join(", ") }}) FROM PUBLIC;
+{%- else -%}
+GRANT EXECUTE ON FUNCTION {{ schema_name | ident }}.{{ function_name | ident }}({{ arg_types | join(", ") }}) TO PUBLIC;
+{%- endif %}

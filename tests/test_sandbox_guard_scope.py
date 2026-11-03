@@ -381,6 +381,14 @@ class TestDefaultRecordedCatalogGap:
         catalog_gap_recorded(recorded_history)
         assert history.compare("test-run", recorded_history, engine)["status"] == "TARGET_REASSESSMENT_CONFIRMED"
 
+    def test_history_setting_run_has_no_object_checks(self, engine, recorded_history):
+        """Setting runs keep the spec PASS rule; object checks apply only to object fixes."""
+        verdict = history.compare("test-run", recorded_history, engine)
+        assert verdict["status"] == "TARGET_REASSESSMENT_CONFIRMED" and "object_checks" not in verdict
+        recorded_history["checks"][CONTROL]["result"] = "off"
+        verdict = history.compare("test-run", recorded_history, engine)
+        assert verdict["status"] == "TARGET_VERIFICATION_FAILED" and "object_checks" not in verdict
+
 
 # ---------------------------------------------------------------------------
 # Default: a setting gap or a setting reproduction difference still blocks

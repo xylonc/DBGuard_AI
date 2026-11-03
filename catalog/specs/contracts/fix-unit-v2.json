@@ -1,0 +1,927 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dbguardai.local/schemas/fix-unit-v2.json",
+  "title": "DBGuardAI fix unit contract (version 2): one per-object action",
+  "description": "Wave 2a (F6). One per-object fix on one catalog object: a role attribute, login or connection limit; a function's SECURITY DEFINER flag or PUBLIC EXECUTE; or DML grants on a table. target, params and prior_state come only from collected evidence (and the approved policy profile for connection limits), re-derived server-side from the fix_id (services/sandbox_poc/object_fixes.py). apply and rollback are the statements rendered from the approved, hash-pinned template for fix_type, run in one transaction each. verify describes the object predicate checked in re-collected evidence. Setting fixes keep fix-unit-v1.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fix_id",
+    "spec_id",
+    "fix_type",
+    "template_id",
+    "template_version",
+    "target",
+    "params",
+    "prior_state",
+    "apply",
+    "rollback",
+    "verify",
+    "requires"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "fix-unit-v2"
+    },
+    "fix_id": {
+      "description": "fix-<CIS recommendation>-<fix_type>-<first 10 hex of sha256(canonical target JSON)>.",
+      "type": "string",
+      "pattern": "^fix-[0-9]+(?:\\.[0-9]+)*-(?:role_connection_limit|role_drop_attribute|role_nologin|function_security_invoker|function_revoke_public_execute|table_revoke_dml)-[0-9a-f]{10}$"
+    },
+    "spec_id": {
+      "description": "The catalog spec this fix serves.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9.]+)+:[0-9]+(?:\\.[0-9]+)*$"
+    },
+    "fix_type": {
+      "enum": [
+        "role_connection_limit",
+        "role_drop_attribute",
+        "role_nologin",
+        "function_security_invoker",
+        "function_revoke_public_execute",
+        "table_revoke_dml"
+      ]
+    },
+    "template_id": {
+      "description": "Approved registry name of the template; equals fix_type.",
+      "enum": [
+        "role_connection_limit",
+        "role_drop_attribute",
+        "role_nologin",
+        "function_security_invoker",
+        "function_revoke_public_execute",
+        "table_revoke_dml"
+      ]
+    },
+    "template_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "target": {
+      "description": "The one object changed, from evidence.",
+      "type": "object"
+    },
+    "params": {
+      "description": "Template parameters without action, derived from target and evidence (connection_limit from the approved profile).",
+      "type": "object"
+    },
+    "prior_state": {
+      "description": "The exact current values the fix changes, from evidence.",
+      "type": "object"
+    },
+    "apply": {
+      "type": "object"
+    },
+    "rollback": {
+      "type": "object"
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "predicate"
+      ],
+      "properties": {
+        "predicate": {
+          "description": "Plain description of the object predicate checked in re-collected evidence.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "requires": {
+      "description": "Role, function and grant changes take effect at once; no reload or restart.",
+      "const": "none"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "fix_type": {
+            "const": "role_connection_limit"
+          }
+        },
+        "required": [
+          "fix_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "template_id": {
+            "const": "role_connection_limit"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role_name",
+              "connection_limit"
+            ],
+            "properties": {
+              "role_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "connection_limit": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647
+              }
+            }
+          },
+          "prior_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rolconnlimit"
+            ],
+            "properties": {
+              "rolconnlimit": {
+                "type": "integer",
+                "minimum": -1
+              }
+            }
+          },
+          "apply": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER ROLE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          },
+          "rollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER ROLE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fix_type": {
+            "const": "role_drop_attribute"
+          }
+        },
+        "required": [
+          "fix_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "template_id": {
+            "const": "role_drop_attribute"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "attribute"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "attribute": {
+                "enum": [
+                  "SUPERUSER",
+                  "CREATEROLE",
+                  "CREATEDB",
+                  "REPLICATION",
+                  "BYPASSRLS"
+                ]
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role_name",
+              "attribute"
+            ],
+            "properties": {
+              "role_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "attribute": {
+                "enum": [
+                  "SUPERUSER",
+                  "CREATEROLE",
+                  "CREATEDB",
+                  "REPLICATION",
+                  "BYPASSRLS"
+                ]
+              }
+            }
+          },
+          "prior_state": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "rolsuper": {
+                "const": true
+              },
+              "rolcreaterole": {
+                "const": true
+              },
+              "rolcreatedb": {
+                "const": true
+              },
+              "rolreplication": {
+                "const": true
+              },
+              "rolbypassrls": {
+                "const": true
+              }
+            }
+          },
+          "apply": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER ROLE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          },
+          "rollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER ROLE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fix_type": {
+            "const": "role_nologin"
+          }
+        },
+        "required": [
+          "fix_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "template_id": {
+            "const": "role_nologin"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role_name"
+            ],
+            "properties": {
+              "role_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              }
+            }
+          },
+          "prior_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "rolcanlogin"
+            ],
+            "properties": {
+              "rolcanlogin": {
+                "const": true
+              }
+            }
+          },
+          "apply": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER ROLE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          },
+          "rollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER ROLE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fix_type": {
+            "const": "function_security_invoker"
+          }
+        },
+        "required": [
+          "fix_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "template_id": {
+            "const": "function_security_invoker"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema",
+              "name",
+              "identity_args"
+            ],
+            "properties": {
+              "schema": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "identity_args": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_name",
+              "function_name",
+              "arg_types"
+            ],
+            "properties": {
+              "schema_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "function_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "arg_types": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(?:(?:VARIADIC) )?(?:timestamp\\ without\\ time\\ zone|timestamp\\ with\\ time\\ zone|pg_catalog\\.regprocedure|pg_catalog\\.regnamespace|time\\ without\\ time\\ zone|pg_catalog\\.int8range|pg_catalog\\.int4range|pg_catalog\\.daterange|pg_catalog\\.tstzrange|pg_catalog\\.numrange|pg_catalog\\.regclass|pg_catalog\\.tsvector|time\\ with\\ time\\ zone|pg_catalog\\.macaddr|pg_catalog\\.tsquery|pg_catalog\\.regtype|pg_catalog\\.regrole|pg_catalog\\.tsrange|pg_catalog\\.regproc|pg_catalog\\.pg_lsn|character\\ varying|pg_catalog\\.money|pg_catalog\\.jsonb|double\\ precision|pg_catalog\\.bytea|pg_catalog\\.json|pg_catalog\\.inet|pg_catalog\\.cidr|pg_catalog\\.name|pg_catalog\\.uuid|pg_catalog\\.date|pg_catalog\\.text|pg_catalog\\.xml|pg_catalog\\.oid|bit\\ varying|character|interval|smallint|integer|boolean|numeric|bigint|real|bit)(?:\\[\\])?$"
+                }
+              }
+            }
+          },
+          "prior_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "prosecdef"
+            ],
+            "properties": {
+              "prosecdef": {
+                "const": true
+              }
+            }
+          },
+          "apply": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER FUNCTION "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          },
+          "rollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^ALTER FUNCTION "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fix_type": {
+            "const": "function_revoke_public_execute"
+          }
+        },
+        "required": [
+          "fix_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "template_id": {
+            "const": "function_revoke_public_execute"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema",
+              "name",
+              "identity_args"
+            ],
+            "properties": {
+              "schema": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "identity_args": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_name",
+              "function_name",
+              "arg_types"
+            ],
+            "properties": {
+              "schema_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "function_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "arg_types": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(?:(?:VARIADIC) )?(?:timestamp\\ without\\ time\\ zone|timestamp\\ with\\ time\\ zone|pg_catalog\\.regprocedure|pg_catalog\\.regnamespace|time\\ without\\ time\\ zone|pg_catalog\\.int8range|pg_catalog\\.int4range|pg_catalog\\.daterange|pg_catalog\\.tstzrange|pg_catalog\\.numrange|pg_catalog\\.regclass|pg_catalog\\.tsvector|time\\ with\\ time\\ zone|pg_catalog\\.macaddr|pg_catalog\\.tsquery|pg_catalog\\.regtype|pg_catalog\\.regrole|pg_catalog\\.tsrange|pg_catalog\\.regproc|pg_catalog\\.pg_lsn|character\\ varying|pg_catalog\\.money|pg_catalog\\.jsonb|double\\ precision|pg_catalog\\.bytea|pg_catalog\\.json|pg_catalog\\.inet|pg_catalog\\.cidr|pg_catalog\\.name|pg_catalog\\.uuid|pg_catalog\\.date|pg_catalog\\.text|pg_catalog\\.xml|pg_catalog\\.oid|bit\\ varying|character|interval|smallint|integer|boolean|numeric|bigint|real|bit)(?:\\[\\])?$"
+                }
+              }
+            }
+          },
+          "prior_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "acl"
+            ],
+            "properties": {
+              "acl": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10000
+              }
+            }
+          },
+          "apply": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^REVOKE EXECUTE ON FUNCTION "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          },
+          "rollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^GRANT EXECUTE ON FUNCTION "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fix_type": {
+            "const": "table_revoke_dml"
+          }
+        },
+        "required": [
+          "fix_type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "template_id": {
+            "const": "table_revoke_dml"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema",
+              "table",
+              "grantee",
+              "privileges",
+              "grant_option"
+            ],
+            "properties": {
+              "schema": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "table": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "grantee": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "privileges": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE"
+                  ]
+                }
+              },
+              "grant_option": {
+                "type": "boolean"
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema_name",
+              "table_name",
+              "grantee",
+              "privileges",
+              "grant_option"
+            ],
+            "properties": {
+              "schema_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "table_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 63
+              },
+              "grantee": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "privileges": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE"
+                  ]
+                }
+              },
+              "grant_option": {
+                "type": "boolean"
+              }
+            }
+          },
+          "prior_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "acl",
+              "privileges",
+              "grant_option"
+            ],
+            "properties": {
+              "acl": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 10000
+              },
+              "privileges": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "INSERT",
+                    "UPDATE",
+                    "DELETE"
+                  ]
+                }
+              },
+              "grant_option": {
+                "type": "boolean"
+              }
+            }
+          },
+          "apply": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^REVOKE "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          },
+          "rollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statements",
+              "transactional"
+            ],
+            "properties": {
+              "statements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^GRANT "
+                }
+              },
+              "transactional": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

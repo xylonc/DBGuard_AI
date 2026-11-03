@@ -1,0 +1,8 @@
+-- Purpose: Stop one role from logging in (CIS 4.4, 4.10). Never sets or changes a password.
+-- Hardening Action: Lock an account that is not in use or has no password.
+-- Rollback (action rollback) restores LOGIN.
+{% if action == "apply" -%}
+ALTER ROLE {{ role_name | ident }} NOLOGIN;
+{%- else -%}
+ALTER ROLE {{ role_name | ident }} LOGIN;
+{%- endif %}

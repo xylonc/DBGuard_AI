@@ -278,7 +278,8 @@ class _BatchRuntime:
     def close(self): return {"verified": True}
 
 
-def test_batch_output_readme_and_report_carry_the_label(monkeypatch):
+@pytest.mark.parametrize("fixture", [False, True])
+def test_batch_output_readme_and_report_carry_the_label(monkeypatch, fixture):
     pin = _approved_site_profile().pin()
     findings = {"c1": {"status": "PASS"}, "c2": {"status": "PASS"}}
     fake_engine = SimpleNamespace(specs=[], spec_set_hash="h", hashes={}, policy_pin=pin,
@@ -303,7 +304,7 @@ def test_batch_output_readme_and_report_carry_the_label(monkeypatch):
     service = SimpleNamespace(validate_handoff=lambda request: fake_engine, run=result_for,
                               runtime_factory=_BatchRuntime)
     monkeypatch.setattr(batch_module, "build_review_bundle", fake_bundle)
-    monkeypatch.setattr(batch_module, "is_fixture", lambda result: False)
+    monkeypatch.setattr(batch_module, "is_fixture", lambda result: fixture)
     monkeypatch.setattr(batch_module.history, "record", lambda *args: None)
     monkeypatch.setattr(batch_module, "reconstruction_plan", lambda snap, specs: {"names": [], "signature": {"settings": {}}})
     monkeypatch.setattr(batch_module, "reconstruct", lambda runtime, plan: None)
@@ -322,6 +323,10 @@ def test_batch_output_readme_and_report_carry_the_label(monkeypatch):
     line = approval_text(pin)
     assert line in readme and DEMO_APPROVAL_LABEL in readme
     assert line in report
+    # The combined front page repeats the per-fix template scope line.
+    template_scope = "DEMO FIXTURE APPROVAL — not human approval"
+    assert (template_scope in readme) is fixture
+    assert (template_scope in report) is fixture
 
 
 # ---------------------------------------------------------------------------

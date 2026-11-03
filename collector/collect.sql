@@ -645,7 +645,15 @@ SELECT jsonb_pretty(jsonb_build_object(
         'owner',    pg_get_userbyid(c.relowner),
         'acl',      c.relacl::text[],
         'rls',      c.relrowsecurity,
-        'rls_forced', c.relforcerowsecurity
+        'rls_forced', c.relforcerowsecurity,
+        -- Extension that owns the relation (deptype 'e'), or null when none.
+        -- PostgreSQL allows one owning extension per object; LIMIT 1 keeps a
+        -- corrupted pg_depend from aborting the run. Any non-null blocks a fix.
+        'extension', (SELECT e.extname FROM pg_depend d
+                      JOIN pg_extension e ON e.oid = d.refobjid
+                      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid
+                        AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e'
+                      ORDER BY e.extname LIMIT 1)
     ) ORDER BY n.nspname, c.relname), '[]'::jsonb)
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace

@@ -458,7 +458,10 @@ def _applies_when_errors(cond: Any, check: Any, record: dict | None, ref: Any) -
 # ---- F6: catalog check kind ------------------------------------------------
 # Kept in one block so it rebases cleanly onto the main branch's validate.py.
 # A catalog check names a fixed evaluator from catalog_checks.REGISTRY; it has
-# no SQL, no setting and never a proof, because catalog checks never get a fix.
+# no SQL, no setting and never a proof. A spec never carries a fix: since Wave 2a
+# the per-object fixes for some catalog checks (4.3, 4.4, 4.5, 4.6, 4.9, 4.10, 5.5)
+# come from services/sandbox_poc/object_fixes.py, derived from collected evidence
+# and rendered from approved templates, so a proof here is still an error.
 
 CATALOG_CHECK_KEYS = ("kind", "evaluator", "pass_condition_quote")
 CATALOG_TIERS = ("automated", "manual_checklist")

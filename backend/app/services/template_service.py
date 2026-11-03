@@ -13,8 +13,16 @@ from typing import Any, Dict, Optional, Tuple, Type
 from jinja2 import Environment, StrictUndefined
 
 from app.models import (
+    CreateReadOnlyRoleTemplateParams,
+    FunctionRevokePublicExecuteTemplateParams,
+    FunctionSecurityInvokerTemplateParams,
     RevokePrivilegeTemplateParams,
+    RevokePublicSchemaAccessTemplateParams,
+    RoleConnectionLimitTemplateParams,
+    RoleDropAttributeTemplateParams,
+    RoleNologinTemplateParams,
     SetConfigTemplateParams,
+    TableRevokeDmlTemplateParams,
 )
 
 # Jinja2 environment with strict undefined handling for safe rendering
@@ -43,8 +51,16 @@ def literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def pg_int(value: int) -> str:
+    """Render an integer; anything else (including bool or a numeric string) is refused."""
+    if type(value) is not int:
+        raise ValueError(f"Invalid integer value: {value!r}")
+    return str(value)
+
+
 env.filters["ident"] = quote_identifier
 env.filters["literal"] = literal
+env.filters["pg_int"] = pg_int
 
 
 def compile_sql_plan_from_templates(
@@ -77,11 +93,31 @@ def compile_sql_plan_from_templates(
 # ============================================================================
 
 
-# Mapping of template names to parameter validation schemas
+# Mapping of template names to parameter validation schemas. Every bundled
+# backend/app/templates/*.sql.j2 file must have an entry (a unit test enforces it);
+# a template name without one is refused by validate_params.
 TEMPLATE_PARAM_SCHEMAS: Dict[str, Type] = {
     "set_config_parameter": SetConfigTemplateParams,
     "revoke_schema_privilege": RevokePrivilegeTemplateParams,
+    "create_read_only_rule": CreateReadOnlyRoleTemplateParams,
+    "revoke_public_access": RevokePublicSchemaAccessTemplateParams,
+    # Wave 2a (F6) per-object fixes. Parameters are derived server-side from
+    # evidence (services/sandbox_poc/object_fixes.py); the HERMES/MCP render path
+    # refuses these names (OBJECT_FIX_TEMPLATES).
+    "role_connection_limit": RoleConnectionLimitTemplateParams,
+    "role_drop_attribute": RoleDropAttributeTemplateParams,
+    "role_nologin": RoleNologinTemplateParams,
+    "function_security_invoker": FunctionSecurityInvokerTemplateParams,
+    "function_revoke_public_execute": FunctionRevokePublicExecuteTemplateParams,
+    "table_revoke_dml": TableRevokeDmlTemplateParams,
 }
+
+# Per-object fix templates: rendered only from evidence-bound proposals
+# (object_fixes.resolve/render), never from parameters a client or model supplies.
+OBJECT_FIX_TEMPLATES = frozenset({
+    "role_connection_limit", "role_drop_attribute", "role_nologin",
+    "function_security_invoker", "function_revoke_public_execute", "table_revoke_dml",
+})
 
 
 def validate_params(
@@ -101,8 +137,9 @@ def validate_params(
     schema_class = TEMPLATE_PARAM_SCHEMAS.get(template_name)
     
     if schema_class is None:
-        # No validation schema - allow raw params (use with caution)
-        return True, parameters, None
+        # Fail closed: a template without a reviewed parameter schema is never
+        # rendered with unchecked parameters.
+        return False, {}, f"No reviewed parameter schema for template {template_name!r}"
     
     try:
         # Validate and convert to validated model

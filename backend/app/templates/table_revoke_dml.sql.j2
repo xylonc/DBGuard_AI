@@ -1,0 +1,8 @@
+-- Purpose: Revoke excessive DML privileges on one table from one grantee (CIS 4.6).
+-- Hardening Action: Revoke INSERT, UPDATE or DELETE, only privileges the collected evidence shows.
+-- Rollback (action rollback) grants exactly the revoked privileges, WITH GRANT OPTION if the original had it.
+{% if action == "apply" -%}
+REVOKE {{ privileges | join(", ") }} ON TABLE {{ schema_name | ident }}.{{ table_name | ident }} FROM {% if grantee is none %}PUBLIC{% else %}{{ grantee | ident }}{% endif %};
+{%- else -%}
+GRANT {{ privileges | join(", ") }} ON TABLE {{ schema_name | ident }}.{{ table_name | ident }} TO {% if grantee is none %}PUBLIC{% else %}{{ grantee | ident }}{% endif %}{% if grant_option %} WITH GRANT OPTION{% endif %};
+{%- endif %}

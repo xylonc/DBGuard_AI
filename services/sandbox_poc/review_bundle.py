@@ -41,6 +41,10 @@ def is_fixture(result):
 
 
 def build_review_bundle(handoff, result, engine):
+    is_object = result.get('kind') == 'object'
+    require(is_object == bool(getattr(handoff, 'object_fix_id', None)), 'fix kind differs from the handoff')
+    if is_object:
+        return build_object_review_bundle(handoff, result, engine)
     require(result.get('status') == 'VERIFIED', 'only VERIFIED runs are exportable')
     require(result.get('approval_source') == 'registry', 'registry approval evidence is required')
     require(result.get('snapshot_hash') == digest(handoff.snapshot), 'snapshot identity mismatch')
@@ -133,6 +137,167 @@ def build_review_bundle(handoff, result, engine):
                 'files':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
     files['manifest.json'] = json.dumps(manifest, indent=2).encode()
     files['README.txt'] = (f'''{scope}\n{profile_line}\n\n{limit_text}Review report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]} --screenshots\n\nVerification captures actual database query output, not model-generated content.\nScreenshot dependencies: pip install playwright; python3 -m playwright install chromium.\nImages show a browser evidence viewer populated with actual query results.\nReview and perform application-specific checks in risk-review.json separately.\nFor restart settings, apply/rollback stages the configuration; the DBA restarts\nPostgreSQL outside this tool, then runs verify (or verify-rollback).\nRecollect the target with the original collector and reassess via the application.\n\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe runner checks PostgreSQL version, database name and configuration provenance.\nIt checks all scoped settings for drift before apply or rollback, and uses fresh\nconnections to verify the resulting settings and source. It never applies automatically.\nIf SQL executes but verification fails, inspect the server before retrying.\nRollback refuses drift; it is not a disaster recovery tool. Recollect and reassess\nthe real target after applying. The manifest detects accidental changes, not forgery.\n''').encode()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Wave 2a: per-object fixes. Same member allowlist and manifest as setting fixes.
+# ---------------------------------------------------------------------------
+
+OBJECT_REHEARSAL_TEXT = (
+    "\nWHAT WAS REHEARSED: each object fix ran on a stand-in copy in a disposable sandbox:\n"
+    "the target object with the same name, owner, attributes and permissions, and the roles\n"
+    "it needs. The copy holds no real data, no function bodies and no real passwords (a\n"
+    "random throwaway password stood in where the original role had one).\n"
+    "WHAT WAS NOT REHEARSED: how your applications use the object. Removing a privilege,\n"
+    "an attribute or a login can break an application or a scheduled job that relies on it.\n"
+)
+
+ROLE_FIELDS = ('rolsuper', 'rolinherit', 'rolcreaterole', 'rolcreatedb', 'rolcanlogin',
+               'rolreplication', 'rolbypassrls', 'rolconnlimit')
+
+
+def _valid_until(value):
+    """rolvaliduntil in one timezone-independent form (UTC, microseconds)."""
+    from datetime import datetime, timezone
+    if value is None or value in ('infinity', '-infinity'):
+        return value
+    require(isinstance(value, str), 'unreadable role expiry')
+    parsed = datetime.fromisoformat(value[:-1] + '+00:00' if value.endswith('Z') else value)
+    require(parsed.tzinfo is not None, 'role expiry has no timezone')
+    return parsed.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')
+
+
+def object_fingerprint(proposal, snapshot):
+    """The target object's state as the bundle runner reads it from the target.
+
+    Built from collected evidence in exactly the runner's shape (runner.object_fingerprint):
+    the pg_roles row, the table's owner/relacl/RLS flags, or the function's owner,
+    prosecdef, proacl and pinned search_path. ACLs are compared as sets: a GRANT
+    re-appends an entry that a REVOKE removed, which changes order but not privileges.
+    """
+    from .catalog_skeleton import FUNCTION_FIX_TYPES, ROLE_FIX_TYPES, TABLE_FIX_TYPES
+    baseline = snapshot['baseline']
+    target, fix_type = proposal['target'], proposal['fix_type']
+    if fix_type in ROLE_FIX_TYPES:
+        rows = [r for r in baseline.get('roles') or [] if r.get('rolname') == target['role']]
+        require(len(rows) == 1, 'target role is not in the evidence')
+        return {'kind': 'role', 'rolname': target['role'], **{k: rows[0][k] for k in ROLE_FIELDS},
+                'rolvaliduntil': _valid_until(rows[0]['rolvaliduntil'])}
+    if fix_type in TABLE_FIX_TYPES:
+        rows = [r for r in baseline.get('object_acls') or []
+                if r.get('schema') == target['schema'] and r.get('name') == target['table']]
+        require(len(rows) == 1, 'target table is not in the evidence')
+        row = rows[0]
+        return {'kind': 'table', 'schema': row['schema'], 'name': row['name'], 'relkind': row['kind'],
+                'owner': row['owner'], 'acl': None if row['acl'] is None else sorted(row['acl']),
+                'rls': row['rls'], 'rls_forced': row['rls_forced']}
+    if fix_type in FUNCTION_FIX_TYPES:
+        rows = [r for r in baseline.get('functions') or []
+                if r.get('schema') == target['schema'] and r.get('name') == target['name']
+                and r.get('identity_args') == target['identity_args']]
+        require(len(rows) == 1, 'target function is not in the evidence')
+        row = rows[0]
+        return {'kind': 'function', 'schema': row['schema'], 'name': row['name'],
+                'identity_args': row['identity_args'], 'prokind': row['kind'], 'owner': row['owner'],
+                'prosecdef': row['prosecdef'], 'acl': sorted(row['acl']),
+                'search_path': row['search_path'], 'config_names': list(row['config_names'])}
+    raise ContractError('Review bundle: unsupported object fix type')
+
+
+def build_object_review_bundle(handoff, result, engine):
+    from . import object_fixes
+    from .catalog_skeleton import target_key
+    from .workflow import object_risk_review, object_statements
+    require(result.get('status') == 'VERIFIED', 'only VERIFIED runs are exportable')
+    require(result.get('approval_source') == 'registry', 'registry approval evidence is required')
+    require(result.get('snapshot_hash') == digest(handoff.snapshot), 'snapshot identity mismatch')
+    require(result.get('spec_set_hash') == engine.spec_set_hash == handoff.spec_set_hash, 'spec identity mismatch')
+    require(result.get('spec_hashes') == engine.hashes and result.get('collector_hash') == engine.collector_hash, 'collector/spec evidence mismatch')
+    require(result.get('policy_profile') == engine.policy_pin, 'policy profile differs from the tested run')
+    fix, proposal = result['fix_unit'], result['proposal']
+    require(result.get('fix_unit_hash') == digest(fix), 'fix-unit identity mismatch')
+    require(fix['fix_id'] == proposal['fix_id'] == handoff.object_fix_id, 'fix differs from the selected object fix')
+    require(fix['spec_id'] == proposal['spec_id'] == handoff.control_id and fix['requires'] == 'none', 'unsupported fix')
+    from .shared import ROOT, validate_contract
+    if (ROOT / 'catalog/specs/contracts/fix-unit-v2.json').is_file():
+        validate_contract(fix, 'fix-unit-v2.json')
+    # Re-derived from the bound evidence: a stored proposal cannot widen the fix.
+    require(object_fixes.resolve(engine, handoff.snapshot, engine.policy_pin, fix['fix_id']) == proposal,
+            'proposal differs from the evidence-derived proposal')
+    template = result['template']
+    ref = handoff.template_ref
+    require(template['registry_name'] == ref.registry_name == proposal['fix_type'] and template['version'] == ref.version
+            and template['sha256'] == ref.sha256, 'selected template was not pinned in the handoff')
+    pins = [{k: e.get(k) for k in ('document_id', 'version', 'sha256')} for e in template['evidence']]
+    require(pins == [p.model_dump() for p in ref.evidence], 'evidence reference mismatch')
+    apply, rollback = object_statements({'apply': fix['apply']['statements'], 'rollback': fix['rollback']['statements']},
+                                        proposal['fix_type'])
+    require(result['rendered_apply_sql'] == '\n'.join(apply) and result['rendered_rollback_sql'] == '\n'.join(rollback),
+            'rendered statements differ from the fix unit')
+    # Each statement still has the reviewed shape of its template (object_fixes.STATEMENT_SHAPES).
+    require(all(re.fullmatch(object_fixes.STATEMENT_SHAPES[(proposal['fix_type'], action)], sql)
+                for action, statements in (('apply', apply), ('rollback', rollback)) for sql in statements),
+            'a statement is outside the reviewed template shape')
+    attempts = result['attempts']
+    require(1 <= len(attempts) <= 3 and all(a.get('cleanup', {}).get('verified') is True for a in attempts), 'attempt cleanup is incomplete')
+    final = attempts[-1]
+    require(final.get('status') == 'VERIFIED' and final.get('rollback_verified') is True and final.get('health_after_apply') is True and final.get('health_after_rollback') is True, 'acceptance evidence incomplete')
+    require(final.get('rendered_apply_sql') == result['rendered_apply_sql'] and final.get('fix_unit_hash') == digest(fix), 'final attempt differs from exported fix')
+    before, after, restored = (engine.assess(final[k]) for k in ('before', 'after', 'rollback'))
+    require(before == final['before_assessment'] and after == final['after_assessment'] and restored == final['rollback_assessment'], 'assessments do not match snapshots')
+    bound = engine.bind_assessment(handoff.snapshot, handoff.assessment)
+    require(before['findings'] == bound['findings'] == restored['findings'], 'reproduction or rollback findings differ')
+    regressions = [sid for sid, f in before['findings'].items() if is_regression(f['status'], after['findings'][sid]['status']) or sid in engine.gapped_settings(after['findings'])]
+    require(not regressions and final.get('regressions') == [] and final.get('other_objects_changed') == [], 'regression evidence is invalid')
+    names = [s['check']['setting_name'] for s in engine.specs if 'check' in s and s['check'].get('kind') != 'catalog']
+    prior_settings = signature(handoff.snapshot, names)
+    require(all(signature(final[k], names) == prior_settings for k in ('before', 'after', 'rollback')), 'an object fix changed configuration settings')
+    require(not any(blocking_gaps(s) for s in (final['before'], final['after'], final['rollback'])), 'collection has gaps')
+    source_signature = object_fixes.object_signature(proposal, handoff.snapshot)
+    require(result.get('source_object_signature') == source_signature, 'source object signature differs')
+    require(object_fixes.object_signature(proposal, final['before']) == source_signature == object_fixes.object_signature(proposal, final['rollback']), 'stand-in or rollback object differs from the source')
+    require(object_fixes.prior_holds(proposal, final['before']) and object_fixes.prior_holds(proposal, final['rollback']), 'prior state not reproduced')
+    require(not object_fixes.predicate(proposal, final['before']) and object_fixes.predicate(proposal, final['after'])
+            and not object_fixes.predicate(proposal, final['rollback']), 'object predicate evidence is invalid')
+    prior = object_fingerprint(proposal, handoff.snapshot)
+    applied = object_fingerprint(proposal, final['after'])
+    require(object_fingerprint(proposal, final['before']) == prior == object_fingerprint(proposal, final['rollback']), 'target fingerprint not reproduced or restored')
+    require(applied != prior, 'the fix did not change the target object')
+    demo = is_fixture(result)
+    risk = result.get('risk_review') or object_risk_review(proposal, template.get('risk_level'))
+    predicate = fix['verify']['predicate']
+    config = {'kind': 'object', 'fix_id': fix['fix_id'], 'fix_type': fix['fix_type'], 'object_key': target_key(proposal),
+              'database': handoff.snapshot['envelope']['database'], 'demo_fixture_approval': demo,
+              'run_id': result['run_id'], 'control_id': fix['spec_id'], 'requires': 'none', 'transactional': True,
+              'target': proposal['target'], 'target_id': handoff.snapshot['envelope']['target_id'],
+              'system_identifier': handoff.snapshot['baseline'].get('identity', {}).get('system_identifier'),
+              'spec_set_hash': engine.spec_set_hash, 'snapshot_hash': result['snapshot_hash'],
+              'policy_profile': engine.policy_pin, 'prior': prior, 'applied': applied,
+              'proposal_prior': proposal['prior'], 'predicate': predicate,
+              'apply_statements': apply, 'rollback_statements': rollback}
+    scope = 'DEMO FIXTURE APPROVAL — not human approval' if demo else 'Registry-approved template and evidence — DBA review still required'
+    profile_line = approval_text(engine.policy_pin)
+    title = proposal.get('title') or fix['fix_id']
+    states = ''.join(f'<tr><td>{escape(label)}</td><td><pre>{escape(json.dumps(object_fingerprint(proposal, final[k]), indent=2))}</pre></td></tr>'
+                     for label, k in (('Before (stand-in, equals source evidence)', 'before'), ('After fix', 'after'), ('After rollback', 'rollback')))
+    report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p><p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>{escape(title)}</h2><p>{escape(str(proposal.get('explanation') or ''))}</p><p><strong>Proof checked after the fix:</strong> {escape(predicate)}</p><p class="notice"><strong>What was rehearsed:</strong> the fix on a stand-in copy of this object (same name, owner, attributes and permissions) in a disposable sandbox. No real data, no function bodies and no real passwords were copied. <strong>What was not rehearsed:</strong> how your applications use this object.</p><h2>Object state in the sandbox</h2><table><tr><th>Phase</th><th>Object</th></tr>{states}</table><p>{len(attempts)} attempt(s). All attempt resources removed. Every other recreated object and every scoped setting was unchanged; exact rollback verified.</p><h2>Risk</h2><pre>{escape(json.dumps(risk, indent=2))}</pre><h2>Reviewed apply SQL (one transaction)</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL (one transaction)</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17. The runner checks the PostgreSQL version, database, cluster identity and this object's exact state before and inside the transaction, and refuses if anything differs. After applying, recollect and reassess the target using the same specs.</p></body></html>'''
+    files = {'fix.json': json.dumps(config, indent=2).encode(),
+             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
+             'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),
+             'harden.sh': b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" "$@"\n'}
+    files['risk-review.json'] = json.dumps(risk, indent=2).encode()
+    files['visual_evidence.py'] = (ASSETS/'visual_evidence.py').read_bytes()
+    files['verify.sh'] = b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" verify "$@"\n'
+    manifest = {'schema_version': 'review-bundle-v1', 'run_id': result['run_id'], 'demo_fixture_approval': demo,
+                'requires_dba_review': True, 'snapshot_hash': result['snapshot_hash'], 'spec_set_hash': engine.spec_set_hash,
+                'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
+    files['manifest.json'] = json.dumps(manifest, indent=2).encode()
+    files['README.txt'] = (f'''{scope}\n{profile_line}\n\nFix: {title}\nProof checked after the fix: {predicate}\n{OBJECT_REHEARSAL_TEXT}\nReview report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and that this one\nobject is still exactly as it was in the evidence. It applies (and rolls back) inside one\ntransaction, re-reads the object before COMMIT and rolls the transaction back if the\nresult is not exactly the tested state. It never applies automatically.\nRecollect the target with the original collector and reassess via the application.\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe manifest detects accidental changes, not forgery.\n''').encode()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():

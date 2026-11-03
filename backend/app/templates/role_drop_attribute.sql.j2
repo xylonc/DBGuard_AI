@@ -1,0 +1,9 @@
+-- Purpose: Remove one administrative attribute from one role (CIS 4.3, 4.9).
+-- Hardening Action: Revoke an excessive role attribute (SUPERUSER, CREATEROLE, CREATEDB, REPLICATION or BYPASSRLS).
+-- Only an attribute the role has in the collected evidence is offered; never for the bootstrap superuser.
+-- Rollback (action rollback) restores the attribute.
+{% if action == "apply" -%}
+ALTER ROLE {{ role_name | ident }} NO{{ attribute }};
+{%- else -%}
+ALTER ROLE {{ role_name | ident }} {{ attribute }};
+{%- endif %}

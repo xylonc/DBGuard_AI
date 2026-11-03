@@ -29,11 +29,16 @@ def check_readiness(service, handoff, *, check_registry=False, allow_demo_fixtur
         return report
     try:
         template = service.resolve_template(handoff)
-        # Confirm that the approved template fits the selected control's reviewed fix,
-        # not a default setting.
-        from .planning import fix_scope
-        _, name, value = fix_scope(engine, handoff.control_id)
-        canonical_apply(template.render(name, value), name)
+        if getattr(handoff, "object_fix_id", None) is not None:
+            # Wave 2a: the approved template must render the evidence-derived proposal.
+            from .object_fixes import render
+            render(service.object_proposal(engine, handoff), template)
+        else:
+            # Confirm that the approved template fits the selected control's reviewed fix,
+            # not a default setting.
+            from .planning import fix_scope
+            _, name, value = fix_scope(engine, handoff.control_id)
+            canonical_apply(template.render(name, value), name)
         alternatives = [service.resolve_template(handoff, ref) for ref in handoff.retry_template_refs]
         if not allow_demo_fixtures and any(is_fixture({'template': alternative.identity()}) for alternative in alternatives):
             raise ContractError('Alternative candidates include demo/test approvals')

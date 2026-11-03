@@ -570,11 +570,19 @@ def risk_review(engine, snapshot, control, reviewer=None, template_risk=None):
 
 
 def recommend_order(fixes):
+    # Keyed by fix id (Wave 2a): one control can have several per-object fixes.
     by_id = {f["fix_id"]: f for f in fixes}
     if len(by_id) != len(fixes):
         raise ContractError("Duplicate or conflicting fixes")
-    if len({f["setting"] for f in fixes}) != len(fixes):
+    settings = [f["setting"] for f in fixes if f.get("setting") is not None]
+    if len(set(settings)) != len(settings):
         raise ContractError("Multiple fixes change the same setting")
+    # Per-object fixes carry setting None plus fix_type and target; the same change
+    # offered under two controls (e.g. NOSUPERUSER for 4.3 and 4.9) is one change.
+    changes = [json.dumps([f.get("fix_type"), f.get("target")], sort_keys=True)
+               for f in fixes if f.get("setting") is None]
+    if len(set(changes)) != len(changes):
+        raise ContractError("Multiple fixes make the same object change")
     ordered = []
     pending = dict(by_id)
     ranks = {"low": 0, "medium": 1, "high": 2, "not_assessed": 3}

@@ -529,6 +529,225 @@ class RevokePrivilegeTemplateParams(BaseModel):
         return v
 
 
+class CreateReadOnlyRoleTemplateParams(BaseModel):
+    """Parameters for the create_read_only_rule template (MCP render path).
+
+    Added so every bundled template has a schema (Wave 2a): names are checked here
+    and quoted by the ``ident`` filter; database_name is filled from the snapshot
+    by the API when absent.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    role_name: str
+    database_name: Optional[str] = None
+    schema_name: str = "public"
+
+    @field_validator("role_name", "schema_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+    @field_validator("database_name")
+    @classmethod
+    def _database(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else pg_identifier(v)
+
+    def model_dump(self, **kwargs):  # an absent database_name stays absent
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump(**kwargs)
+
+
+class RevokePublicSchemaAccessTemplateParams(BaseModel):
+    """Parameters for the revoke_public_access template (MCP render path)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_name: str = "public"
+
+    @field_validator("schema_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+
+# ---- Wave 2a (F6): per-object fix templates ---------------------------------
+# Parameters for the six object-fix templates. Values are never taken from a
+# request: services/sandbox_poc/object_fixes.py derives them from collected
+# evidence (and the approved policy profile for connection limits). These schemas
+# are the second line: identifiers are checked here and quoted by ``ident``;
+# keywords, privileges and argument types come only from the closed sets below.
+
+# PostgreSQL NAMEDATALEN - 1.
+PG_IDENTIFIER_MAX_BYTES = 63
+
+# Reviewed allowlist of built-in argument types for function fixes, keyed by the
+# exact pg_get_function_identity_arguments / format_type spelling. The value is the
+# SQL rendered into ALTER/REVOKE ... FUNCTION: SQL-keyword types stay as keywords
+# (the grammar always maps them to pg_catalog); every other type is written
+# pg_catalog-qualified so a same-named type earlier in search_path cannot capture it.
+# Polymorphic and pseudo-types (anyelement, record, internal, ...) are deliberately
+# absent: a function using them is shown as "can't rehearse".
+FUNCTION_ARG_TYPES = {
+    "boolean": "boolean",
+    "smallint": "smallint",
+    "integer": "integer",
+    "bigint": "bigint",
+    "real": "real",
+    "double precision": "double precision",
+    "numeric": "numeric",
+    "character varying": "character varying",
+    "character": "character",
+    "bit": "bit",
+    "bit varying": "bit varying",
+    "interval": "interval",
+    "time without time zone": "time without time zone",
+    "time with time zone": "time with time zone",
+    "timestamp without time zone": "timestamp without time zone",
+    "timestamp with time zone": "timestamp with time zone",
+    "text": "pg_catalog.text",
+    "name": "pg_catalog.name",
+    "bytea": "pg_catalog.bytea",
+    "date": "pg_catalog.date",
+    "uuid": "pg_catalog.uuid",
+    "json": "pg_catalog.json",
+    "jsonb": "pg_catalog.jsonb",
+    "xml": "pg_catalog.xml",
+    "inet": "pg_catalog.inet",
+    "cidr": "pg_catalog.cidr",
+    "macaddr": "pg_catalog.macaddr",
+    "money": "pg_catalog.money",
+    "oid": "pg_catalog.oid",
+    "regclass": "pg_catalog.regclass",
+    "regtype": "pg_catalog.regtype",
+    "regrole": "pg_catalog.regrole",
+    "regnamespace": "pg_catalog.regnamespace",
+    "regproc": "pg_catalog.regproc",
+    "regprocedure": "pg_catalog.regprocedure",
+    "tsvector": "pg_catalog.tsvector",
+    "tsquery": "pg_catalog.tsquery",
+    "pg_lsn": "pg_catalog.pg_lsn",
+    "int4range": "pg_catalog.int4range",
+    "int8range": "pg_catalog.int8range",
+    "numrange": "pg_catalog.numrange",
+    "daterange": "pg_catalog.daterange",
+    "tsrange": "pg_catalog.tsrange",
+    "tstzrange": "pg_catalog.tstzrange",
+}
+# IN is implicit in identity arguments; INOUT cannot belong to the void stub the
+# sandbox recreates, so only VARIADIC (of an array type) is accepted.
+FUNCTION_ARG_MODES = ("VARIADIC",)
+# One canonical rendered argument: optional mode, an allowlisted SQL type, optional [].
+FUNCTION_ARG_RE = re.compile(
+    r"(?:(?:" + "|".join(FUNCTION_ARG_MODES) + r") )?(?:"
+    + "|".join(re.escape(sql) for sql in sorted(set(FUNCTION_ARG_TYPES.values()), key=len, reverse=True))
+    + r")(?:\[\])?"
+)
+ROLE_ATTRIBUTES = ("SUPERUSER", "CREATEROLE", "CREATEDB", "REPLICATION", "BYPASSRLS")
+DML_PRIVILEGE_ORDER = ("INSERT", "UPDATE", "DELETE")
+
+
+def pg_identifier(value: Any) -> str:
+    """A name from evidence that ``ident`` may quote: non-empty, at most 63 bytes,
+    no NUL, control, format (bidi/zero-width) or line/paragraph separator characters."""
+    import unicodedata
+    if not isinstance(value, str) or not value:
+        raise ValueError("identifier must be a non-empty string")
+    if len(value.encode("utf-8")) > PG_IDENTIFIER_MAX_BYTES:
+        raise ValueError("identifier is longer than 63 bytes")
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") for c in value):
+        raise ValueError("identifier contains a control or invisible character")
+    return value
+
+
+class _ObjectFixParams(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    action: Literal["apply", "rollback"]
+
+
+class RoleConnectionLimitTemplateParams(_ObjectFixParams):
+    role_name: str
+    # apply: the approved profile's limit (>= 0); rollback: the prior value (-1 = unlimited).
+    connection_limit: int = Field(ge=-1, le=2_147_483_647)
+
+    @field_validator("role_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+
+class RoleDropAttributeTemplateParams(_ObjectFixParams):
+    role_name: str
+    attribute: Literal["SUPERUSER", "CREATEROLE", "CREATEDB", "REPLICATION", "BYPASSRLS"]
+
+    @field_validator("role_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+
+class RoleNologinTemplateParams(_ObjectFixParams):
+    role_name: str
+
+    @field_validator("role_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+
+class _FunctionFixParams(_ObjectFixParams):
+    schema_name: str
+    function_name: str
+    arg_types: list[str] = Field(max_length=100)
+
+    @field_validator("schema_name", "function_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+    @field_validator("arg_types")
+    @classmethod
+    def _arg_types(cls, v: list[str]) -> list[str]:
+        for item in v:
+            if not isinstance(item, str) or not FUNCTION_ARG_RE.fullmatch(item):
+                raise ValueError(f"argument type is not in the reviewed built-in allowlist: {item!r}")
+        return v
+
+
+class FunctionSecurityInvokerTemplateParams(_FunctionFixParams):
+    pass
+
+
+class FunctionRevokePublicExecuteTemplateParams(_FunctionFixParams):
+    pass
+
+
+class TableRevokeDmlTemplateParams(_ObjectFixParams):
+    schema_name: str
+    table_name: str
+    # None means PUBLIC (rendered as the keyword, never as a quoted name).
+    grantee: Optional[str]
+    privileges: list[Literal["INSERT", "UPDATE", "DELETE"]] = Field(min_length=1, max_length=3)
+    grant_option: bool
+
+    @field_validator("schema_name", "table_name")
+    @classmethod
+    def _names(cls, v: str) -> str:
+        return pg_identifier(v)
+
+    @field_validator("grantee")
+    @classmethod
+    def _grantee(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else pg_identifier(v)
+
+    @field_validator("privileges")
+    @classmethod
+    def _privileges(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v) or v != [p for p in DML_PRIVILEGE_ORDER if p in v]:
+            raise ValueError("privileges must be unique and in the order INSERT, UPDATE, DELETE")
+        return v
+
+
 class ProposalReviewPackage(BaseModel):
     """Complete DBA review package for a single proposal."""
     

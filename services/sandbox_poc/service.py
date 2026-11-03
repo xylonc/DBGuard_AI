@@ -48,21 +48,42 @@ class SandboxService:
             if engine.spec_set_hash != request.spec_set_hash:
                 raise ContractError("Spec-set hash does not match supplied specs")
             assessment = engine.bind_assessment(request.snapshot, request.assessment)
-            if assessment["findings"].get(request.control_id, {}).get("status") != "FAIL":
-                raise ContractError("The selected supported control must be FAIL")
+            if request.object_fix_id is None:
+                if assessment["findings"].get(request.control_id, {}).get("status") != "FAIL":
+                    raise ContractError("The selected supported control must be FAIL")
             gapped = engine.gapped_settings(assessment["findings"])
             if gapped:
                 overrides = [reason for sid in gapped
                              if (reason := session_override_reason(assessment["findings"][sid]))]
                 raise ContractError("Gapped controls cannot establish regression coverage"
                                     + (f". {overrides[0]}" if overrides else ""))
-            fix_scope(engine, request.control_id)
+            if request.object_fix_id is None:
+                fix_scope(engine, request.control_id)
+            else:
+                self.object_proposal(engine, request)
             reconstruction_plan(request.snapshot, engine.specs)
             return engine
         except ContractError:
             raise
         except (ValidationError, RecordsIntegrityError, KeyError, TypeError, ValueError) as exc:
             raise ContractError("Malformed or untraceable snapshot/spec handoff") from exc
+
+    @staticmethod
+    def object_proposal(engine: SpecEngine, request: SandboxHandoff) -> dict:
+        """Re-derive the selected per-object fix from the handoff's own evidence.
+
+        Only the fix id travels in a handoff; names and values come from
+        object_fixes.resolve on this snapshot and the engine's (approved) profile.
+        """
+        from .object_fixes import FIX_TYPES, resolve
+        proposal = resolve(engine, request.snapshot, engine.policy_pin, request.object_fix_id)
+        if proposal["spec_id"] != request.control_id:
+            raise ContractError("The selected control is not the object fix's control")
+        if FIX_TYPES[proposal["fix_type"]].template != request.template_ref.registry_name:
+            raise ContractError("The template is not the approved template for this object fix type")
+        if not proposal["rehearsable"]:
+            raise ContractError(proposal.get("not_rehearsable_reason") or "This fix cannot be rehearsed")
+        return proposal
 
     def resolve_template(self, request: SandboxHandoff, ref=None):
         """Resolve exact pins using the SELECT-only registry loader."""
@@ -78,6 +99,8 @@ class SandboxService:
         engine = self.validate_handoff(request)
         if request.retry_mode == 'adaptive' and self.reviser is None:
             raise ContractError('Adaptive retries require the sandbox LLM reviewer to be configured')
+        if request.object_fix_id is not None:
+            return self.run_object(engine, request)
         template = self.resolve_template(request)
         alternatives = [self.resolve_template(request, ref) for ref in request.retry_template_refs] if request.retry_mode == 'adaptive' else []
 
@@ -92,6 +115,18 @@ class SandboxService:
             alternatives=alternatives, refresh_template=refresh, control_id=request.control_id).run(
             request.snapshot, request.assessment)
         result["risk_review"] = review
+        result.update(run_id=str(uuid.uuid4()), approval_source="registry",
+                      requires_dba_review=True, handoff_version=request.schema_version)
+        return result
+
+    def run_object(self, engine: SpecEngine, request: SandboxHandoff) -> dict:
+        """Wave 2a: rehearse one per-object fix (sandbox loop owned by workflow.py)."""
+        from .workflow import ObjectRemediationLoop
+        proposal = self.object_proposal(engine, request)
+        template = self.resolve_template(request)
+        result = ObjectRemediationLoop(engine, template, proposal,
+                                       runtime_factory=self.runtime_factory).run(
+            request.snapshot, request.assessment)
         result.update(run_id=str(uuid.uuid4()), approval_source="registry",
                       requires_dba_review=True, handoff_version=request.schema_version)
         return result

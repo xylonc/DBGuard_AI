@@ -10,8 +10,118 @@ from app.services.spec_engine.policy import approval_text
 from .planning import SANDBOX_LIMITS, recommend_order, fix_scope
 from .provenance import reconstruct, reconstruction_plan, signature
 from .shared import ContractError, blocking_gaps, digest, is_regression
-from .review_bundle import build_review_bundle, is_fixture
+from .review_bundle import OBJECT_REHEARSAL_TEXT, build_review_bundle, is_fixture, object_fingerprint
+from .workflow import in_transaction, health_queries, _normalised
+from . import catalog_skeleton
 from . import history
+
+
+def _object_fixes():
+    from . import object_fixes
+    return object_fixes
+
+
+def request_fix_id(request) -> str:
+    """Batch identity: the object fix id, else the setting fix id of the control."""
+    fix_id = getattr(request, "object_fix_id", None)
+    if fix_id:
+        return fix_id
+    return "control:" + request.control_id
+
+
+def _request_matches(request, result) -> bool:
+    fix_id = getattr(request, "object_fix_id", None)
+    if is_object(result):
+        return fix_id == result["fix_unit"]["fix_id"]
+    return not fix_id and request.control_id == result["fix_unit"]["spec_id"]
+
+
+def is_object(result) -> bool:
+    return result.get("kind") == "object"
+
+
+def object_proposal(engine, snapshot, request) -> dict:
+    proposal = _object_fixes().resolve(engine, snapshot, engine.policy_pin, request.object_fix_id)
+    if not isinstance(proposal, dict) or proposal.get("fix_id") != request.object_fix_id:
+        raise ContractError("Selected object fix is not offered for this evidence")
+    return proposal
+
+
+def _attributes(proposal) -> set:
+    """The (object, attribute) pairs one object fix changes."""
+    key = catalog_skeleton.target_key(proposal)
+    fix_type, target = proposal["fix_type"], proposal["target"]
+    if fix_type == "role_connection_limit":
+        return {(key, "connection_limit")}
+    if fix_type == "role_drop_attribute":
+        return {(key, "attribute:" + str(target["attribute"]))}
+    if fix_type == "role_nologin":
+        return {(key, "login")}
+    if fix_type == "function_security_invoker":
+        return {(key, "security")}
+    if fix_type == "function_revoke_public_execute":
+        return {(key, "acl:PUBLIC")}
+    if fix_type == "table_revoke_dml":
+        # One pair per revoked privilege: INSERT and UPDATE for the same grantee are
+        # separate attributes (the engine splits proposals by grant option).
+        return {(key, "acl:" + str(target["grantee"]) + ":" + privilege) for privilege in target["privileges"]}
+    raise ContractError("Unsupported object fix type")
+
+
+def object_conflicts(proposals) -> None:
+    seen = set()
+    for proposal in proposals:
+        pairs = _attributes(proposal)
+        if pairs & seen:
+            raise ContractError("Two selected fixes change the same object attribute")
+        seen |= pairs
+
+
+def _objects_unchanged(skeleton, current, expected, except_key=None) -> bool:
+    if not skeleton:
+        return True
+    now = catalog_skeleton.fingerprints(current, skeleton)
+    want = catalog_skeleton.fingerprints(expected, skeleton)
+    return all(now[k] == want[k] for k in want if k != except_key) and (
+        except_key is None or _normalised(now.get(except_key)) == _normalised(want.get(except_key)))
+
+
+def _object_step(engine, runtime, fixes, plan, skeleton, result, previous, applied_objects):
+    """Apply one object fix (one transaction) in the combined sandbox and verify it."""
+    proposal, fix = result["proposal"], result["fix_unit"]
+    key = catalog_skeleton.target_key(proposal)
+    runtime.sql(in_transaction(fix["apply"]["statements"]))
+    after = engine.collect(runtime)
+    report = engine.assess(after)
+    prior = engine.assess(previous)
+    regressions = [sid for sid, f in prior["findings"].items()
+                   if is_regression(f["status"], report["findings"][sid]["status"])
+                   or sid in engine.gapped_settings(report["findings"])]
+    checks = health_queries(runtime, "AFTER COMBINED FIX " + fix["fix_id"])
+    before_prints = catalog_skeleton.fingerprints(previous, skeleton)
+    after_prints = catalog_skeleton.fingerprints(after, skeleton)
+    others = sorted(k for k in before_prints if k != key and after_prints[k] != before_prints[k])
+    # Every object fix applied so far still holds (per-object predicates).
+    holding = all(fixes.predicate(r["proposal"], after) for r in applied_objects)
+    if (not fixes.predicate(proposal, after) or not holding or regressions or others
+            or blocking_gaps(after) or not checks["passed"] or not runtime.health()
+            or signature(after, plan["names"]) != signature(previous, plan["names"])):
+        raise ContractError("Combined target, regression or functional gate failed")
+    return {"fix_id": fix["fix_id"], "before": previous, "after": after,
+            "assessment": report, "functional_checks": checks}
+
+
+def _object_rollback(engine, runtime, fixes, plan, skeleton, result, expected_snapshot):
+    proposal = result["proposal"]
+    runtime.sql(in_transaction(result["fix_unit"]["rollback"]["statements"]))
+    restored = engine.collect(runtime)
+    return bool(
+        fixes.object_signature(proposal, restored) == fixes.object_signature(proposal, expected_snapshot)
+        and signature(restored, plan["names"]) == signature(expected_snapshot, plan["names"])
+        and engine.assess(restored)["findings"] == engine.assess(expected_snapshot)["findings"]
+        and not blocking_gaps(restored)
+        and _objects_unchanged(skeleton, restored, expected_snapshot, catalog_skeleton.target_key(proposal))
+        and runtime.health())
 
 
 def run_batch(requests, service, requested_order=None):
@@ -24,10 +134,14 @@ def run_batch(requests, service, requested_order=None):
         for r in requests
     ):
         raise ContractError("Batch fixes must share the same snapshot, exact specs and policy profile")
-    controls = [r.control_id for r in requests]
-    if len(set(controls)) != len(controls):
-        raise ContractError("Duplicate controls in batch")
+    keys = [request_fix_id(r) for r in requests]
+    if len(set(keys)) != len(keys):
+        raise ContractError("Duplicate fixes in batch")
     engine = service.validate_handoff(first)
+    # Object fixes are re-derived from the shared evidence before anything runs, so
+    # two fixes on the same object attribute are refused without a container.
+    object_conflicts([object_proposal(engine, first.snapshot, r) for r in requests
+                      if getattr(r, "object_fix_id", None)])
     results = []
     for r in requests:
         result = service.run(r)
@@ -61,20 +175,39 @@ def run_batch(requests, service, requested_order=None):
     plan = reconstruction_plan(first.snapshot, engine.specs)
     record = {"status": "FAILED", "steps": [], "rollback": [], "run_id": runtime.run_id}
     applied = []
+    objects = [r for r in results if is_object(r)]
+    fixes = _object_fixes() if objects else None
+    skeleton = None
+    baseline = None  # the combined sandbox's own first collection (stand-in included)
     try:
         runtime.start()
         reconstruct(runtime, plan)
+        if objects:
+            # One stand-in holding every object target of the batch.
+            skeleton = catalog_skeleton.build(runtime, first.snapshot, [r["proposal"] for r in objects])
+            record["skeleton"] = skeleton
         before = engine.collect(runtime)
+        baseline = before
         if (
             signature(before, plan["names"]) != plan["signature"]
             or engine.assess(before)["findings"]
             != engine.assess(first.snapshot)["findings"]
         ):
             raise ContractError("Combined baseline reproduction differs")
+        for result in objects:
+            proposal = result["proposal"]
+            if (not fixes.prior_holds(proposal, before) or fixes.predicate(proposal, before)
+                    or fixes.object_signature(proposal, before) != result["source_object_signature"]):
+                raise ContractError("Combined stand-in does not reproduce " + proposal["fix_id"])
         previous = before
         for result in results:
             # Mark before SQL so a partial apply is also rolled back.
             applied.append(result)
+            if is_object(result):
+                record["steps"].append(_object_step(engine, runtime, fixes, plan, skeleton, result,
+                                                    previous, [r for r in applied if is_object(r)]))
+                previous = record["steps"][-1]["after"]
+                continue
             runtime.sql(result["rendered_apply_sql"])
             expected = {
                 n: r["setting"]
@@ -107,6 +240,8 @@ def run_batch(requests, service, requested_order=None):
                 or regressions
                 or blocking_gaps(after)
                 or not checks["passed"]
+                or (skeleton and catalog_skeleton.fingerprints(after, skeleton)
+                    != catalog_skeleton.fingerprints(previous, skeleton))
             ):
                 raise ContractError(
                     "Combined target, regression or functional gate failed"
@@ -128,7 +263,6 @@ def run_batch(requests, service, requested_order=None):
     finally:
         try:
             for result in reversed(applied):
-                runtime.sql(result["rendered_rollback_sql"])
                 # Desired baseline is the state immediately before this fix.
                 idx = results.index(result)
                 expected_snapshot = (
@@ -137,9 +271,16 @@ def run_batch(requests, service, requested_order=None):
                     else (
                         record["steps"][-1]["after"]
                         if record["steps"]
-                        else first.snapshot
+                        else (baseline or first.snapshot)
                     )
                 )
+                if is_object(result):
+                    ok = _object_rollback(engine, runtime, fixes, plan, skeleton, result, expected_snapshot)
+                    record["rollback"].append({"fix_id": result["fix_unit"]["fix_id"], "verified": ok})
+                    if not ok:
+                        raise ContractError("Combined exact rollback failed")
+                    continue
+                runtime.sql(result["rendered_rollback_sql"])
                 expected = {
                     n: r["setting"]
                     for n, r in signature(expected_snapshot, plan["names"])[
@@ -154,6 +295,7 @@ def run_batch(requests, service, requested_order=None):
                     and engine.assess(restored)["findings"]
                     == engine.assess(expected_snapshot)["findings"]
                     and runtime.health()
+                    and _objects_unchanged(skeleton, restored, expected_snapshot)
                 )
                 record["rollback"].append(
                     {"fix_id": result["fix_unit"]["fix_id"], "verified": ok}
@@ -204,16 +346,19 @@ def run_batch(requests, service, requested_order=None):
         return output, None
     files = {}
     for result, step in zip(results, record["steps"]):
-        handoff = next(
-            r for r in requests if r.control_id == result["fix_unit"]["spec_id"]
-        )
+        handoff = next(r for r in requests if _request_matches(r, result))
         with zipfile.ZipFile(
             io.BytesIO(build_review_bundle(handoff, result, engine))
         ) as z:
             members = {name: z.read(name) for name in z.namelist()}
         config = json.loads(members["fix.json"])
-        config["prior"] = signature(step["before"], plan["names"])
-        config["applied"] = signature(step["after"], plan["names"])
+        if is_object(result):
+            # The runner's guard expects the preceding fixes to remain applied.
+            config["prior"] = object_fingerprint(result["proposal"], step["before"])
+            config["applied"] = object_fingerprint(result["proposal"], step["after"])
+        else:
+            config["prior"] = signature(step["before"], plan["names"])
+            config["applied"] = signature(step["after"], plan["names"])
         config["combined_run_id"] = output["run_id"]
         members["fix.json"] = json.dumps(config, indent=2).encode()
         manifest = json.loads(members["manifest.json"])
@@ -222,16 +367,22 @@ def run_batch(requests, service, requested_order=None):
         prefix = result["fix_unit"]["fix_id"] + "/"
         files.update({prefix + k: v for k, v in members.items()})
     files["combined-evidence.json"] = json.dumps(output, indent=2).encode()
+    # The per-fix files carry the scope line; repeat it on the combined front page.
+    scope = ("DEMO FIXTURE APPROVAL — not human approval\n" if output.get("demo_fixture_approval")
+             else "")
     files["README.txt"] = (
-        "All selected fixes passed individually and together in one disposable sandbox.\nApply one complete fix at a time in this order: "
+        scope + "All selected fixes passed individually and together in one disposable sandbox.\nApply one complete fix at a time in this order: "
         + ", ".join(output["recommended_order"])
         + "\n" + approval_text(engine.policy_pin)
         + "\nVerify each before proceeding. Roll back in REVERSE order.\nThe per-fix guard expects the preceding fixes to remain applied. If a DBA chooses another order, create and test a new batch.\nIndividual report.html files show isolated tests; combined-evidence.json records the combined states.\nTarget changes have NOT been performed.\n"
         + "".join(f"\nSANDBOX LIMIT ({f['fix_id']}): {SANDBOX_LIMITS[f['setting']]}\n"
-                  for f in ordered if f["setting"] in SANDBOX_LIMITS)
+                  for f in ordered if f.get("setting") in SANDBOX_LIMITS)
+        + (OBJECT_REHEARSAL_TEXT if objects else "")
     ).encode()
     files["report.html"] = (
-        "<!doctype html><html><body><h1>Combined DBA review</h1><p>Sandbox verified. Target application NOT PERFORMED.</p><p>"
+        "<!doctype html><html><body><h1>Combined DBA review</h1>"
+        + (f"<p>{escape(scope.strip())}</p>" if scope else "")
+        + "<p>Sandbox verified. Target application NOT PERFORMED.</p><p>"
         + escape(approval_text(engine.policy_pin))
         + "</p><ol>"
         + "".join(

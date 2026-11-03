@@ -1,0 +1,9 @@
+-- Purpose: Make one SECURITY DEFINER function run with the caller's privileges (CIS 4.5).
+-- Hardening Action: Change SECURITY DEFINER to SECURITY INVOKER.
+-- Argument types come only from the reviewed built-in type allowlist.
+-- Rollback (action rollback) restores SECURITY DEFINER.
+{% if action == "apply" -%}
+ALTER FUNCTION {{ schema_name | ident }}.{{ function_name | ident }}({{ arg_types | join(", ") }}) SECURITY INVOKER;
+{%- else -%}
+ALTER FUNCTION {{ schema_name | ident }}.{{ function_name | ident }}({{ arg_types | join(", ") }}) SECURITY DEFINER;
+{%- endif %}

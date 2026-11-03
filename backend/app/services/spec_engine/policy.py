@@ -12,7 +12,7 @@ expected value, sandbox fix value and break value from an approved profile:
       <spec_id>: {expected: ..., fix: "...", break: "..."}
     fixes:                                 # optional: site-specific fix values
       <spec_id>: "<value>"                 # for automated specs (e.g. 5.2)
-    connection_limits:                     # optional: stored for F6 proposals
+    connection_limits:                     # optional: CIS 5.5 fix proposals
       default_login_limit: null | <int >= 0>
       roles: {<rolename>: <int >= 0>}
 
@@ -32,7 +32,11 @@ and accepts other items only as IPv4/IPv6 addresses or host names: the sandbox
 has only loopback, so PostgreSQL must be able to start on localhost after the
 restart (e.g. ``localhost, 10.0.0.5``).
 
-``connection_limits`` is validated, stored and loaded only; nothing reads it yet.
+``connection_limits`` gives the CIS 5.5 per-object fix value: the role's own limit,
+else ``default_login_limit``. It is read only from an APPROVED profile, by
+services/sandbox_poc/object_fixes.py, for non-superuser login roles with no limit;
+without a value there is no proposal (policy_missing). The limit is never applied
+by DBGuard: it is rehearsed in the sandbox and exported for the DBA.
 
 Every fix/break value must also pass the reviewed per-setting value rule
 (app.services.setting_values) because it may be rendered into SQL.

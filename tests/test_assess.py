@@ -270,7 +270,7 @@ class TestAssessRealSpecs:
 
     @pytest.mark.parametrize("spec", catalog_specs, ids=lambda s: s["spec_id"])
     def test_catalog_spec_has_no_proof_and_rejects_one(self, spec):
-        """Catalog checks never get a fix, so a proof on one is a validation error."""
+        """A catalog spec never carries a fix (fixes come from object_fixes), so a proof on one is a validation error."""
         from app.services.spec_engine import validate_spec
         assert "proof" not in spec
         assert validate_spec(spec, records) == []

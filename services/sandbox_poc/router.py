@@ -192,7 +192,22 @@ def fix_plan(snapshot_id: str, benchmark_id: str = Query(default='cis-pg17-v1.1.
                                **({'explanation':row['explanation']} if row.get('explanation') else {})})
         if not review_with_llm:
             for fix in fixes: fix['llm']={'status':'NOT_REQUESTED'}
+        # Wave 2a: per-object fixes for the F6 catalog checks, derived only from this
+        # snapshot's evidence and the approved profile; the DBA picks them by fix_id.
+        from .object_fixes import grouped
+        object_proposals=grouped(engine,snapshot,getattr(engine,'policy_pin',None))
+        # Display hint per fix type (highest active approved version of its template),
+        # kept beside the proposals so each proposal stays exactly what resolve() derives.
+        # Prepare still pins the exact version and hash. null if unavailable.
+        fix_types=sorted({p['fix_type'] for g in object_proposals for p in g['proposals']})
+        versions={}
+        if fix_types:
+            from .templates import approved_object_template_versions
+            try: versions=approved_object_template_versions(service.registry_url)
+            except (psycopg2.Error,ContractError): versions={}
+        object_template_versions={t:versions.get(t) for t in fix_types}
         return {'snapshot_id':snapshot_id,'spec_set_hash':engine.spec_set_hash,'policy_profile':getattr(engine,'policy_pin',None),'recommended_order':recommend_order(fixes),'manual_review':manual,'not_applicable':not_applicable,
+                'object_proposals':object_proposals,'object_template_versions':object_template_versions,
                 'ordering_basis':'Dependencies first, then lower operational risk; DBA decides security urgency and final order.'}
     except SnapshotNotFoundError: raise HTTPException(404,'Snapshot not found') from None
     except ContractError as exc: raise HTTPException(422,str(exc)) from exc
@@ -262,6 +277,13 @@ async def manual_evidence(run_id: str, control_id: str = Form(...), operator: st
 class BatchRequest(BaseModel):
     fixes: list[PrepareRequest] = Field(min_length=2,max_length=6)
     requested_order: list[str] | None = Field(default=None,max_length=6)
+
+    @model_validator(mode='after')
+    def _unique_fixes(self):
+        # Unique per fix, not per control: several object fixes may share a control.
+        keys=[f.object_fix_id or f.control_id for f in self.fixes]
+        if len(set(keys))!=len(keys): raise ValueError('Duplicate fixes in batch')
+        return self
 
 
 @router.post('/api/v1/sandbox/batches')

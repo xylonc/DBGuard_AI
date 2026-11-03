@@ -8,7 +8,7 @@ import uuid
 from pydantic import Field
 
 from .collector_intake import from_collector_bundle
-from .handoff import StrictModel, SandboxHandoff, build_handoff
+from .handoff import OBJECT_FIX_ID_PATTERN, StrictModel, SandboxHandoff, build_handoff
 from .shared import ROOT, SpecEngine, ContractError
 from .templates import export_reference
 from .review_bundle import is_fixture
@@ -32,6 +32,9 @@ class PrepareRequest(StrictModel):
     retry_template_versions: list[int] = Field(default_factory=list, max_length=2)
     # The user's active policy profile for this assessment (store hash); None = policy_missing.
     policy_profile: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    # Wave 2a: a per-object fix id from the fix plan's object_proposals. Only the id is
+    # accepted; the server re-derives target and parameters (object_fixes.resolve).
+    object_fix_id: str | None = Field(default=None, max_length=96, pattern=OBJECT_FIX_ID_PATTERN)
 
 
 def load_engine(benchmark_id, policy_profile=None):
@@ -57,6 +60,8 @@ def prepare_uploaded(store, service, request):
     engine, snapshot, assessment = assess_uploaded(store, request.snapshot_id, request.benchmark_id,
                                                    request.policy_profile)
     assessment = engine.bind_assessment(snapshot, request.assessment)
+    if request.object_fix_id is not None:
+        return _prepare_object(service, engine, snapshot, assessment, request)
     ref, _ = export_reference(service.registry_url, request.template_version,
                               request.evidence_ids, request.environment)
     handoff = build_handoff(engine, snapshot, ref, assessment=assessment)
@@ -70,6 +75,27 @@ def prepare_uploaded(store, service, request):
         raise ContractError('Use named alternatives or legacy versions, not both')
     handoff.retry_template_refs += [export_reference(service.registry_url, alternative.version,
         request.evidence_ids,request.environment,registry_name=alternative.registry_name)[0] for alternative in request.alternative_templates]
+    handoff = SandboxHandoff.model_validate(handoff.model_dump())
+    service.validate_handoff(handoff)
+    return handoff
+
+
+def _prepare_object(service, engine, snapshot, assessment, request):
+    """Pin the approved template for one per-object fix chosen by its id."""
+    from .object_fixes import FIX_TYPES, resolve
+    if request.alternative_templates or request.retry_template_versions:
+        raise ContractError('Object fixes have no alternative templates')
+    if 'retry_mode' in request.model_fields_set and request.retry_mode != 'repeat':
+        raise ContractError('Object fixes have no adaptive retries')
+    proposal = resolve(engine, snapshot, engine.policy_pin, request.object_fix_id)
+    if 'control_id' in request.model_fields_set and request.control_id != proposal['spec_id']:
+        raise ContractError('The selected control is not the object fix\'s control')
+    if not proposal['rehearsable']:
+        raise ContractError(proposal.get('not_rehearsable_reason') or 'This fix cannot be rehearsed')
+    ref, _ = export_reference(service.registry_url, request.template_version, request.evidence_ids,
+                              request.environment, registry_name=FIX_TYPES[proposal['fix_type']].template)
+    handoff = build_handoff(engine, snapshot, ref, assessment=assessment,
+                            object_fix_id=request.object_fix_id, control_id=proposal['spec_id'])
     handoff = SandboxHandoff.model_validate(handoff.model_dump())
     service.validate_handoff(handoff)
     return handoff

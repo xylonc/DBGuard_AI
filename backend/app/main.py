@@ -136,13 +136,24 @@ def validate_and_render_proposal(request: RemediationProposalRequest):
     Returns rendered SQL for human DBA review.
     No SQL is ever generated - only rendered from approved templates.
     """
+    # Per-object fix templates (Wave 2a, F6) are rendered only from evidence-bound
+    # proposals that the server derives (fix plan -> object_fix_id); a model or
+    # client never supplies their parameters, so this path refuses them outright.
+    from app.services.template_service import OBJECT_FIX_TEMPLATES
+    if request.proposal.template_id in OBJECT_FIX_TEMPLATES:
+        raise HTTPException(
+            status_code=422,
+            detail="Per-object fix templates are not available on this path; they are "
+                   "rendered only from server-side evidence in the fix plan.",
+        )
+
     try:
         metadata = snapshot_store.context(request.snapshot_id).model_dump(mode="json")
     except SnapshotNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Snapshot not found") from exc
     
     proposal = request.proposal
-    
+
     # Step 1: Validate template exists and is active
     template_record = get_active_template_version(proposal.template_id)
     if template_record is None:

@@ -14,7 +14,7 @@ The snapshot contract is defined in `catalog/specs/contracts/snapshot-v0.3.0.jso
   - `schema_version`: Must be `'0.3.0'`
   - `database`: Non-empty string
   - `target_id`: Non-empty string
-  - Optional fields: `collected_at`, `collected_by`, `is_superuser`, `has_pg_monitor`, `deployment_type`, `collector_version`, `can_read_pg_authid`, `has_read_all_settings`
+  - Optional fields: `collected_at`, `collected_by`, `login_role` (v0.3.0: `session_user`; differs from `collected_by` after `SET ROLE`), `is_superuser`, `has_pg_monitor`, `deployment_type`, `collector_version`, `can_read_pg_authid`, `has_read_all_settings`
 
 - **Baseline**: Contains all collector sections (roles, settings, hba_rules, etc.) as a free-form object.
 

@@ -11,7 +11,7 @@
         "last_archived_wal": null,
         "last_failed_time": null,
         "last_failed_wal": null,
-        "stats_reset": "2026-11-03T07:34:25.660733+00:00"
+        "stats_reset": "2026-11-03T09:06:45.946624+00:00"
       }
     },
     "connections": [
@@ -334,7 +334,7 @@
       "lc_ctype": "en_US.utf8",
       "server_encoding": "UTF8",
       "server_version_num": 170011,
-      "system_identifier": "7703845324994187290",
+      "system_identifier": "7703869120277131290",
       "version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
       "wal_segment_size": "16MB"
     },
@@ -2207,7 +2207,7 @@
       }
     ],
     "uptime": {
-      "postmaster_start_time": "2026-11-03T07:34:26.090667+00:00",
+      "postmaster_start_time": "2026-11-03T09:06:46.390474+00:00",
       "uptime_seconds": 1
     }
   },
@@ -2389,15 +2389,16 @@
   },
   "envelope": {
     "can_read_pg_authid": true,
-    "collected_at": "2026-11-03T07:34:26Z",
+    "collected_at": "2026-11-03T09:06:47Z",
     "collected_by": "dbguard_poc",
-    "collector_sha256": "1fa03abd95bc2995f7c34dcbd8dc8facb3ae552fa947abf2382671e8f6284e5e",
+    "collector_sha256": "8608edf8ce70dc9ecb7ec210afc8f88f51335333a6b40605be9013753b82a46a",
     "collector_version": "2.0.0-sql",
     "database": "dbguard_sandbox",
     "deployment_type": "self-managed",
     "has_pg_monitor": true,
     "has_read_all_settings": true,
     "is_superuser": true,
+    "login_role": "dbguard_poc",
     "manifest": {
       "benchmark_id": "cis-pg17-v1.1.0",
       "check_count": 29,
@@ -2405,6 +2406,6 @@
       "sha256": "8d11cbcbc8f58c49f5d546ef5518dd1f66beae54cc3961c14ae3def4daa76ae0"
     },
     "schema_version": "0.3.0",
-    "target_id": "dbguard-poc-021cab533d2c448886d9a769fe53fa91"
+    "target_id": "dbguard-poc-ec0ace467117483f989056e00b0dc226"
   }
 }

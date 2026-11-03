@@ -269,6 +269,29 @@ class TestExclusions:
         assert notes_for(plan, "4.3", "collecting_role_unknown")
         assert by_type(plan["proposals"], "table_revoke_dml")  # other types unaffected
 
+    def test_login_role_is_protected_like_the_collecting_role(self, engine, snapshot):
+        # Collected after SET ROLE: the login account (session_user) differs from
+        # collected_by (current_user), and NOLOGIN on it would break the next collection.
+        def removals(plan, name):
+            return [p for p in plan["proposals"] if p["target"].get("role") == name
+                    and p["fix_type"] in ("role_drop_attribute", "role_nologin")]
+        older = copy.deepcopy(snapshot)
+        older["envelope"].pop("login_role", None)  # older snapshot: no login_role key
+        assert removals(of.plan(engine, older), "su2")
+        assert {"role": COLLECTOR} in [n["target"] for n in notes_for(of.plan(engine, older), "4.3", "collecting_role")]
+        snapshot["envelope"]["login_role"] = "su2"
+        plan = of.plan(engine, snapshot)
+        assert not removals(plan, "su2") and not removals(plan, COLLECTOR)
+        assert {"role": "su2"} in [n["target"] for n in notes_for(plan, "4.3", "collecting_role")]
+
+    @pytest.mark.parametrize("bad", ["", None, 5])
+    def test_unusable_login_role_makes_the_collector_unknown(self, engine, snapshot, bad):
+        snapshot["envelope"]["login_role"] = bad
+        plan = of.plan(engine, snapshot)
+        assert not by_type(plan["proposals"], "role_drop_attribute")
+        assert not by_type(plan["proposals"], "role_nologin")
+        assert notes_for(plan, "4.3", "collecting_role_unknown")
+
     def test_superuser_gets_the_ruled_5_5_note(self, engine, snapshot):
         engine = with_policy(engine, profile({"default_login_limit": 20, "roles": {"su2": 3}}))
         plan = of.plan(engine, snapshot, engine.policy_pin)

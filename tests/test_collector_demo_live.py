@@ -21,6 +21,17 @@ def test_collector_demo_exports_after_all_resources_are_removed(tmp_path):
     snapshot = json.loads((output/'collector-snapshot.json').read_text())
     assert int(snapshot['baseline']['identity']['server_version_num']) // 10000 == 17
     assert snapshot['envelope']['schema_version'] == '0.3.0'
+    # Planted demo sample objects get per-object fix proposals the viewer can pick.
+    from services.sandbox_poc import object_fixes
+    from services.sandbox_poc.shared import ROOT, SpecEngine
+    engine = SpecEngine.load(ROOT / 'catalog/specs/cis-pg17-v1.1.0',
+                             ROOT / 'catalog/benchmarks/cis-pg17-v1.1.0/records.json')
+    offered = {(p['fix_type'], json.dumps(p['target'], sort_keys=True))
+               for p in object_fixes.proposals(engine, snapshot) if p['rehearsable']}
+    types = {t for t, _ in offered}
+    assert {'role_drop_attribute', 'role_nologin', 'table_revoke_dml',
+            'function_security_invoker', 'function_revoke_public_execute'} <= types, offered
+    assert not [t for t in offered if '"dbguard_poc"' in t[1]]  # bootstrap superuser never
     with zipfile.ZipFile(output/'review-bundle.zip') as archive:
         assert json.loads(archive.read('manifest.json'))['demo_fixture_approval']
         assert archive.read('report.html') == (output/'report.html').read_bytes()

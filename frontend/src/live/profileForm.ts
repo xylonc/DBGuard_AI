@@ -113,6 +113,45 @@ export function textToExpected(operator: unknown, text: string): any {
     .filter(Boolean)
 }
 
+// ---- CIS 3.2 pgaudit classes (Gate W2B ruling 2) ---------------------------------
+
+// The pgaudit.log classes a profile may require, in pgaudit's order
+// (catalog_checks.PGAUDIT_LOG_CLASSES). The server validates the list.
+export const PGAUDIT_CLASSES = [
+  "read",
+  "write",
+  "function",
+  "role",
+  "ddl",
+  "misc",
+  "misc_set",
+]
+// Recommended default (Gate W2B ruling 2): CIS's example ddl,write plus role.
+export const PGAUDIT_DEFAULT_CLASSES = ["ddl", "role", "write"]
+
+// Plain-language meaning of each class (pgaudit documentation), UI copy.
+export const PGAUDIT_CLASS_HELP: Record<string, string> = {
+  read: "SELECT, and COPY out of a table. Logs every query that reads data, so log volume grows a lot.",
+  write: "INSERT, UPDATE, DELETE, TRUNCATE and COPY into a table.",
+  function: "Function calls and DO blocks.",
+  role: "Roles and privileges: GRANT, REVOKE, CREATE / ALTER / DROP ROLE.",
+  ddl: "Schema changes (CREATE, ALTER, DROP) not covered by role.",
+  misc: "Other commands, such as DISCARD, FETCH, CHECKPOINT, VACUUM and SET.",
+  misc_set: "SET commands, such as SET ROLE.",
+}
+
+// Ticks or unticks one class, keeping pgaudit's order and no duplicates.
+export function toggleClass(
+  current: string[],
+  cls: string,
+  on: boolean,
+): string[] {
+  const chosen = new Set(current)
+  if (on) chosen.add(cls)
+  else chosen.delete(cls)
+  return PGAUDIT_CLASSES.filter((c) => chosen.has(c))
+}
+
 // ---- form state ----------------------------------------------------------------
 
 export type ValueForm = {
@@ -135,6 +174,7 @@ export type ProfileForm = {
   fixes: Record<string, string>
   defaultLimit: string
   roles: RoleLimitForm[]
+  pgauditClasses: string[]
 }
 
 // Login roles from the current snapshot (collector `roles` section), for the
@@ -209,6 +249,10 @@ export function formFromProfile(
         ? ""
         : String(limits.default_login_limit),
     roles,
+    // As saved; anything not a string is dropped here and the server decides.
+    pgauditClasses: Array.isArray(doc?.pgaudit_log_classes)
+      ? doc.pgaudit_log_classes.filter((c: unknown) => typeof c === "string")
+      : [],
   }
 }
 
@@ -241,6 +285,7 @@ export function draftBody(form: ProfileForm, controls: any[]): any {
     if (r.name.trim() && r.limit.trim())
       roles[r.name.trim()] = limitValue(r.limit)
   const hasLimits = !!form.defaultLimit.trim() || Object.keys(roles).length > 0
+  const pgaudit = form.pgauditClasses ?? []
   return {
     profile_id: form.profileId.trim(),
     values,
@@ -253,6 +298,8 @@ export function draftBody(form: ProfileForm, controls: any[]): any {
           roles,
         }
       : null,
+    // No class ticked: no value, so CIS 3.2 stays policy_missing.
+    pgaudit_log_classes: pgaudit.length ? [...pgaudit] : null,
     based_on: form.basedOn,
   }
 }
@@ -278,6 +325,7 @@ export type GroupedErrors = {
   bySpec: Record<string, string[]>
   profileId: string[]
   connection: string[]
+  pgaudit: string[]
   general: string[]
 }
 
@@ -290,6 +338,7 @@ export function groupErrors(
     bySpec: {},
     profileId: [],
     connection: [],
+    pgaudit: [],
     general: [],
   }
   for (const e of errors ?? []) {
@@ -297,6 +346,7 @@ export function groupErrors(
     const spec = specIds.find((id) => text.includes(`'${id}'`))
     if (spec) (grouped.bySpec[spec] ??= []).push(text)
     else if (text.includes("connection_limits")) grouped.connection.push(text)
+    else if (text.includes("pgaudit_log_classes")) grouped.pgaudit.push(text)
     else if (text.includes("profile_id")) grouped.profileId.push(text)
     else grouped.general.push(text)
   }

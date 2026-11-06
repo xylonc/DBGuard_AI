@@ -1,3 +1,5 @@
+import { highlightSentences } from "./explanations"
+
 const SHOWN = 50
 
 function value(v: unknown) {
@@ -36,9 +38,24 @@ export function CatalogEvidence({ row }: { row: any }) {
               <li key={i} className="bg-slate-50 rounded px-2 py-1 break-words">
                 {typeof item === "object" && item !== null
                   ? Object.entries(item)
+                      .filter(([k]) => k !== "highlights")
                       .map(([k, v]) => `${k}: ${value(v)}`)
                       .join(" · ")
                   : value(item)}
+                {/* 5.3 / 5.4 login rules: fixed sentences per highlight code,
+                    rendered as text (explanations.ts HIGHLIGHT_SENTENCES). */}
+                {highlightSentences(item).length > 0 && (
+                  <span className="mt-1 flex flex-wrap gap-1">
+                    {highlightSentences(item).map((text, j) => (
+                      <span
+                        key={j}
+                        className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-900"
+                      >
+                        {text}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

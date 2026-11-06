@@ -218,11 +218,99 @@ export type SettingOptions = {
   retryMode: string
 }
 
-// PrepareRequest for one setting fix in a combined test (unchanged shape).
+// ---- W2B: catalog fixes that change shared_preload_libraries (3.2, 5.6) -----------
+
+const PRELOAD_SETTING = "shared_preload_libraries"
+
+// True for a fix-plan entry whose changes include shared_preload_libraries; only
+// these are rendered with the server-only set_config_list template.
+export function needsListTemplate(fix: any): boolean {
+  return (
+    fix?.kind === "catalog_setting" &&
+    Array.isArray(fix?.settings) &&
+    fix.settings.includes(PRELOAD_SETTING)
+  )
+}
+
+// The plan's approved set_config_list version for this control, or null: null when
+// the control's fix does not change shared_preload_libraries (prepare refuses the
+// field for anything else) or the server could not read the registry.
+export function listTemplateVersionFor(
+  plan: any,
+  controlId: string,
+): number | null {
+  const fix = (
+    Array.isArray(plan?.recommended_order) ? plan.recommended_order : []
+  ).find((f: any) => f?.spec_id === controlId)
+  if (!needsListTemplate(fix)) return null
+  const version = plan?.list_template_version
+  return Number.isInteger(version) && version > 0 ? version : null
+}
+
+// The set_config_list version chosen with a preload fix for the single-fix test. It
+// belongs to the control, snapshot and profile it was planned for.
+export type ChosenListTemplate = {
+  control_id: string
+  snapshot_id: string
+  profile_ref: string | null
+  version: number
+}
+
+export function chooseListTemplate(
+  plan: any,
+  controlId: string,
+  snapshotId: string,
+  profileRef: string | null,
+): ChosenListTemplate | null {
+  const version = listTemplateVersionFor(plan, controlId)
+  return version == null
+    ? null
+    : {
+        control_id: controlId,
+        snapshot_id: snapshotId,
+        profile_ref: profileRef,
+        version,
+      }
+}
+
+// The version to send with the single-fix prepare request, or null when the chosen
+// one belongs to another control, snapshot or profile (or none was chosen).
+export function activeListTemplateVersion(s: any): number | null {
+  const chosen = s?.listTemplate
+  return chosen &&
+    chosen.control_id === s?.controlId &&
+    chosen.snapshot_id === s?.snapshot?.snapshot_id &&
+    chosen.profile_ref === (s?.policyProfile?.profile_ref ?? null) &&
+    Number.isInteger(chosen.version) &&
+    chosen.version > 0
+    ? chosen.version
+    : null
+}
+
+// True when the plan links this control to a catalog setting fix (3.2, 5.6, 6.10).
+// The server runs those once with the approved template: no adaptive retries or
+// alternative templates, so their requests always say retry_mode "repeat".
+export function isCatalogLinkedFix(plan: any, controlId: string): boolean {
+  return (
+    Array.isArray(plan?.recommended_order) ? plan.recommended_order : []
+  ).some((f: any) => f?.spec_id === controlId && f?.kind === "catalog_setting")
+}
+
+// The list_template_version field, present only for a positive integer.
+export function listTemplateField(version: unknown): any {
+  return Number.isInteger(version) && version as number > 0
+    ? { list_template_version: version }
+    : {}
+}
+
+// PrepareRequest for one setting fix in a combined test. A catalog fix that changes
+// shared_preload_libraries also carries list_template_version; nothing else does.
 export function settingFixRequest(
   base: PrepareBase,
   options: SettingOptions,
   controlId: string,
+  listTemplateVersion: number | null = null,
+  catalogLinked = false,
 ) {
   return {
     snapshot_id: base.snapshot_id,
@@ -231,9 +319,10 @@ export function settingFixRequest(
     evidence_ids: base.evidence_ids,
     policy_profile: base.policy_profile,
     template_version: options.templateVersion,
-    retry_mode: options.retryMode,
+    retry_mode: catalogLinked ? "repeat" : options.retryMode,
     retry_template_versions: [],
     control_id: controlId,
+    ...listTemplateField(listTemplateVersion),
   }
 }
 
@@ -277,17 +366,26 @@ export function objectTemplateVersionFor(
 }
 
 // BatchRequest.fixes for a mixed selection: each key is a setting control id or an
-// object fix id.
+// object fix id. listTemplateVersion gives the set_config_list version for a control
+// (null for every fix that does not change shared_preload_libraries).
 export function batchFixes(
   selected: string[],
   base: PrepareBase,
   options: SettingOptions,
   objectTemplateVersion: (fixId: string) => number,
+  listTemplateVersion: (controlId: string) => number | null = () => null,
+  catalogLinked: (controlId: string) => boolean = () => false,
 ) {
   return selected.map((key) =>
     isObjectFixId(key)
       ? objectFixRequest(base, objectTemplateVersion(key), key)
-      : settingFixRequest(base, options, key),
+      : settingFixRequest(
+          base,
+          options,
+          key,
+          listTemplateVersion(key),
+          catalogLinked(key),
+        ),
   )
 }
 
@@ -309,4 +407,42 @@ export function objectAfterCombined(batch: any, fixId: string): string {
   if (step && combined?.status === "VERIFIED") return "Change holds"
   if (step) return "Held at its step; combined test did not finish"
   return "NOT RUN"
+}
+
+// ---- catalog-linked fix results (3.2, 5.6, 6.10) -------------------------------------
+
+// A catalog-linked fix unit lists its setting changes and is proven by its catalog check.
+export function isCatalogUnit(unit: any): boolean {
+  return (
+    !!unit &&
+    Array.isArray(unit.changes) &&
+    typeof unit.verify?.catalog_evaluator === "string"
+  )
+}
+
+function shownValue(value: unknown): string {
+  if (value === null || value === undefined) return "(not set)"
+  return value === "" ? "(empty)" : String(value)
+}
+
+// "setting: before → after" for each change, from the server's fix unit.
+export function catalogChangeLines(unit: any): string[] {
+  const changes: any[] = Array.isArray(unit?.changes) ? unit.changes : []
+  return changes.map(
+    (c) =>
+      `${c?.param}: ${shownValue(c?.prior_state?.value)} → ${shownValue(c?.expected_value)}`,
+  )
+}
+
+// "After combined test" for a catalog-linked fix. Catalog checks are not in the setting
+// findings; each combined step records its own catalog proof, and every later step
+// re-checks the earlier ones, so a VERIFIED run means each proof still holds.
+export function catalogAfterCombined(batch: any, fixId: string): string {
+  const combined = batch?.combined_test
+  const steps: any[] = Array.isArray(combined?.steps) ? combined.steps : []
+  const step = steps.find((s) => s?.fix_id === fixId)
+  const result = step?.catalog_proof?.result
+  if (typeof result !== "string") return "NOT RUN"
+  if (combined?.status === "VERIFIED") return result
+  return `${result} at its step; combined test did not finish`
 }

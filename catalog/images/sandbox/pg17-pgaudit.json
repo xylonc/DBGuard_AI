@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "name": "pg17-pgaudit",
+  "tag": "dbguard/sandbox-pg17:pgaudit-17.1-2.pgdg12-1",
+  "dockerfile": "services/sandbox_poc/images/pg17-pgaudit/Dockerfile",
+  "dockerfile_sha256": "2d5e1606814235a17acfd7f9c92fd460cee594d677d3834f0835fe5a11eb3984",
+  "base_image": "postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826",
+  "postgresql_package_version": "17.11-1.pgdg12+2",
+  "pgaudit_package": "postgresql-17-pgaudit",
+  "pgaudit_package_version": "17.1-2.pgdg12+1",
+  "pgaudit_extension_version": "17.1",
+  "preloaded_by_default": [],
+  "image_ids": {
+    "linux/arm64": "sha256:de019689ec362e0a43770a3cf313502896eaeb16d3d72ea14410047cc9454e19"
+  }
+}

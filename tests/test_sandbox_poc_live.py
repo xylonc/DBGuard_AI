@@ -17,7 +17,7 @@ def test_real_fail_pass_exact_rollback_and_cleanup(source):
     engine = SpecEngine.load(ROOT / "catalog/specs/cis-pg17-v1.1.0",
                              ROOT / "catalog/benchmarks/cis-pg17-v1.1.0/records.json")
     existing = set(docker("ps", "-aq", "--filter", f"label={LABEL}").split())
-    result = run_demo(engine, "postgres:17-bookworm", source)
+    result = run_demo(engine, None, source)
     assert result["status"] == "VERIFIED", result["attempts"]
     validate_contract(result["fix_unit"], "fix-unit-v1.json")
     assert result["demo_target_cleanup"]["verified"]
@@ -42,7 +42,7 @@ def test_real_partial_apply_rolls_back_and_cleans_all_three_attempts():
             if 'ALTER SYSTEM SET "log_connections"' in script:
                 raise RuntimeError("Injected failure after real ALTER SYSTEM execution")
             return result
-    result = run_demo(engine, "postgres:17-bookworm", "conf", FailAfterApply)
+    result = run_demo(engine, None, "conf", FailAfterApply)
     assert result["status"] == "FAILED"
     assert len(result["attempts"]) == 3
     assert len({a["run_id"] for a in result["attempts"]}) == 3

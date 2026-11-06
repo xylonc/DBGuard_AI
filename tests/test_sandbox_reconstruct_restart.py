@@ -56,8 +56,9 @@ class RecordingRuntime:
         raise AssertionError("unexpected SQL from reconstruct")
 
 
-def test_restart_allowlist_is_the_reviewed_pair():
-    assert RESTART_SETTINGS == frozenset({"logging_collector", "listen_addresses"})
+def test_restart_allowlist_is_the_reviewed_set():
+    # shared_preload_libraries joined by W2B gate 1, ruling 3 (preload fixes, 3.2 and 5.6).
+    assert RESTART_SETTINGS == frozenset({"logging_collector", "listen_addresses", "shared_preload_libraries"})
 
 
 def test_unchanged_auto_conf_postmaster_value_needs_restart():

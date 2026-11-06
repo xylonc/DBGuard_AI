@@ -26,7 +26,7 @@ def demo_template() -> ApprovedTemplate:
                             "TEST FIXTURE ONLY", ({"document_id": "demo-fixture", "demo_only": True},))
 
 
-def run_demo(engine: SpecEngine, image: str, source: str, runtime_factory=None) -> dict:
+def run_demo(engine: SpecEngine, image: str | None, source: str, runtime_factory=None) -> dict:
     target = DisposablePostgres(image)
     result = None
     try:
@@ -61,7 +61,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("demo", "validate"))
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--image", default="postgres:17-bookworm")
+    parser.add_argument("--image", default=None,
+                        help="default: DBGUARD_POSTGRES_IMAGE, else the pinned pgaudit image")
     parser.add_argument("--prior-source", choices=("conf", "auto"), default="conf")
     parser.add_argument("--spec-dir", type=Path, default=ROOT / "catalog/specs/cis-pg17-v1.1.0")
     parser.add_argument("--records", type=Path, default=ROOT / "catalog/benchmarks/cis-pg17-v1.1.0/records.json")

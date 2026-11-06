@@ -21,7 +21,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / '.demo'
-PG = 'postgres@sha256:051f7b7b3abdd564d5d1bd1e8c4b9c1b6e77087d1dd22020ede611c096a272e0'
+# Demo source and sandboxes use the pinned PG17 + pgaudit image (W2B Gate 2 ruling 4);
+# the runtime refuses it unless its local ID matches catalog/images/sandbox/pg17-pgaudit.json.
+PG = json.loads((ROOT / 'catalog/images/sandbox/pg17-pgaudit.json').read_text())['tag']
 REGISTRY = 'pgvector/pgvector@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f'
 
 
@@ -167,7 +169,11 @@ class Demo:
         self.run(['npm', 'ci', '--ignore-scripts'], 'npm-install', ROOT / 'frontend')
         self.run(['npm', 'run', 'typecheck'], 'ui-typecheck', ROOT / 'frontend')
         self.run(['npm', 'run', 'build'], 'ui-build', ROOT / 'frontend')
-        for name, image in [('postgres-image', PG), ('registry-image', REGISTRY)]: self.run(['docker', 'pull', image], name)
+        # Digest-pinned, so a local copy is identical; skip the (sometimes stalling) pull.
+        if subprocess.run(['docker', 'image', 'inspect', PG], capture_output=True).returncode:
+            self.run([sys.executable, 'scripts/build_sandbox_image.py'], 'postgres-image')
+        if subprocess.run(['docker', 'image', 'inspect', REGISTRY], capture_output=True).returncode:
+            self.run(['docker', 'pull', REGISTRY], 'registry-image')
         self.env.update(SANDBOX_POC_ENABLED='true', SANDBOX_LLM_ENABLED='true', SANDBOX_LLM_API_KEY=self.config['OLLAMA_API_KEY'],
             SANDBOX_LLM_BASE_URL=self.config.get('HERMES_MODEL_BASE_URL', 'https://ollama.com/v1'), SANDBOX_LLM_MODEL=self.config.get('HERMES_MODEL', 'gpt-oss:20b'))
         self.start('demo-api', [str(python), 'scripts/demo_ui.py', '--port', str(self.base+1)])

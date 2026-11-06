@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from app.services.spec_engine.catalog_checks import uses_policy_profile
 from app.services.spec_engine.validate import uses_policy
 from scripts import coverage_report as cr
 from services.sandbox_poc.planning import FROM_PROFILE, POLICIES
@@ -22,7 +23,7 @@ SPECS = {
     for s in (yaml.safe_load(p.read_text(encoding="utf-8"))
               for p in sorted((REPO_ROOT / "catalog/specs/cis-pg17-v1.1.0").glob("*.yaml")))
 }
-VALID_FIX = {"Yes", "After policy approval", "Person decides", "Planned", "—"}
+VALID_FIX = {"Yes", "After policy approval", "Guided steps", "Person decides", "Planned", "—"}
 
 
 @pytest.fixture(scope="module")
@@ -64,8 +65,24 @@ def test_every_spec_has_a_status_consistent_with_tier_kind_and_policies(rows):
             assert row["status_id"] == "human_checklist", rec
             assert row["fix"] == "—", rec
         elif check["kind"] == "catalog":
-            assert row["status_id"] == "report_only", rec
-            assert row["fix"] == "Person decides", rec
+            if rec in cr.CATALOG_SETTING_FIXES:
+                if not all(n in POLICIES for n in cr.CATALOG_SETTING_FIXES[rec]):
+                    assert row["status_id"] == "check_only", rec
+                elif uses_policy_profile(spec):
+                    assert row["status_id"] == "fixable_after_policy", rec
+                    assert row["fix"] == "After policy approval", rec
+                else:
+                    assert row["status_id"] == "fixable", rec
+                    assert row["fix"] == "Yes", rec
+            elif rec in cr.GUIDED_FIX_CHECKS:
+                assert row["status_id"] == "checked_guided", rec
+                assert row["fix"] == "Guided steps", rec
+            elif rec in cr.CATALOG_CHECKLISTS:
+                assert row["status_id"] == "human_checklist", rec
+                assert row["fix"] == "—", rec
+            else:
+                assert row["status_id"] == "report_only", rec
+                assert row["fix"] == "Person decides", rec
         else:
             assert check["kind"] == "setting", rec
             name = check["setting_name"]
@@ -105,8 +122,8 @@ def test_known_examples(rows):
     assert rows["3.1.2"]["status_id"] == "fixable_after_policy"
     assert rows["7.4"]["status_id"] == "report_only"
     assert {rows[r]["status_id"] for r in ("3.1.12", "7.2")} == {"human_checklist"}
-    assert rows["6.10"]["family"] == "F7"
-    assert "F7" in SPECS["6.10"]["reason"]  # the override matches the spec's own reason
+    assert rows["6.10"]["family"] == "F7"  # from the ROADMAP family table
+    assert cr.FAMILY_OVERRIDES == {}
     for rec in ("4.3", "4.4", "4.5", "4.6", "4.9", "4.10", "5.5"):
         assert rows[rec]["per_object_fixes"], rec
         assert rows[rec]["status"].endswith("per-object fixes the DBA picks"), rec
@@ -163,3 +180,21 @@ def test_check_detects_stale_and_missing_files(tmp_path, data):
 def test_committed_json_matches_build(data):
     committed = json.loads((REPO_ROOT / "docs/coverage.json").read_text(encoding="utf-8"))
     assert committed == data
+
+
+def test_wave2b_rules(rows):
+    """Gate W2B: 8 rules go live; 3.2 waits for the approved policy; guided and checklist rules."""
+    assert {rows[r]["family"] for r in ("3.2", "4.8", "5.6", "6.11")} == {"F5"}
+    assert {rows[r]["family"] for r in ("5.3", "5.4", "6.8", "6.10")} == {"F7"}
+    assert uses_policy_profile(SPECS["3.2"]) and not uses_policy_profile(SPECS["5.6"])
+    for rec in ("3.2", "5.6", "6.10"):
+        settings = cr.CATALOG_SETTING_FIXES[rec]
+        expected = ("check_only" if not all(n in POLICIES for n in settings)
+                    else "fixable_after_policy" if rec == "3.2" else "fixable")
+        assert rows[rec]["status_id"] == expected, rec
+    assert rows["6.8"]["status_id"] == rows["4.8"]["status_id"] == "checked_guided"
+    assert {rows[r]["status_id"] for r in ("6.11", "5.3", "5.4")} == {"human_checklist"}
+    # No reason claims "accounts or permissions" outside the F6 accounts-and-permissions family.
+    for rec, row in rows.items():
+        if "accounts or permissions" in row["reason"]:
+            assert row["family"] == "F6", rec

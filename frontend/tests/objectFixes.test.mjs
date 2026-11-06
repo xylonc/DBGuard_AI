@@ -4,8 +4,15 @@ import { readFileSync } from "node:fs"
 import {
   NOTE_SENTENCES,
   UNKNOWN_NOTE_SENTENCE,
+  activeListTemplateVersion,
   approvedTemplateVersion,
   batchFixes,
+  chooseListTemplate,
+  isCatalogLinkedFix,
+  listTemplateField,
+  listTemplateVersionFor,
+  needsListTemplate,
+  settingFixRequest,
   changeKey,
   changeSummary,
   isObjectFixId,
@@ -14,6 +21,9 @@ import {
   noteDetail,
   noteSentence,
   objectAfterCombined,
+  catalogAfterCombined,
+  catalogChangeLines,
+  isCatalogUnit,
   objectFixRequest,
   objectTemplateVersionFor,
   riskLabel,
@@ -337,4 +347,261 @@ test("each object fix sends its template's approved version", () => {
     assert.equal(approvedTemplateVersion({ t: bad }, "t"), null)
   assert.equal(approvedTemplateVersion({}, "__proto__"), null)
   assert.equal(approvedTemplateVersion(null, "t"), null)
+})
+
+// ---- W2B: list_template_version only for preload fixes (3.2, 5.6) -------------------
+
+const B = "cis-pg17-v1.1.0"
+const LIST_PLAN = {
+  list_template_version: 2,
+  recommended_order: [
+    {
+      spec_id: `${B}:3.2`,
+      fix_id: "fix-3.2",
+      kind: "catalog_setting",
+      settings: ["shared_preload_libraries", "pgaudit.log"],
+    },
+    {
+      spec_id: `${B}:5.6`,
+      fix_id: "fix-5.6",
+      kind: "catalog_setting",
+      settings: ["shared_preload_libraries"],
+    },
+    {
+      spec_id: `${B}:6.10`,
+      fix_id: "fix-6.10",
+      kind: "catalog_setting",
+      settings: ["ssl_ciphers"],
+    },
+    {
+      spec_id: `${B}:3.1.20`,
+      fix_id: "fix-3.1.20",
+      setting: "log_connections",
+    },
+    // A non-catalog entry naming the preload setting still never gets the field.
+    { spec_id: `${B}:9.9`, settings: ["shared_preload_libraries"] },
+  ],
+}
+const OPTIONS = { templateVersion: 1, retryMode: "adaptive" }
+
+test("only catalog fixes that change shared_preload_libraries need the list template", () => {
+  const [p32, p56, c610, s3120, other] = LIST_PLAN.recommended_order
+  assert.equal(needsListTemplate(p32), true)
+  assert.equal(needsListTemplate(p56), true)
+  assert.equal(needsListTemplate(c610), false)
+  assert.equal(needsListTemplate(s3120), false)
+  assert.equal(needsListTemplate(other), false)
+  assert.equal(needsListTemplate(null), false)
+  assert.equal(listTemplateVersionFor(LIST_PLAN, `${B}:3.2`), 2)
+  assert.equal(listTemplateVersionFor(LIST_PLAN, `${B}:5.6`), 2)
+  assert.equal(listTemplateVersionFor(LIST_PLAN, `${B}:6.10`), null)
+  assert.equal(listTemplateVersionFor(LIST_PLAN, `${B}:3.1.20`), null)
+  assert.equal(listTemplateVersionFor(LIST_PLAN, "unknown"), null)
+  // The registry could not say: nothing is sent (prepare explains the refusal).
+  for (const bad of [null, 0, -1, 1.5, "2", true])
+    assert.equal(
+      listTemplateVersionFor(
+        { ...LIST_PLAN, list_template_version: bad },
+        `${B}:3.2`,
+      ),
+      null,
+    )
+  assert.deepEqual(listTemplateField(3), { list_template_version: 3 })
+  for (const bad of [null, undefined, 0, "3", 2.5])
+    assert.deepEqual(listTemplateField(bad), {})
+})
+
+test("combined-test bodies carry list_template_version only for preload fixes, never params", () => {
+  const selected = [`${B}:3.2`, `${B}:6.10`, FIX, `${B}:5.6`, `${B}:3.1.20`]
+  const fixes = batchFixes(
+    selected,
+    base,
+    OPTIONS,
+    () => 4,
+    (id) => listTemplateVersionFor(LIST_PLAN, id),
+  )
+  assert.deepEqual(
+    fixes.map((f) => f.list_template_version),
+    [2, undefined, undefined, 2, undefined],
+  )
+  assert.deepEqual(
+    fixes.map((f) => "list_template_version" in f),
+    [true, false, false, true, false],
+  )
+  for (const f of fixes) {
+    for (const key of [
+      "params",
+      "parameters",
+      "sql",
+      "values",
+      "target",
+      "settings",
+      "changes",
+    ])
+      assert.ok(!(key in f), key)
+  }
+  // The object fix is unchanged: id and its own template version only.
+  assert.equal(fixes[2].object_fix_id, FIX)
+  assert.equal(fixes[2].template_version, 4)
+  // Without the callback (older callers), no setting fix gets the field.
+  for (const f of batchFixes(selected, base, OPTIONS, () => 1))
+    assert.ok(!("list_template_version" in f))
+})
+
+test("single-fix body: settingFixRequest adds the field only when given a version", () => {
+  const plain = settingFixRequest(base, OPTIONS, `${B}:6.10`)
+  assert.ok(!("list_template_version" in plain))
+  const preload = settingFixRequest(base, OPTIONS, `${B}:3.2`, 2)
+  assert.equal(preload.list_template_version, 2)
+  assert.deepEqual(Object.keys(preload).sort(), [
+    "benchmark_id",
+    "control_id",
+    "environment",
+    "evidence_ids",
+    "list_template_version",
+    "policy_profile",
+    "retry_mode",
+    "retry_template_versions",
+    "snapshot_id",
+    "template_version",
+  ])
+})
+
+test("the chosen list template applies only to its own control, snapshot and profile", () => {
+  const chosen = chooseListTemplate(LIST_PLAN, `${B}:3.2`, "snap-abc", null)
+  assert.deepEqual(chosen, {
+    control_id: `${B}:3.2`,
+    snapshot_id: "snap-abc",
+    profile_ref: null,
+    version: 2,
+  })
+  assert.equal(
+    chooseListTemplate(LIST_PLAN, `${B}:6.10`, "snap-abc", null),
+    null,
+  )
+  const state = {
+    listTemplate: chosen,
+    controlId: `${B}:3.2`,
+    snapshot: { snapshot_id: "snap-abc" },
+    policyProfile: null,
+  }
+  assert.equal(activeListTemplateVersion(state), 2)
+  assert.equal(
+    activeListTemplateVersion({ ...state, controlId: `${B}:3.1.20` }),
+    null,
+  )
+  assert.equal(
+    activeListTemplateVersion({
+      ...state,
+      snapshot: { snapshot_id: "snap-x" },
+    }),
+    null,
+  )
+  assert.equal(
+    activeListTemplateVersion({
+      ...state,
+      policyProfile: { profile_ref: "a".repeat(64) },
+    }),
+    null,
+  )
+  assert.equal(
+    activeListTemplateVersion({ ...state, listTemplate: null }),
+    null,
+  )
+  assert.equal(
+    activeListTemplateVersion({
+      ...state,
+      listTemplate: { ...chosen, version: "2" },
+    }),
+    null,
+  )
+})
+
+test("catalog-linked fixes always send retry_mode repeat (server refuses retries)", () => {
+  const plan = {
+    recommended_order: [
+      {
+        spec_id: "cis-pg17-v1.1.0:6.10",
+        kind: "catalog_setting",
+        settings: ["ssl_ciphers"],
+      },
+      { spec_id: "cis-pg17-v1.1.0:3.1.20", kind: "setting" },
+    ],
+  }
+  assert.equal(isCatalogLinkedFix(plan, "cis-pg17-v1.1.0:6.10"), true)
+  assert.equal(isCatalogLinkedFix(plan, "cis-pg17-v1.1.0:3.1.20"), false)
+  assert.equal(isCatalogLinkedFix({}, "cis-pg17-v1.1.0:6.10"), false)
+  const fixes = batchFixes(
+    ["cis-pg17-v1.1.0:6.10", "cis-pg17-v1.1.0:3.1.20"],
+    base,
+    { templateVersion: 1, retryMode: "adaptive" },
+    () => 1,
+    () => null,
+    (id) => isCatalogLinkedFix(plan, id),
+  )
+  assert.equal(fixes[0].retry_mode, "repeat")
+  assert.equal(fixes[1].retry_mode, "adaptive")
+  assert.deepEqual(fixes[0].retry_template_versions, [])
+})
+
+// W2B: catalog-linked fixes (3.2, 5.6, 6.10) in the step 6 combined review table.
+const CATALOG_UNIT = {
+  fix_id: "fix-5.6-passwordcheck",
+  spec_id: "5.6",
+  requires: "restart",
+  changes: [
+    {
+      param: "shared_preload_libraries",
+      prior_state: { value: "" },
+      expected_value: "passwordcheck",
+    },
+  ],
+  verify: { spec_check_ref: "5.6", catalog_evaluator: "preload_library" },
+}
+
+test("catalog units are recognised and show each change", () => {
+  assert.equal(isCatalogUnit(CATALOG_UNIT), true)
+  assert.equal(isObjectUnit(CATALOG_UNIT), false)
+  assert.equal(
+    isCatalogUnit({ fix_id: "x", params: { param_name: "log_connections" } }),
+    false,
+  )
+  assert.deepEqual(catalogChangeLines(CATALOG_UNIT), [
+    "shared_preload_libraries: (empty) → passwordcheck",
+  ])
+  assert.deepEqual(
+    catalogChangeLines({
+      changes: [
+        {
+          param: "pgaudit.log",
+          prior_state: null,
+          expected_value: "ddl,role,write",
+        },
+      ],
+    }),
+    ["pgaudit.log: (not set) → ddl,role,write"],
+  )
+})
+
+test("catalog after-combined status comes from the step's catalog proof", () => {
+  const steps = [
+    { fix_id: CATALOG_UNIT.fix_id, catalog_proof: { result: "PASS" } },
+  ]
+  const ok = { combined_test: { status: "VERIFIED", steps } }
+  assert.equal(catalogAfterCombined(ok, CATALOG_UNIT.fix_id), "PASS")
+  assert.equal(catalogAfterCombined(ok, "fix-6.10-ciphers"), "NOT RUN")
+  const failed = { combined_test: { status: "FAILED", steps } }
+  assert.match(
+    catalogAfterCombined(failed, CATALOG_UNIT.fix_id),
+    /did not finish/,
+  )
+  // A step without a proof is never shown as passing.
+  const noProof = {
+    combined_test: {
+      status: "VERIFIED",
+      steps: [{ fix_id: CATALOG_UNIT.fix_id }],
+    },
+  }
+  assert.equal(catalogAfterCombined(noProof, CATALOG_UNIT.fix_id), "NOT RUN")
+  assert.equal(catalogAfterCombined({}, CATALOG_UNIT.fix_id), "NOT RUN")
 })

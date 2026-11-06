@@ -23,28 +23,39 @@ def test_shared_engine_retains_authoritative_phase1_report(engine, snapshot):
     assert calculated['upstream_report'] == native
     # 17 automated setting specs: 14 compliant, 3.1.20 and 3.1.25 FAIL, 3.1.11 NOT_APPLICABLE
     # (log_destination 'stderr', no syslog). MANUAL: 9 policy specs (no approved profile,
-    # policy_missing) + 3.1.12 and 7.2 (manual_checklist). 6.10 needs a capability.
+    # policy_missing) + 3.1.12 and 7.2 (manual_checklist).
     # Catalog (F6) specs on the fixture's catalog sections: 4.10 PASS (every login role
     # has a password), 5.5 FAIL (postgres at -1), 7.4 FAIL (archive_mode off), and 4.3,
     # 4.4, 4.5, 4.6, 4.7, 4.9, 7.1 MANUAL.
-    assert native['summary'] == dict(PASS=15, FAIL=4, MANUAL=18, NEEDS_CAPABILITY=1,
-                                     NOT_APPLICABLE=1, NOT_COLLECTED=0, STALE=0, ERROR=0)
+    # Wave 2b catalog specs: this synthetic snapshot has settings rows only for setting
+    # specs and no available_extensions or connections section, so 3.2, 5.6, 6.10 (no
+    # shared_preload_libraries / ssl_ciphers row) and 4.8, 6.11 are NOT_COLLECTED, never
+    # PASS. 6.8 still FAILs on the readable hba rules (host lines). 5.3, 5.4 MANUAL.
+    assert native['summary'] == dict(PASS=15, FAIL=5, MANUAL=20, NEEDS_CAPABILITY=0,
+                                     NOT_APPLICABLE=1, NOT_COLLECTED=5, STALE=0, ERROR=0)
     catalog = {r['spec_id'].split(':')[1]: (r['result'], r['reason_code']) for r in native['results']
                if 'evidence_paths' in r}
     assert catalog == {'4.10': ('PASS', 'empty_review_set'), '5.5': ('FAIL', 'unlimited_connections'),
                        '7.4': ('FAIL', 'archive_mode_off'), '4.3': ('MANUAL', 'manual_review'),
                        '4.4': ('MANUAL', 'manual_review'), '4.5': ('MANUAL', 'databases_not_covered'),
                        '4.6': ('MANUAL', 'databases_not_covered'), '4.7': ('MANUAL', 'databases_not_covered'),
-                       '4.9': ('MANUAL', 'manual_review'), '7.1': ('MANUAL', 'manual_review')}
+                       '4.9': ('MANUAL', 'manual_review'), '7.1': ('MANUAL', 'manual_review'),
+                       '3.2': ('NOT_COLLECTED', 'field_missing'), '5.6': ('NOT_COLLECTED', 'field_missing'),
+                       '6.10': ('NOT_COLLECTED', 'field_missing'),
+                       '4.8': ('NOT_COLLECTED', 'section_not_collected'),
+                       '6.11': ('NOT_COLLECTED', 'section_not_collected'),
+                       '6.8': ('FAIL', 'tls_not_enabled_or_enforced'),
+                       '5.3': ('MANUAL', 'manual_review'), '5.4': ('MANUAL', 'manual_review')}
     rows = {r['spec_id']: r for r in native['results']}
     assert (rows['cis-pg17-v1.1.0:3.1.11']['result'],
             rows['cis-pg17-v1.1.0:3.1.11']['reason_code']) == ('NOT_APPLICABLE', 'condition_false')
     assert {sid for sid, r in rows.items() if r['reason_code'] == 'policy_missing'} == {
         f'cis-pg17-v1.1.0:{n}' for n in ('3.1.2', '3.1.4', '3.1.5', '3.1.6', '3.1.8', '3.1.9',
                                          '3.1.10', '3.1.13', '3.1.26')}
-    assert rows['cis-pg17-v1.1.0:6.10']['result'] == 'NEEDS_CAPABILITY'
+    assert rows['cis-pg17-v1.1.0:6.8']['explanation']['failing_parts'] == ['non_tls_hba_rules']
     assert {sid for sid, r in rows.items() if r['result'] == 'FAIL'} == {
-        'cis-pg17-v1.1.0:3.1.20', 'cis-pg17-v1.1.0:3.1.25', 'cis-pg17-v1.1.0:5.5', 'cis-pg17-v1.1.0:7.4'}
+        'cis-pg17-v1.1.0:3.1.20', 'cis-pg17-v1.1.0:3.1.25', 'cis-pg17-v1.1.0:5.5', 'cis-pg17-v1.1.0:7.4',
+        'cis-pg17-v1.1.0:6.8'}
     ref = TemplateReference(version=1, sha256='a'*64,
         evidence=[dict(document_id='test', version='1', sha256='b'*64)])
     request = build_handoff(engine, snapshot, ref, assessment=native)

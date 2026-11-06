@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     # Draft and approved policy profiles created in the UI (content-addressed files)
     policy_profile_storage_dir: str = "./data/policy-profiles"
     sandbox_poc_enabled: bool = False
-    sandbox_poc_image: str = "postgres:17-bookworm"
+    # None: the sandbox runtime uses DBGUARD_POSTGRES_IMAGE, else the pinned pgaudit image.
+    sandbox_poc_image: str | None = None
     sandbox_llm_enabled: bool = False
     sandbox_llm_base_url: str = "https://ollama.com/v1"
     sandbox_llm_model: str = "gpt-oss:20b"

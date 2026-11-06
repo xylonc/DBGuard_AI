@@ -202,7 +202,7 @@ def test_source_only_catalog_objects_do_not_block_a_setting_fix(tmp_path):
             report = archive.read('report.html').decode('utf-8')
         assert 'reproduction or rollback findings differ' not in report
         assert 'Sandbox status: VERIFIED' in report
-        assert report.count('<tr><td>cis-') == 29  # the 29 non-catalog specs
+        assert report.count('<tr><td>cis-') == 28  # the 28 non-catalog specs (6.10 is a catalog check since W2B)
         assert 'dbguard_extra' not in report
 
         # The difference was real: the sandbox reproduction has neither object.

@@ -36,7 +36,9 @@ def canonical_apply(sql, name="log_connections", value=None):
 
 
 def is_fixture(result):
-    approvers = [result['template'].get('approved_by', '')] + [e.get('approved_by', '') for e in result['template'].get('evidence', [])]
+    # W2B: a catalog fix may also carry the set_config_list template's approval.
+    templates = [result['template']] + ([result['list_template']] if result.get('list_template') else [])
+    approvers = [a for t in templates for a in [t.get('approved_by', '')] + [e.get('approved_by', '') for e in t.get('evidence', [])]]
     return bool(result.get('demo_fixture_approval')) or any(any(word in a.upper() for word in ('FIXTURE', 'TEST_ONLY', 'DEMO')) for a in approvers)
 
 
@@ -45,6 +47,8 @@ def build_review_bundle(handoff, result, engine):
     require(is_object == bool(getattr(handoff, 'object_fix_id', None)), 'fix kind differs from the handoff')
     if is_object:
         return build_object_review_bundle(handoff, result, engine)
+    if result.get('kind') == 'catalog_setting':
+        return build_catalog_review_bundle(handoff, result, engine)
     require(result.get('status') == 'VERIFIED', 'only VERIFIED runs are exportable')
     require(result.get('approval_source') == 'registry', 'registry approval evidence is required')
     require(result.get('snapshot_hash') == digest(handoff.snapshot), 'snapshot identity mismatch')
@@ -77,6 +81,8 @@ def build_review_bundle(handoff, result, engine):
     require(before['findings'] == bound['findings'] == restored['findings'], 'reproduction or rollback findings differ')
     require(after['findings'][control]['status'] == 'PASS', 'target did not pass')
     regressions = [sid for sid, f in before['findings'].items() if sid != control and (is_regression(f['status'], after['findings'][sid]['status']) or sid in engine.gapped_settings(after['findings']))]
+    from .workflow import setting_catalog_regressions
+    regressions += setting_catalog_regressions(engine, before, after, name, control)
     require(not regressions and final.get('regressions') == [], 'regression evidence is invalid')
     prior = signature(handoff.snapshot, names)
     require(signature(final['before'], names) == prior == signature(final['rollback'], names), 'exact rollback provenance differs')
@@ -298,6 +304,151 @@ def build_object_review_bundle(handoff, result, engine):
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files['manifest.json'] = json.dumps(manifest, indent=2).encode()
     files['README.txt'] = (f'''{scope}\n{profile_line}\n\nFix: {title}\nProof checked after the fix: {predicate}\n{OBJECT_REHEARSAL_TEXT}\nReview report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and that this one\nobject is still exactly as it was in the evidence. It applies (and rolls back) inside one\ntransaction, re-reads the object before COMMIT and rolls the transaction back if the\nresult is not exactly the tested state. It never applies automatically.\nRecollect the target with the original collector and reassess via the application.\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe manifest detects accidental changes, not forgery.\n''').encode()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# W2B gate 1: catalog-linked setting fixes (3.2 pgaudit, 5.6 passwordcheck, 6.10 ciphers).
+# ---------------------------------------------------------------------------
+
+PRELOAD_README = (
+    "\nPACKAGE PREREQUISITE AND RESTART: this fix adds {libs} to shared_preload_libraries.\n"
+    "Install the library on the server first (pgaudit: the postgresql-17-pgaudit package;\n"
+    "passwordcheck ships with PostgreSQL). If a preloaded library is missing, PostgreSQL does\n"
+    "NOT start. Before apply, the runner loads each added library in a throwaway session\n"
+    "(LOAD) and refuses with 'install the package first; no SQL executed' if it cannot.\n"
+    "apply and rollback only stage the change: the DBA restarts PostgreSQL in a maintenance\n"
+    "window, then runs verify (or verify-rollback).\n")
+TLS_README = (
+    "\nTLS: the sandbox switched ssl on with a throwaway self-signed certificate that never left\n"
+    "it. This bundle does NOT switch ssl on; that is CIS 6.8's guided step with your own\n"
+    "certificate. Existing TLS 1.2 sessions keep their cipher until they reconnect.\n")
+
+
+def build_catalog_review_bundle(handoff, result, engine):
+    from . import catalog_fixes as cf
+    from app.services.spec_engine.catalog_checks import notices_for
+    require(result.get('status') == 'VERIFIED', 'only VERIFIED runs are exportable')
+    require(result.get('approval_source') == 'registry', 'registry approval evidence is required')
+    require(result.get('snapshot_hash') == digest(handoff.snapshot), 'snapshot identity mismatch')
+    require(result.get('spec_set_hash') == engine.spec_set_hash == handoff.spec_set_hash, 'spec identity mismatch')
+    require(result.get('spec_hashes') == engine.hashes and result.get('collector_hash') == engine.collector_hash, 'collector/spec evidence mismatch')
+    require(result.get('policy_profile') == engine.policy_pin, 'policy profile differs from the tested run')
+    fix = result['fix_unit']
+    require(result.get('fix_unit_hash') == digest(fix), 'fix-unit identity mismatch')
+    control = handoff.control_id
+    require(not getattr(handoff, 'object_fix_id', None) and not handoff.retry_template_refs, 'unsupported handoff')
+    # Re-derived from the bound evidence and the approved profile: a stored fix cannot widen it.
+    scope = cf.catalog_fix_scope(engine, handoff.snapshot, control)
+    require(fix == cf.build_fix(scope, fix['template_version'], fix.get('list_template_version')),
+            'fix differs from the evidence-derived catalog fix')
+    list_ref, list_template = handoff.list_template_ref, result.get('list_template')
+    require((list_ref is None) == (list_template is None) == ('list_template_id' not in fix), 'list template pin mismatch')
+    if list_ref is not None:
+        require(list_ref.registry_name == list_template['registry_name'] == cf.LIST_TEMPLATE
+                and list_template['version'] == list_ref.version == fix['list_template_version']
+                and list_template['sha256'] == list_ref.sha256
+                and [{k: e.get(k) for k in ('document_id', 'version', 'sha256')} for e in list_template['evidence']]
+                == [p.model_dump() for p in list_ref.evidence], 'list template was not pinned in the handoff')
+    template, ref = result['template'], handoff.template_ref
+    require(ref.registry_name == cf.TEMPLATE_NAME and template['registry_name'] == ref.registry_name
+            and template['version'] == ref.version == fix['template_version'] and template['sha256'] == ref.sha256,
+            'selected template was not pinned in the handoff')
+    pins = [{k: e.get(k) for k in ('document_id', 'version', 'sha256')} for e in template['evidence']]
+    require(pins == [p.model_dump() for p in ref.evidence], 'evidence reference mismatch')
+    statements = result['rendered_apply_statements']
+    require(len(statements) == len(fix['changes']) and result['rendered_apply_sql'] == '\n'.join(statements),
+            'rendered statements differ from the fix')
+    apply_statements = []
+    from .workflow import list_template_action
+    for sql, change in zip(statements, fix['changes']):
+        if change['template'] == cf.LIST_TEMPLATE:
+            action = list_template_action(sql)
+            require(action == change['apply'], 'typed action differs from tested list template')
+            apply_statements += render_action(action)
+        else:
+            require(template_action(sql, change['param']) == change['apply'], 'typed action differs from tested template')
+            apply_statements += canonical_apply(sql, change['param'], change['apply']['value'])
+    require(result['rendered_rollback_sql'] == cf.rollback_sql(fix), 'rendered rollback differs')
+    rollback_statements = [s + ';' for c in reversed(fix['changes']) for s in render_action(c['rollback'])]
+    attempts = result['attempts']
+    require(1 <= len(attempts) <= 3 and all(a.get('cleanup', {}).get('verified') is True for a in attempts), 'attempt cleanup is incomplete')
+    final = attempts[-1]
+    require(final.get('status') == 'VERIFIED' and final.get('rollback_verified') is True and final.get('health_after_apply') is True
+            and final.get('health_after_rollback') is True and final.get('functional_checks', {}).get('passed') is True,
+            'acceptance evidence incomplete')
+    require(final.get('rendered_apply_sql') == result['rendered_apply_sql'] and final.get('fix_unit_hash') == digest(fix),
+            'final attempt differs from exported fix')
+    before, after, restored = (engine.assess(final[k]) for k in ('before', 'after', 'rollback'))
+    require(before == final['before_assessment'] and after == final['after_assessment'] and restored == final['rollback_assessment'],
+            'assessments do not match snapshots')
+    bound = engine.bind_assessment(handoff.snapshot, handoff.assessment)
+    require(before['findings'] == bound['findings'] == restored['findings'], 'reproduction or rollback findings differ')
+    # The proof, recomputed server-side from the recorded collections with the approved profile.
+    proof = {k: cf.proof(engine, scope['spec'], final[k]) for k in ('before', 'after', 'rollback')}
+    require(proof == final.get('catalog_proof') and proof['before']['result'] == 'FAIL'
+            and proof['after']['result'] == 'PASS' and proof['rollback'] == proof['before'], 'catalog check proof is invalid')
+    regressions = [sid for sid, f in before['findings'].items()
+                   if is_regression(f['status'], after['findings'][sid]['status']) or sid in engine.gapped_settings(after['findings'])]
+    regressions += cf.catalog_regressions(engine, before, after, [c['param'] for c in fix['changes']], control)
+    require(not regressions and final.get('regressions') == [], 'regression evidence is invalid')
+    from .provenance import reconstruction_plan
+    plan = reconstruction_plan(handoff.snapshot, engine.specs, cf.reconstruction_names(engine, handoff.snapshot, scope))
+    names = cf.fix_names(engine, scope, plan)
+    require(result.get('names') == names, 'scoped setting names differ')
+    prior = cf.catalog_signature(handoff.snapshot, names)
+    require(cf.catalog_signature(final['before'], names) == prior == cf.catalog_signature(final['rollback'], names),
+            'exact rollback provenance differs')
+    require(not any(blocking_gaps(s) for s in (final['before'], final['after'], final['rollback'])), 'collection has gaps')
+    applied = cf.catalog_signature(final['after'], names)
+    require(all(applied['settings'].get(c['param'], {}).get('setting') == c['expected_value'] for c in fix['changes']),
+            'the fix values are not the applied values')
+    if scope['tls']:
+        require(all(k in final for k in ('tls_before', 'tls_after', 'tls_rollback')) and cf.tls_fixed(final['tls_after'])
+                and cf._same_tls(final['tls_rollback'], final['tls_before']), 'TLS handshake evidence is invalid')
+    demo = is_fixture(result)
+    risk = result.get('risk_review') or cf.catalog_risk_review(engine, handoff.snapshot, control, scope=scope)
+    link = scope['link']
+    config = {'kind': 'catalog_setting', 'fix_id': fix['fix_id'], 'database': handoff.snapshot['envelope']['database'],
+              'demo_fixture_approval': demo, 'names': names, 'prior': prior,
+              'run_id': result['run_id'], 'control_id': control, 'setting': fix['changes'][0]['param'],
+              'settings': [c['param'] for c in fix['changes']], 'requires': fix['requires'],
+              'preload_added': list(fix['preload_added']),
+              'target_id': handoff.snapshot['envelope']['target_id'],
+              'system_identifier': handoff.snapshot['baseline'].get('identity', {}).get('system_identifier'),
+              'spec_set_hash': engine.spec_set_hash, 'snapshot_hash': result['snapshot_hash'],
+              'policy_profile': engine.policy_pin, 'applied': applied,
+              'apply_statements': apply_statements, 'rollback_statements': rollback_statements}
+    scope_line = 'DEMO FIXTURE APPROVAL — not human approval' if demo else 'Registry-approved template and evidence — DBA review still required'
+    profile_line = approval_text(engine.policy_pin)
+    title = scope['spec']['ref']['title']
+    proof_rows = ''.join(f'<tr><td>{escape(label)}</td><td>{escape(proof[k]["result"])}</td><td>{escape(str(proof[k]["code"]))}</td></tr>'
+                         for label, k in (('Before (reproduced source)', 'before'), ('After fix', 'after'), ('After rollback', 'rollback')))
+    changes_html = ''.join(f'<tr><td>{escape(c["param"])}</td><td>{escape(str((c["prior_state"] or {}).get("value", "(not defined)")))}</td>'
+                           f'<td>{escape(c["expected_value"])}</td></tr>' for c in fix['changes'])
+    tls_html = ''
+    if scope['tls']:
+        tls_html = ('<h2>TLS 1.2 handshakes in the sandbox (loopback, throwaway certificate)</h2><pre>'
+                    + escape(json.dumps({k: final[k] for k in ('tls_before', 'tls_after', 'tls_rollback')}, indent=2)) + '</pre>')
+    notice_html = ''.join(f'<p class="notice">{escape(n["text"])}</p>' for n in notices_for(link['recommendation']))
+    extra_readme = (PRELOAD_README.format(libs=', '.join(fix['preload_added'])) if fix['preload_added'] else '') + (TLS_README if scope['tls'] else '')
+    report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope_line)}</p><p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>CIS {escape(link['recommendation'])}: {escape(title)}</h2><table><tr><th>Setting</th><th>Before</th><th>Fix value</th></tr>{changes_html}</table><p class="notice">{escape(extra_readme.strip())}</p><h2>Proof: the CIS check in the sandbox</h2><table><tr><th>Phase</th><th>Result</th><th>Reason</th></tr>{proof_rows}</table>{notice_html}{tls_html}<p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p><h2>Risk and prerequisites</h2><pre>{escape(json.dumps(risk, indent=2))}</pre><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed catalog-linked configuration fix. The runner checks the PostgreSQL version, database, cluster identity and every scoped setting before apply or rollback, and refuses drift. After applying, recollect and reassess the target using the same specs.</p></body></html>'''
+    files = {'fix.json': json.dumps(config, indent=2).encode(),
+             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
+             'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),
+             'harden.sh': b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" "$@"\n'}
+    files['risk-review.json'] = json.dumps(risk, indent=2).encode()
+    files['visual_evidence.py'] = (ASSETS/'visual_evidence.py').read_bytes()
+    files['verify.sh'] = b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" verify "$@"\n'
+    manifest = {'schema_version': 'review-bundle-v1', 'run_id': result['run_id'], 'demo_fixture_approval': demo,
+                'requires_dba_review': True, 'snapshot_hash': result['snapshot_hash'], 'spec_set_hash': engine.spec_set_hash,
+                'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
+    files['manifest.json'] = json.dumps(manifest, indent=2).encode()
+    files['README.txt'] = (f'''{scope_line}\n{profile_line}\n\nFix: CIS {link['recommendation']} {title}\nProof: the CIS check gave FAIL, then PASS after the fix and FAIL again after rollback, in a disposable sandbox.\n{extra_readme}\nReview report.html, evidence.json and the SQL before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and every scoped\nsetting and its configuration source for drift before apply or rollback. It never applies\nautomatically. Recollect the target with the original collector and reassess via the\napplication. Demo bundles require --allow-demo and must only be used with disposable\ndatabases. The manifest detects accidental changes, not forgery.\n''').encode()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():

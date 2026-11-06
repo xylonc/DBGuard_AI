@@ -32,3 +32,13 @@ test("every assessment row renders CatalogEvidence under its reason", () => {
 test("notices are rendered as text, never as HTML", () => {
   assert.doesNotMatch(source, /dangerouslySetInnerHTML/)
 })
+
+test("5.3 / 5.4 highlights render as fixed-sentence tags, not as the raw code list", () => {
+  assert.match(
+    source,
+    /import \{ highlightSentences \} from "\.\/explanations"/,
+  )
+  assert.match(source, /\.filter\(\(\[k\]\) => k !== "highlights"\)/)
+  assert.match(source, /highlightSentences\(item\)\.map\(\(text, j\) =>/)
+  assert.match(source, /bg-amber-100/)
+})

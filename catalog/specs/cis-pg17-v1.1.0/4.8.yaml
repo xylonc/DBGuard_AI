@@ -1,0 +1,21 @@
+spec_id: "cis-pg17-v1.1.0:4.8"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "4.8"
+  title: "Ensure the set_user extension is installed"
+  source_sha256: "3694fb21c5a0af984f28d85e7daa074c7c47b77b7edcd6a998362d5e2002d4ec"
+tier: automated
+reason: null
+check:
+  kind: catalog
+  evaluator: set_user_extension
+  pass_condition_quote: "Check if the extension is available by querying the `pg_available_extensions` table: ``` SELECT * FROM pg_available_extensions WHERE name = 'set_user'; ``` If the extension is not listed, this is a fail. **Note:** If you have not done so already, follow the procedures in the description to create a `roletree` view. Verify all login roles holding direct or inherited superuser privileges are authorized: ``` SELECT ro.rolname, ro.roloid, ro.rolcanlogin, ro.rolsuper, ro.rolparents FROM roletree ro WHERE (ro.rolcanlogin AND ro.rolsuper) OR ( ro.rolcanlogin AND EXISTS ( SELECT TRUE FROM roletree ri WHERE ri.rolname = ANY (ro.rolparents) AND ri.rolsuper ) ); ``` Ensure any rows returned are authorized to be granted super user and log in directly. If any are unauthorized this is a fail."
+interpretation:
+  - "If set_user is not listed among the server's available extensions, the result is FAIL (Gate W2B ruling 7). As in the CIS audit, being listed means the package is on the server, not that the extension was created in a database or preloaded."
+  - "The list follows the CIS roletree query: login roles that are superusers, and login roles with any superuser among the roles they are a direct or indirect member of. The evidence shows the membership path. In PostgreSQL the superuser attribute itself is not inherited, but CIS counts such roles, so DBGuard lists them."
+  - "If set_user is available and the list is empty, the result is PASS, because CIS's query returns no rows to authorize (Gate W2B round 2 ruling 3). If the list is not empty, the result is MANUAL, never PASS: a person decides whether each listed role is authorized."
+  - "The installed version in the evidence is for the connected database only. Other databases are not covered."

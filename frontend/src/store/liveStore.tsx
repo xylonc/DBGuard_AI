@@ -8,7 +8,12 @@ import {
 } from "react"
 import { api, request, type Service } from "@/adapters/live"
 import { profileRefQuery } from "@/live/profileForm"
-import { objectFixRequest } from "@/live/objectFixes"
+import {
+  activeListTemplateVersion,
+  listTemplateField,
+  objectFixRequest,
+  type ChosenListTemplate,
+} from "@/live/objectFixes"
 // The approved policy profile the user chose for assessments (default none). Only
 // its hash is sent; the backend resolves it from the profile store.
 export type ChosenProfile = {
@@ -66,6 +71,8 @@ type LiveState = {
   // Version of the approved per-object fix templates (role_nologin, ...).
   objectTemplateVersion: number
   objectFix: ChosenObjectFix | null
+  // W2B: set_config_list version for a single-fix test of a preload fix (3.2, 5.6).
+  listTemplate: ChosenListTemplate | null
   evidenceIds: string
   alternativeTemplates: string
   controlId: string
@@ -93,6 +100,7 @@ const fresh = (): LiveState => ({
   templateVersion: 1,
   objectTemplateVersion: 1,
   objectFix: null,
+  listTemplate: null,
   evidenceIds: "",
   alternativeTemplates: "",
   controlId: "cis-pg17-v1.1.0:3.1.20",
@@ -339,6 +347,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           retry_mode: s.retryMode,
           retry_template_versions: [],
           policy_profile: s.policyProfile?.profile_ref ?? null,
+          // Only for a catalog fix that changes shared_preload_libraries.
+          ...listTemplateField(activeListTemplateVersion(s)),
           alternative_templates: s.alternativeTemplates
             .split(",")
             .map((x) => x.trim())

@@ -103,6 +103,16 @@ def render_action(action: dict) -> list[str]:
             f"ALTER SYSTEM RESET {quoted_param}",
             "SELECT pg_reload_conf()",
         ]
+    elif action_type == "set_config_list":
+        # W2B (rulings round 3): matches set_config_list.sql.j2, one quoted literal per
+        # list item. Values must pass the reviewed list schema (no quote can reach here).
+        from app.models import SetConfigListTemplateParams
+        params = SetConfigListTemplateParams(param_name=param, param_values=list(action.get("values") or []))
+        items = ", ".join("'" + v.replace("'", "''") + "'" for v in params.param_values)
+        return [
+            f"ALTER SYSTEM SET {_quote_identifier(param)} = {items}",
+            "SELECT pg_reload_conf()",
+        ]
     else:
         raise ValueError(f"Unknown action type: {action_type!r}")
 

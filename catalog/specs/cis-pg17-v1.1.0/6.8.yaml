@@ -1,0 +1,22 @@
+spec_id: "cis-pg17-v1.1.0:6.8"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "6.8"
+  title: "Ensure TLS is enabled and configured correctly"
+  source_sha256: "99f79a856005a085c47a086aed2f3cfc814f433b04792cd11eaa706386c1447b"
+tier: automated
+reason: null
+check:
+  kind: catalog
+  evaluator: tls_enabled_and_enforced
+  pass_condition_quote: "1. Verify that TLS is enabled; if `ssl` is `off`, this is a fail: ``` postgres=# SHOW ssl; ssl ----- on (1 row) ``` 2. Verify that TLS is enforced for TCP/IP connections; if any rows are returned, non-TLS connections are permitted and this is a fail: ``` postgres=# SELECT rule_number, type, database, user_name, address FROM pg_hba_file_rules WHERE type IN ('host', 'hostnossl'); ``` 3. As a supplementary runtime check, verify that no established TCP/IP connections are unencrypted; if any rows are returned, this is a fail: ``` postgres=# SELECT s.pid, a.usename, a.client_addr FROM pg_stat_ssl s JOIN pg_stat_activity a ON s.pid = a.pid WHERE NOT s.ssl AND a.client_addr IS NOT NULL;"
+interpretation:
+  - "All three CIS steps are applied, including the supplementary runtime check. Any failing step gives FAIL, and the evidence names every failing step. A FAIL on readable evidence is reported even when another step could not be read."
+  - "Without a FAIL, the result is GAPPED, never PASS, when a step cannot be read: the login rules were not collected, the connection list was not collected, or any session is hidden from the collecting account (it lacks pg_read_all_stats)."
+  - "The login rules are read from the rules file view, as in the CIS query, so they may differ from the loaded rules until a reload (CIS additional information). A rules line with an error gives MANUAL rather than PASS, because its type cannot be trusted."
+  - "Rule types `host` and `hostnossl` fail, as in the CIS query. A `hostgssenc` or `hostnogssenc` rule gives MANUAL, never PASS (Gate W2B round 2 ruling 2), because it can accept TCP connections that do not use TLS. This is stricter than the literal CIS query, which does not list these types."
+  - "Every established connection with a client address (loopback, private or public) is checked, client and replication (walsender) sessions alike, because the CIS query does not filter by session type. Unix-socket sessions are excluded, as in the CIS query. A TCP connection without TLS fails even if it is GSSAPI-encrypted, which is the literal CIS query."

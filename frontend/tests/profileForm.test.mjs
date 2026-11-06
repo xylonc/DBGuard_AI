@@ -1,6 +1,9 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
+  PGAUDIT_CLASSES,
+  PGAUDIT_CLASS_HELP,
+  PGAUDIT_DEFAULT_CLASSES,
   assessmentProfilePin,
   draftBody,
   errorsFromDetail,
@@ -12,6 +15,7 @@ import {
   shapeHint,
   shortSha,
   textToExpected,
+  toggleClass,
 } from "../src/live/profileForm.ts"
 import { findings, ApiError, request } from "../src/adapters/live.ts"
 
@@ -225,4 +229,61 @@ test("API errors keep the structured detail for inline display", async () => {
   } finally {
     global.fetch = original
   }
+})
+
+test("CIS 3.2 pgaudit classes: saved list pre-fills, ticks keep pgaudit order, none ticked sends null", () => {
+  // Gate W2B ruling 2: allowed classes and the recommended default.
+  assert.deepEqual(PGAUDIT_CLASSES, [
+    "read",
+    "write",
+    "function",
+    "role",
+    "ddl",
+    "misc",
+    "misc_set",
+  ])
+  assert.deepEqual(PGAUDIT_DEFAULT_CLASSES, ["ddl", "role", "write"])
+  for (const cls of PGAUDIT_CLASSES) assert.ok(PGAUDIT_CLASS_HELP[cls], cls)
+
+  const withClasses = { ...seed, pgaudit_log_classes: ["ddl", "role", "write"] }
+  const form = formFromProfile(controls, withClasses, null, snapshot)
+  assert.deepEqual(form.pgauditClasses, ["ddl", "role", "write"])
+  assert.deepEqual(draftBody(form, controls).pgaudit_log_classes, [
+    "ddl",
+    "role",
+    "write",
+  ])
+
+  // Ticking keeps pgaudit's order and never duplicates; unticking removes.
+  assert.deepEqual(toggleClass(["ddl", "write"], "read", true), [
+    "read",
+    "write",
+    "ddl",
+  ])
+  assert.deepEqual(toggleClass(["write", "ddl"], "ddl", true), ["write", "ddl"])
+  assert.deepEqual(toggleClass(["write", "ddl"], "write", false), ["ddl"])
+
+  // Nothing ticked (or no saved value): no value is sent, so 3.2 stays policy_missing.
+  assert.deepEqual(
+    formFromProfile(controls, seed, null, snapshot).pgauditClasses,
+    [],
+  )
+  assert.equal(
+    draftBody({ ...form, pgauditClasses: [] }, controls).pgaudit_log_classes,
+    null,
+  )
+  // A form built without the field (older callers) still produces a body.
+  const { pgauditClasses: _drop, ...older } = form
+  assert.equal(draftBody(older, controls).pgaudit_log_classes, null)
+
+  // Server errors about the field are shown next to it.
+  const grouped = groupErrors(
+    [
+      "pgaudit_log_classes: Value error, must not repeat items",
+      "policy pgaudit_log_classes item 'all' is not one of ('read', 'write')",
+    ],
+    controls.map((c) => c.spec_id),
+  )
+  assert.equal(grouped.pgaudit.length, 2)
+  assert.deepEqual(grouped.general, [])
 })

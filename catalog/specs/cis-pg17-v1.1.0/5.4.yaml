@@ -1,0 +1,21 @@
+spec_id: "cis-pg17-v1.1.0:5.4"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "5.4"
+  title: "Ensure login via \"host\" TCP/IP Socket is configured correctly"
+  source_sha256: "817659e23cce175b67f25fdd9c7ae40772d9033f1ef1145aeff6ad736d236815"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and the audit is a set of interactive encrypted and unencrypted login tests with no fail sentence; a person reviews the TCP/IP login rules"
+check:
+  kind: catalog
+  evaluator: host_hba_rules
+  pass_condition_quote: "Login authentication can be tested via TCP/IP SOCKETS by any UNIX user account from the local host."
+interpretation:
+  - "DBGuard cannot run CIS's login tests. It lists every TCP/IP login rule (types starting with `host`) from the rules file view, in file order, with databases, users, address, netmask and method (Gate W2B table A and round 2 ruling 4). A person decides."
+  - "Methods `trust`, `password` and `ident` are highlighted because the CIS description says they are not to be used for remote logins, and `md5` because CIS recommends `scram-sha-256` instead (Gate W2B round 2 ruling 4)."
+  - "Rules open to every address (0.0.0.0/0, the IPv6 equivalent ::/0 and the keyword `all`) are also highlighted (Gate W2B table A). Highlighting is evidence emphasis, not a fail rule, and the result stays MANUAL."
+  - "Lines with an error are listed too, because their type cannot be trusted. The file view may differ from the loaded rules until a reload."

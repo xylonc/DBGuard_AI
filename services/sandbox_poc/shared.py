@@ -35,13 +35,21 @@ SANDBOX_COMPARES_CATALOG = False
 # other section still do.
 CATALOG_ONLY_SECTIONS = frozenset({"functions", "archiving"})
 
+# W2B gate 1: gap records that only qualify catalog evidence. 'connections.tls' is written
+# when the collecting account lacks pg_read_all_stats: other sessions' TLS state is hidden.
+# Only the 6.8 and 6.10 evaluators read connections, so it does not block unrelated
+# setting fixes; it still makes 6.8/6.10 GAPPED in the assessment (never PASS), and
+# catalog_fixes refuses the 6.10 fix for it (reason connections_not_visible).
+CATALOG_ONLY_GAPS = frozenset({"connections.tls"})
+
 
 def blocking_gaps(snapshot: dict) -> list:
     """baseline.gaps records that block the sandbox."""
     gaps = snapshot["baseline"].get("gaps") or []
     if SANDBOX_COMPARES_CATALOG:
         return list(gaps)
-    return [g for g in gaps if not (isinstance(g, dict) and g.get("section") in CATALOG_ONLY_SECTIONS)]
+    exempt = CATALOG_ONLY_SECTIONS | CATALOG_ONLY_GAPS
+    return [g for g in gaps if not (isinstance(g, dict) and g.get("section") in exempt)]
 
 
 class ContractError(ValueError):

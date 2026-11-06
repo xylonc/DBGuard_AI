@@ -464,7 +464,10 @@ def _applies_when_errors(cond: Any, check: Any, record: dict | None, ref: Any) -
 # and rendered from approved templates, so a proof here is still an error.
 
 CATALOG_CHECK_KEYS = ("kind", "evaluator", "pass_condition_quote")
-CATALOG_TIERS = ("automated", "manual_checklist")
+# parameterised (Gate W2B round 2): a catalog evaluator whose rule depends on a
+# policy-profile key (3.2 pgaudit_log_classes). It carries no expected_from: the
+# evaluator reads the key itself, only from an approved profile.
+CATALOG_TIERS = ("automated", "parameterised", "manual_checklist")
 
 
 def _is_catalog_check(spec: dict) -> bool:
@@ -478,7 +481,7 @@ def _validate_catalog_spec(spec: dict, record, tier, tier_valid: bool, errors: l
     if "applies_when" in spec:
         errors.append("check.kind 'catalog' must not have applies_when present")
     if tier_valid and tier not in CATALOG_TIERS:
-        # parameterised and needs_capability keep the old rule: no check at all.
+        # needs_capability keeps the old rule: no check at all.
         errors.append(f"tier {tier!r} must not have check present")
     _validate_catalog_check(spec, spec["check"], record, tier if tier_valid else None, errors)
 

@@ -58,8 +58,8 @@ def test_report_has_no_catalog_rows_or_7_4_notice_by_default(recorded, engine):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         report = archive.read('report.html').decode('utf-8')
     catalog = [s['spec_id'] for s in engine.specs if s.get('check', {}).get('kind') == 'catalog']
-    assert len(catalog) == 10
-    assert report.count('<tr><td>cis-') == 29  # the 29 non-catalog specs
+    assert len(catalog) == 18  # F6 and Wave 2b catalog checks
+    assert report.count('<tr><td>cis-') == 28  # the 28 non-catalog specs
     for sid in catalog:
         assert f'<td>{sid}</td>' not in report
     # 7.4 is not shown in the sandbox report, so neither is its reminder.
@@ -86,7 +86,7 @@ def test_report_shows_the_fixed_7_4_restore_test_reminder_once_when_catalog_comp
     assert report.count('<p class="notice">cis-') == 1
     # It follows the findings table.
     assert report.index('</table>') < report.index(escaped)
-    assert report.count('<tr><td>cis-') == 39  # all 39 specs
+    assert report.count('<tr><td>cis-') == 46  # all 46 specs
 
 
 @pytest.mark.parametrize('fault', ['failed','cleanup','rollback','hash','apply','evidence','assessment','not_applicable','provenance'])

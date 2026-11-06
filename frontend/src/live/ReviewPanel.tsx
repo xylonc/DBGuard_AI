@@ -6,20 +6,28 @@ import { ObjectProposals } from "./ObjectProposals"
 import {
   MAX_BATCH,
   batchFixes,
+  chooseListTemplate,
+  isCatalogLinkedFix,
+  listTemplateVersionFor,
+  needsListTemplate,
   objectTemplateVersionFor,
   isObjectFixId,
+  catalogAfterCombined,
+  catalogChangeLines,
+  isCatalogUnit,
   isObjectUnit,
   objectAfterCombined,
 } from "./objectFixes"
-import {
-  POLICY_MISSING_LABEL,
-  UNKNOWN_LABEL,
-  cisRule,
-  explanationSentence,
-  isPolicyMissing,
-  statusKind,
-} from "./explanations"
+import { cisRule, explanationSentence } from "./explanations"
 import { profileRefQuery } from "./profileForm"
+import {
+  catalogChanges,
+  isCatalogSettingFix,
+  manualReason,
+  preloadNote,
+  restartNote,
+} from "./fixPlan"
+export { manualReason }
 const button = "rounded bg-teal-700 text-white px-4 py-2 disabled:opacity-40"
 type FixPlanProps = {
   // Opens the Policy Profile screen (for COMPANY POLICY MISSING notes).
@@ -101,13 +109,20 @@ export function FixPlan({ onOpenPolicy }: FixPlanProps) {
                   {f.operational_risk} operational risk
                 </span>
               </div>
-              <p>
-                {f.setting}:{" "}
-                <strong>
-                  {f.current_value} → {f.proposed_value}
-                </strong>{" "}
-                · {f.requires}
-              </p>
+              {isCatalogSettingFix(f) ? (
+                <CatalogSettingChanges
+                  fix={f}
+                  listTemplateVersion={plan.list_template_version}
+                />
+              ) : (
+                <p>
+                  {f.setting}:{" "}
+                  <strong>
+                    {f.current_value} → {f.proposed_value}
+                  </strong>{" "}
+                  · {f.requires}
+                </p>
+              )}
               <p>{f.reasoning}</p>
               <p className="text-sm">Rollback: {f.rollback_explanation}</p>
               <p className="text-sm">{f.activation_fact}</p>
@@ -151,7 +166,23 @@ export function FixPlan({ onOpenPolicy }: FixPlanProps) {
                     className="rounded border border-teal-700 text-teal-700 px-4 py-2 disabled:opacity-40"
                     disabled={!!s.busy || !!s.handoffId}
                     onClick={() =>
-                      live.configure({ controlId: f.spec_id, objectFix: null })
+                      live.configure({
+                        controlId: f.spec_id,
+                        objectFix: null,
+                        // Preload fixes (3.2, 5.6) also send the approved
+                        // set_config_list version; null for every other fix.
+                        listTemplate: chooseListTemplate(
+                          plan,
+                          f.spec_id,
+                          s.snapshot.snapshot_id,
+                          s.policyProfile?.profile_ref ?? null,
+                        ),
+                        // Catalog-linked fixes run once with the approved
+                        // template: no adaptive retries or alternatives.
+                        ...(f.kind === "catalog_setting"
+                          ? { retryMode: "repeat", alternativeTemplates: "" }
+                          : {}),
+                      })
                     }
                   >
                     Use for single-fix test
@@ -315,6 +346,12 @@ export function FixPlan({ onOpenPolicy }: FixPlanProps) {
                           fixId,
                           s.objectTemplateVersion,
                         ),
+                      // Only preload fixes (3.2, 5.6) get list_template_version.
+                      (controlId: string) =>
+                        listTemplateVersionFor(plan, controlId),
+                      // Catalog-linked fixes (3.2, 5.6, 6.10) run once: no retries.
+                      (controlId: string) =>
+                        isCatalogLinkedFix(plan, controlId),
                     ),
                   })
                   live.patch({
@@ -366,33 +403,6 @@ export function currentBatch(s: any) {
     s.batch.benchmark === s.benchmark
     ? s.batch.data
     : null
-}
-
-// Backend reason (planning.SITE_FIX_MISSING) when a fix needs a site-specific value.
-const SITE_FIX_MISSING = "site-specific fix value not supplied"
-
-// Plain-language reason a non-passing control gets no automatic fix. `row` is the
-// matching assessment row; its structured explanation is preferred when present.
-export function manualReason(f: any, row?: any, objectFixes = false) {
-  // Catalog checks (F6): per-object fixes, when offered, are listed separately.
-  if ((f.kind === "catalog" || Array.isArray(f.evidence)) && objectFixes)
-    return 'DBGuard does not fix this check as a whole. Fixes for single accounts or objects are offered above under "Proposed fixes for accounts and permissions"; anything not listed there needs a person.'
-  if (f.kind === "catalog" || Array.isArray(f.evidence))
-    return "DBGuard only reports this from catalog evidence and does not change it as a whole; a person must act on anything not offered as a per-object fix."
-  if (row && isPolicyMissing(row))
-    return `${POLICY_MISSING_LABEL}. ${explanationSentence(row.explanation)}`
-  if (statusKind(f.status) === "unknown")
-    return row?.explanation
-      ? explanationSentence(row.explanation)
-      : `${UNKNOWN_LABEL}. The evidence is missing or out of date; collect a new snapshot before fixing.`
-  if (f.tier === "manual_checklist" || f.tier === "parameterised")
-    return "a person must check this; the CIS text gives no value DBGuard can test automatically."
-  if (f.tier === "needs_capability")
-    return "DBGuard cannot check this automatically yet."
-  if (typeof f.reason === "string" && f.reason.includes(SITE_FIX_MISSING))
-    return "no automatic fix is offered because the fix needs a value specific to your server (for 5.2, the addresses it should listen on), and no approved policy profile with that value is selected. Add it under Site-specific fixes on the Policy Profile screen, approve the profile and select it, or fix it by hand as described below."
-  if (f.status === "FAIL") return "no reviewed fix exists for this setting yet."
-  return "the evidence is missing or out of date; collect a new snapshot before fixing."
 }
 
 // CIS remediation text for a FAIL that DBGuard will not fix (from records.json).
@@ -489,6 +499,7 @@ export function CombinedReview() {
                 runs.find((r) => fixIdOf(r) === u.fix_id)?.status ?? "NOT RUN"
               const ok = alone === "VERIFIED" && combinedOk
               const object = isObjectUnit(u)
+              const catalog = !object && isCatalogUnit(u)
               const review = reviews.find((r) => r?.fix_id === u.fix_id)
               return (
                 <tr
@@ -508,6 +519,17 @@ export function CombinedReview() {
                           Object fix · {u.verify?.predicate}
                         </span>
                       </>
+                    ) : catalog ? (
+                      <>
+                        {catalogChangeLines(u).map((line) => (
+                          <span key={line} className="block">
+                            {line}
+                          </span>
+                        ))}
+                        <span className="block text-xs text-slate-600">
+                          Proven by its CIS check · {u.requires}
+                        </span>
+                      </>
                     ) : (
                       <>
                         {u.params?.param_name}: {u.prior_state?.value} →{" "}
@@ -519,7 +541,9 @@ export function CombinedReview() {
                   <td className="py-2 pr-3">
                     {object
                       ? objectAfterCombined(batch, u.fix_id)
-                      : (after[u.spec_id] ?? "NOT RUN")}
+                      : catalog
+                        ? catalogAfterCombined(batch, u.fix_id)
+                        : (after[u.spec_id] ?? "NOT RUN")}
                   </td>
                   <td className="py-2">
                     {ok
@@ -809,5 +833,55 @@ export function RunHistory() {
         </>
       )}
     </Card>
+  )
+}
+
+// W2B catalog-linked setting fix (3.2, 5.6, 6.10): every setting it changes, the
+// restart and preload notes, and how the sandbox proves it. Text only.
+function CatalogSettingChanges({
+  fix: f,
+  listTemplateVersion,
+}: {
+  fix: any
+  listTemplateVersion: any
+}) {
+  const preload = preloadNote(f)
+  const restart = restartNote(f)
+  const versionMissing =
+    needsListTemplate(f) &&
+    !(Number.isInteger(listTemplateVersion) && listTemplateVersion > 0)
+  return (
+    <div className="space-y-1">
+      <p className="font-medium">What changes</p>
+      <ul className="list-disc pl-5">
+        {catalogChanges(f).map((c) => (
+          <li key={c.setting}>
+            {c.setting}:{" "}
+            <strong>
+              {c.current} → {c.proposed}
+            </strong>
+          </li>
+        ))}
+      </ul>
+      {restart && (
+        <p className="rounded bg-amber-50 px-2 py-1 text-sm text-amber-900">
+          {restart}
+        </p>
+      )}
+      {preload && (
+        <p className="rounded bg-amber-50 px-2 py-1 text-sm text-amber-900">
+          {preload}
+        </p>
+      )}
+      {versionMissing && (
+        <p className="text-sm text-red-700">
+          DBGuard could not read the approved list template version, so a test
+          of this fix will be refused until the template registry is reachable.
+        </p>
+      )}
+      {typeof f.proof === "string" && f.proof && (
+        <p className="text-sm">Proof: {f.proof}</p>
+      )}
+    </div>
   )
 }

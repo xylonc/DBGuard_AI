@@ -108,6 +108,39 @@ function list(value: unknown): string[] {
       : []
 }
 
+// "'ddl', 'role' and 'write'", or the fallback when the list is empty or absent.
+function quotedList(value: unknown, empty: string): string {
+  const items = list(value).map(quoteValue)
+  return items.length ? joinAnd(items) : empty
+}
+
+// The standard closing sentence of every GAPPED (unknown) reason.
+export const UNKNOWN_NEVER_PASS = "Unknown never counts as a pass."
+
+// CIS 6.8: the parts of "TLS enabled and enforced" that failed or could not be read.
+const TLS_FAILING_PARTS: Record<string, string> = {
+  ssl_off: "ssl is off, so the server accepts no encrypted connections",
+  non_tls_hba_rules:
+    "some login rules (type host or hostnossl) let clients log in over TCP without encryption",
+  unencrypted_tcp_connections: "some current TCP connections are not encrypted",
+}
+const TLS_UNKNOWN_PARTS: Record<string, string> = {
+  ssl: "the ssl setting",
+  hba_rules: "the login rules (pg_hba.conf)",
+  connections: "the encryption state of every current connection",
+}
+
+function partPhrases(
+  value: unknown,
+  phrases: Record<string, string>,
+): string[] {
+  return list(value).map((p) =>
+    Object.prototype.hasOwnProperty.call(phrases, p)
+      ? phrases[p]
+      : `an unrecognised part ${quoteValue(p)}`,
+  )
+}
+
 // "logs are sent to syslog" / "log_destination is 'csvlog'": the condition a control
 // depends on, written from the applies_when facts (setting_name, operator, expected).
 export function conditionPhrase(facts: any): string {
@@ -251,10 +284,18 @@ const TEMPLATES: Record<string, Template> = {
     !f.field
       ? null
       : `The snapshot has no ${quoteValue(f?.field)} in ${quoteValue(f?.section)}, so DBGuard cannot judge this control and can't say PASS.`,
-  manual_review: (f) =>
-    typeof f?.evidence_count === "number" && f.evidence_count > 0
-      ? `CIS leaves this decision to a person. Review the ${count(f.evidence_count, "item", "items")} listed below.`
-      : "CIS leaves this decision to a person. Nothing matched, but CIS still asks someone to confirm.",
+  manual_review: (f) => {
+    const base =
+      typeof f?.evidence_count === "number" && f.evidence_count > 0
+        ? `CIS leaves this decision to a person. Review the ${count(f.evidence_count, "item", "items")} listed below.`
+        : "CIS leaves this decision to a person. Nothing matched, but CIS still asks someone to confirm."
+    // 5.3 / 5.4 login-rule checklists: rules with a highlight tag.
+    const highlighted =
+      typeof f?.highlight_count === "number" && f.highlight_count > 0
+        ? ` ${count(f.highlight_count, "of them is", "of them are")} highlighted for a closer look.`
+        : ""
+    return base + highlighted
+  },
   databases_not_covered: (f) =>
     `The snapshot only covers the database DBGuard connected to. Check these databases too: ${
       joinAnd(list(f?.databases).map((d) => clip(d))) || "none listed"
@@ -293,6 +334,118 @@ const TEMPLATES: Record<string, Template> = {
     `The last successful archive was at ${time(f?.last_archived_time)}, more than ${hours(f?.max_age_hours)} hours before this snapshot (${time(f?.collected_at)}). On a quiet database this can be normal; otherwise check the archiver.`,
   archive_recent: (f) =>
     `The last successful archive was at ${time(f?.last_archived_time)}, within ${hours(f?.max_age_hours)} hours of the snapshot, with no later failure.`,
+  // ---- Wave 2b: add-ons (3.2 pgaudit, 5.6 passwordcheck, 4.8 set_user) ----
+  preload_list_unparseable: () =>
+    "DBGuard could not read the list in shared_preload_libraries for certain (it uses quoting, path parts or characters DBGuard does not interpret), so it can't tell whether the add-on this rule needs is loaded. A person must check the list.",
+  pgaudit_not_preloaded: () =>
+    "The pgaudit audit logger is not in shared_preload_libraries, so it is not loaded and database activity is not audited. CIS requires pgaudit to be loaded.",
+  pgaudit_log_missing: () =>
+    "pgaudit is in shared_preload_libraries, but the server has no pgaudit.log setting, so nothing is being audited. pgaudit may not be installed, or the server has not been restarted since the list changed. CIS requires pgaudit.log to name the activity to audit.",
+  pgaudit_log_unparseable: () =>
+    "DBGuard could not read pgaudit.log for certain (it has a word or list syntax DBGuard does not interpret), so it can't tell which activity is audited. A person must check the value.",
+  pgaudit_log_classes_missing: (f) =>
+    `pgaudit.log audits ${quotedList(f?.effective_classes, "nothing")}, but your company policy requires ${quotedList(f?.policy_classes, "certain classes")}. Missing: ${quotedList(f?.missing_classes, "unknown")}. CIS requires pgaudit.log to cover the activity your company chose to audit.`,
+  pgaudit_log_classes_present: (f) =>
+    `pgaudit is loaded and pgaudit.log audits ${quotedList(f?.effective_classes, "the configured classes")}, which covers every class your company policy requires (${quotedList(f?.policy_classes, "as approved")}).`,
+  passwordcheck_not_preloaded: () =>
+    "The passwordcheck module is not in shared_preload_libraries, so PostgreSQL does not check new passwords for complexity. CIS requires passwordcheck to be loaded.",
+  dynamic_library_path_not_libdir: (f) =>
+    `passwordcheck is loaded by its bare name, but dynamic_library_path is ${quoteValue(f?.dynamic_library_path)} instead of '$libdir', so PostgreSQL may load a different library called passwordcheck from another folder. CIS requires dynamic_library_path to be '$libdir'.`,
+  libdir_form_with_custom_library_path: (f) =>
+    `passwordcheck is loaded as '$libdir/passwordcheck', so the standard module is used, but dynamic_library_path is ${quoteValue(f?.dynamic_library_path)} instead of '$libdir'. CIS expects '$libdir'; a person should confirm the custom path is intended.`,
+  passwordcheck_preloaded: () =>
+    "passwordcheck is loaded and dynamic_library_path is '$libdir', so new passwords are checked for complexity as CIS requires.",
+  set_user_not_available: () =>
+    "The set_user extension is not available on this server, so superuser access cannot be routed through it and logged. CIS requires set_user to be installed; installing the package is a server change the DBA makes.",
+  superuser_login_review: (f) => {
+    const n =
+      typeof f?.evidence_count === "number" && f.evidence_count > 1
+        ? f.evidence_count - 1
+        : 0
+    const installed =
+      typeof f?.installed_version === "string" && f.installed_version
+        ? `installed (version ${clip(f.installed_version)})`
+        : "available but not installed"
+    const where =
+      typeof f?.database === "string" && f.database
+        ? ` in the database ${quoteValue(f.database)}`
+        : ""
+    return `The set_user extension is ${installed}${where}. CIS leaves it to a person to decide which login accounts may hold superuser powers. Review the ${count(n, "login account", "login accounts")} listed below, which hold them directly or through a role they belong to.`
+  },
+  // ---- Wave 2b: login and encryption (6.10 ciphers, 6.8 TLS) ----
+  unapproved_ciphers_configured: (f) =>
+    `ssl_ciphers allows ciphers outside the four CIS approves for TLS 1.2: ${quotedList(f?.other_items, "unknown")}. Older, weaker ciphers make encrypted traffic easier to break. CIS requires ssl_ciphers to list only the four approved ciphers.`,
+  unapproved_cipher_in_use: (f) =>
+    `${count(f?.connection_count, "current connection uses", "current connections use")} TLS 1.2 with a cipher CIS does not approve: ${quotedList(f?.ciphers, "unknown")}. CIS requires every TLS 1.2 connection to use one of the four approved ciphers.`,
+  connections_not_visible: (f) => {
+    const hidden =
+      typeof f?.hidden_connection_count === "number" &&
+      f.hidden_connection_count > 0
+        ? `${count(f.hidden_connection_count, "session belongs", "sessions belong")} to other accounts and ${
+            f.hidden_connection_count === 1 ? "was" : "were"
+          } hidden from the collecting account`
+        : ""
+    const tls =
+      f?.tls_details_gap === true
+        ? "the collector could not read the encryption details of other sessions"
+        : ""
+    const why = [hidden, tls].filter(Boolean).join("; ")
+    return `DBGuard could not see whether every connection is encrypted${
+      why ? `: ${why}` : ""
+    }. The collecting account needs the pg_read_all_stats role (or pg_monitor, which includes it) to see other sessions. Grant it and collect a new snapshot. ${UNKNOWN_NEVER_PASS}`
+  },
+  ssl_ciphers_empty: () =>
+    "ssl_ciphers is empty, so DBGuard can't tell which ciphers the server allows. A person must check the server's TLS cipher settings.",
+  approved_ciphers_only: () =>
+    "ssl_ciphers lists only the four ciphers CIS approves for TLS 1.2, and no visible TLS 1.2 connection uses another cipher.",
+  tls_not_enabled_or_enforced: (f) => {
+    const failing = partPhrases(f?.failing_parts, TLS_FAILING_PARTS)
+    const unknown = partPhrases(f?.unknown_parts, TLS_UNKNOWN_PARTS)
+    // Parts are joined with "; " because each phrase may contain a comma.
+    const what = failing.length ? `: ${failing.join("; ")}` : ""
+    const alsoUnknown = unknown.length
+      ? ` DBGuard also could not read ${joinAnd(unknown)}.`
+      : ""
+    return `Encryption (TLS) is not fully switched on and required${what}. CIS requires ssl to be on, only hostssl login rules for TCP, and every TCP connection to be encrypted.${alsoUnknown}`
+  },
+  gss_hba_rules: (f) =>
+    `${count(f?.rule_count, "login rule uses", "login rules use")} a GSSAPI encryption type (hostgssenc or hostnogssenc). CIS's check does not cover these, so a person must decide whether these logins are encrypted as required.`,
+  hba_rule_error: (f) =>
+    `${count(f?.rule_count, "line", "lines")} in the login rules file (pg_hba.conf) ${
+      f?.rule_count === 1 ? "has" : "have"
+    } an error, so DBGuard can't tell what ${
+      f?.rule_count === 1 ? "it allows" : "they allow"
+    }. A person must check or fix ${f?.rule_count === 1 ? "it" : "them"}.`,
+  tls_enabled_and_enforced: () =>
+    "ssl is on, every TCP login rule requires encryption (hostssl), and every visible TCP connection is encrypted.",
+}
+
+// ---- 5.3 / 5.4 evidence highlights ---------------------------------------------
+
+// Fixed sentences for the `highlights` codes on 5.3 / 5.4 login-rule evidence rows.
+// Highlights are emphasis only: the result stays a person's decision.
+export const HIGHLIGHT_SENTENCES: Record<string, string> = {
+  auth_method_not_peer_or_reject:
+    "Not peer or reject: CIS calls peer the most secure method for local logins.",
+  auth_method_not_for_remote:
+    "trust, password or ident: CIS says these are not to be used for remote logins.",
+  auth_method_md5: "md5: CIS recommends scram-sha-256 instead.",
+  any_address: "Open to every address (0.0.0.0/0, ::/0 or all).",
+  line_error:
+    "This line has an error, so its type and method can't be trusted.",
+}
+export const UNKNOWN_HIGHLIGHT_SENTENCE = "Highlighted for a closer look."
+
+// The fixed sentences for one evidence item's highlights (empty when it has none).
+export function highlightSentences(item: unknown): string[] {
+  const codes = (item as any)?.highlights
+  if (!Array.isArray(codes)) return []
+  return codes.map((code) =>
+    typeof code === "string" &&
+    Object.prototype.hasOwnProperty.call(HIGHLIGHT_SENTENCES, code)
+      ? HIGHLIGHT_SENTENCES[code]
+      : UNKNOWN_HIGHLIGHT_SENTENCE,
+  )
 }
 
 export const KNOWN_CODES = Object.keys(TEMPLATES)

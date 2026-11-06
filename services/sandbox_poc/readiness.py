@@ -34,12 +34,23 @@ def check_readiness(service, handoff, *, check_registry=False, allow_demo_fixtur
             from .object_fixes import render
             render(service.object_proposal(engine, handoff), template)
         else:
-            # Confirm that the approved template fits the selected control's reviewed fix,
-            # not a default setting.
-            from .planning import fix_scope
-            _, name, value = fix_scope(engine, handoff.control_id)
-            canonical_apply(template.render(name, value), name)
+            from .catalog_fixes import catalog_fix_scope, is_catalog_fix, rendered_statements
+            if is_catalog_fix(engine, handoff.control_id):
+                # W2B: the approved template must render every evidence-derived change.
+                scope = catalog_fix_scope(engine, handoff.snapshot, handoff.control_id)
+                list_template = (service.resolve_template(handoff, handoff.list_template_ref)
+                                 if handoff.list_template_ref is not None else None)
+                rendered_statements(template, scope, list_template)  # parses each back to its action
+            else:
+                # Confirm that the approved template fits the selected control's reviewed fix,
+                # not a default setting.
+                from .planning import fix_scope
+                _, name, value = fix_scope(engine, handoff.control_id)
+                canonical_apply(template.render(name, value), name)
         alternatives = [service.resolve_template(handoff, ref) for ref in handoff.retry_template_refs]
+        if getattr(handoff, "list_template_ref", None) is not None:
+            # W2B: a demo-approved list template is a fixture approval like an alternative.
+            alternatives.append(service.resolve_template(handoff, handoff.list_template_ref))
         if not allow_demo_fixtures and any(is_fixture({'template': alternative.identity()}) for alternative in alternatives):
             raise ContractError('Alternative candidates include demo/test approvals')
     except ContractError as exc:

@@ -76,8 +76,11 @@ def _shadowed_duplicate(row: dict, files: list[dict]) -> bool:
     return False
 
 
-def reconstruction_plan(snapshot: dict, specs: list[dict]) -> dict:
+def reconstruction_plan(snapshot: dict, specs: list[dict], extra_names=()) -> dict:
+    """extra_names: settings a reviewed catalog-linked fix changes or its evaluator reads
+    (catalog_fixes.reconstruction_names); they get the same provenance rules as spec settings."""
     names = [s["check"]["setting_name"] for s in specs if "check" in s and s["check"].get("kind") != "catalog"]
+    names += [n for n in extra_names if n not in names]
     rows = setting_rows(snapshot)
     if len(rows) != len(snapshot["baseline"].get("settings") or []):
         raise ContractError("Duplicate setting provenance")

@@ -13,15 +13,71 @@ import subprocess
 import time
 import uuid
 
-from .shared import ContractError
+from .shared import ROOT, ContractError
 
 DATA = "/var/lib/postgresql/data"
 LABEL = "dbguard.sandbox-poc.run"
+# The stock image has no pgaudit; tests that need a server without it name it explicitly.
+STOCK_IMAGE = "postgres:17-bookworm"
+# Pin records for locally built sandbox images (scripts/build_sandbox_image.py). A tag
+# listed in a record only starts if its local image ID equals the one pinned there.
+PINNED_IMAGES_DIR = ROOT / "catalog/images/sandbox"
+# Default sandbox image (W2B Gate 2 ruling 4): the pinned PG17 image with pgaudit,
+# switched after every live suite passed on it. Nothing is preloaded by default.
+DEFAULT_IMAGE = json.loads((PINNED_IMAGES_DIR / "pg17-pgaudit.json").read_text())["tag"]
 
 # Reviewed postmaster-context settings the sandbox may reconstruct, change and restart
 # for (see provenance.py, which re-exports this set). activate() restarts only when
-# every pending_restart setting is in this set.
-RESTART_SETTINGS = frozenset({"logging_collector", "listen_addresses"})
+# every pending_restart setting is in this set. shared_preload_libraries: W2B gate 1,
+# ruling 3 (preload fixes for CIS 3.2 and 5.6); restart() detects a failed start.
+RESTART_SETTINGS = frozenset({"logging_collector", "listen_addresses", "shared_preload_libraries"})
+
+# Sandbox-only TLS for the CIS 6.10 rehearsal (W2B gate 1, ruling 4). The throwaway key
+# and certificate live in the data directory tmpfs of this run-owned container and are
+# destroyed with it. Every command and config line below is a constant: no caller value
+# reaches the shell, and the key is never read back, logged or returned.
+TLS_DIR = DATA + "/dbguard_tls"
+TLS_CERT = TLS_DIR + "/server.crt"
+TLS_KEY = TLS_DIR + "/server.key"
+TLS_GENERATE = ("umask 077 && mkdir -p " + TLS_DIR + " && openssl req -x509 -newkey rsa:2048 -noenc "
+                "-subj /CN=localhost -days 1 -keyout " + TLS_KEY + " -out " + TLS_CERT + " >/dev/null 2>&1")
+TLS_CONFIG = ("\n# DBGuard sandbox-only TLS (throwaway self-signed certificate, never leaves this container)\n"
+              f"ssl_cert_file = '{TLS_CERT}'\nssl_key_file = '{TLS_KEY}'\nssl = 'on'\n")
+TLS_PROTOCOLS = frozenset({"TLSv1.2", "TLSv1.3"})
+CIPHER_NAME = re.compile(r"[A-Z0-9][A-Z0-9_-]{2,63}")
+
+# Startup failures recognised in the server log after a controlled restart. Connection
+# FATALs raised while the server is starting or stopping are expected and ignored.
+EXPECTED_FATALS = ("the database system is starting up", "the database system is shutting down",
+                   "the database system is not yet accepting connections",
+                   "terminating connection due to administrator command")
+PRELOAD_FAILURE = re.compile(r'FATAL:\s+could not (?:access file|load library) "([A-Za-z0-9_$./-]{1,128})"')
+
+
+class SandboxStartError(RuntimeError):
+    """PostgreSQL did not come back after a controlled restart of the sandbox."""
+
+
+def sandbox_image(image: str | None = None) -> str:
+    """Explicit image, else DBGUARD_POSTGRES_IMAGE, else the pinned pgaudit image (Gate 2 ruling 4)."""
+    return image or os.environ.get("DBGUARD_POSTGRES_IMAGE") or DEFAULT_IMAGE
+
+
+def pinned_image_ids(image: str) -> dict[str, str] | None:
+    """Platform -> pinned image ID when image is a recorded sandbox tag, else None."""
+    for path in sorted(PINNED_IMAGES_DIR.glob("*.json")):
+        record = json.loads(path.read_text())
+        if record.get("tag") == image:
+            return dict(record.get("image_ids") or {})
+    return None
+
+
+def container_stderr(name: str) -> str:
+    """PostgreSQL's server log (container stderr) of a run-owned container; never returned to callers."""
+    result = subprocess.run(["docker", "logs", name], capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise RuntimeError("Docker logs failed")
+    return result.stderr
 
 
 def docker(*args: str, stdin: str | None = None, timeout: int = 60) -> str:
@@ -38,12 +94,18 @@ class DisposablePostgres:
     def __init__(self, image: str | None = None):
         self.run_id = uuid.uuid4().hex
         self.name = f"dbguard-poc-{self.run_id}"
-        self.image = image or os.environ.get("DBGUARD_POSTGRES_IMAGE", "postgres:17-bookworm")
+        self.image = sandbox_image(image)
         self.image_id = None
         self.started = False
 
     def start(self) -> None:
-        self.image_id = docker("image", "inspect", "--format", "{{.Id}}", self.image)
+        image_id, platform = docker("image", "inspect", "--format", "{{.Id}} {{.Os}}/{{.Architecture}}",
+                                    self.image).split()
+        pinned = pinned_image_ids(self.image)
+        if pinned is not None and pinned.get(platform) != image_id:
+            raise ContractError(f"Sandbox image {self.image} does not match its pinned image ID for "
+                                f"{platform}; rebuild and re-record it with scripts/build_sandbox_image.py")
+        self.image_id = image_id
         # Register ownership before creation so cleanup covers partial failures.
         self.started = True
         docker("run", "-d", "--name", self.name, "--label", f"{LABEL}={self.run_id}",
@@ -122,8 +184,14 @@ class DisposablePostgres:
         return {name for name in out.split(",") if name}
 
     def restart(self) -> None:
-        """Controlled restart of PostgreSQL inside this owned, run-labelled container only."""
+        """Controlled restart of PostgreSQL inside this owned, run-labelled container only.
+
+        A server that cannot start (for example shared_preload_libraries naming a library
+        that is not installed) raises SandboxStartError with a fixed message; log text is
+        matched here but never returned. The caller's close() still removes the container.
+        """
         self._assert_owned()
+        seen = len(container_stderr(self.name).splitlines())
         # Stop only PostgreSQL. PID 1 supervises its replacement, preserving tmpfs.
         docker("exec", self.name, "pg_ctl", "-D", DATA, "-m", "fast", "-w", "stop")
         deadline = time.monotonic() + 45
@@ -131,8 +199,72 @@ class DisposablePostgres:
             try:
                 if self.sql("SELECT 1;") == "1": return
             except RuntimeError: pass
+            failure = self._start_failure(container_stderr(self.name).splitlines()[seen:])
+            if failure:
+                raise SandboxStartError(failure)
             time.sleep(.25)
-        raise RuntimeError("PostgreSQL did not return after restart")
+        raise SandboxStartError("PostgreSQL did not return within 45 seconds after restart")
+
+    @staticmethod
+    def _start_failure(lines: list[str]) -> str | None:
+        """A fixed description of a fatal startup error in the new log lines, if any."""
+        for line in lines:
+            match = PRELOAD_FAILURE.search(line)
+            if match:
+                return (f"PostgreSQL failed to start after restart: shared_preload_libraries names "
+                        f"'{match.group(1)}', which is not installed in the sandbox image")
+        for line in lines:
+            if "FATAL:" in line and not any(text in line for text in EXPECTED_FATALS):
+                return "PostgreSQL failed to start after restart: the server reported a fatal startup error"
+        return None
+
+    def enable_tls(self) -> None:
+        """Sandbox-only TLS: throwaway self-signed key and certificate in this container's tmpfs.
+
+        Constant commands only. The key is generated, used and destroyed inside the
+        container; nothing here reads it, and failures raise fixed messages.
+        """
+        self._assert_owned()
+        try:
+            docker("exec", self.name, "sh", "-c", TLS_GENERATE)
+        except RuntimeError:
+            raise RuntimeError("Sandbox TLS certificate generation failed") from None
+        self.write_config("postgresql.conf", TLS_CONFIG)
+        self.activate({"ssl": "on", "ssl_cert_file": TLS_CERT, "ssl_key_file": TLS_KEY})
+
+    def tls_probe(self, protocol: str = "TLSv1.2") -> dict:
+        """Read-only: open one TLS connection over loopback inside the container (works with
+        --network none) and return the negotiated protocol and cipher as the server saw them."""
+        self._assert_owned()
+        if protocol not in TLS_PROTOCOLS:
+            raise ContractError("Unsupported TLS protocol version")
+        conninfo = ("host=127.0.0.1 dbname=dbguard_sandbox user=dbguard_poc sslmode=require "
+                    f"ssl_min_protocol_version={protocol} ssl_max_protocol_version={protocol}")
+        try:
+            row = docker("exec", "-i", self.name, "psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1",
+                         "-d", conninfo, "-f", "-",
+                         stdin="SELECT version || ',' || cipher FROM pg_catalog.pg_stat_ssl "
+                               "WHERE pid = pg_catalog.pg_backend_pid() AND ssl;")
+        except RuntimeError:
+            raise RuntimeError(f"Sandbox {protocol} connection over loopback failed") from None
+        version, _, cipher = row.partition(",")
+        if version != protocol or not CIPHER_NAME.fullmatch(cipher):
+            raise RuntimeError("Sandbox TLS probe did not return an encrypted session")
+        return {"protocol": version, "cipher": cipher, "scope": "DISPOSABLE SANDBOX loopback",
+                "run_id": self.run_id}
+
+    def tls_accepts_cipher(self, cipher: str) -> bool:
+        """Read-only: whether a TLS 1.2 handshake offering only this one cipher succeeds over
+        loopback inside the container. The name is validated and passed as one argv item."""
+        self._assert_owned()
+        if not CIPHER_NAME.fullmatch(cipher):
+            raise ContractError("Unsupported cipher name")
+        try:
+            docker("exec", "-i", self.name, "openssl", "s_client", "-connect", "127.0.0.1:5432",
+                   "-starttls", "postgres", "-tls1_2", "-cipher", cipher, "-brief", stdin="")
+        except RuntimeError:
+            return False
+        return True
 
     def _effective(self, name: str, value: str) -> bool:
         """The setting's effective value equals value, in SHOW or pg_settings.setting form.

@@ -1,0 +1,19 @@
+spec_id: "cis-pg17-v1.1.0:6.11"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "6.11"
+  title: "Ensure the pgcrypto extension is installed and configured correctly"
+  source_sha256: "1f5dfb0984c4ebae684dd08288e13966a50915584fa87ad911b229053f53d2a6"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and the fail depends on whether the organisation's data requires encryption, which DBGuard cannot know; disk-level encryption is outside the database"
+check:
+  kind: catalog
+  evaluator: pgcrypto_extension
+  pass_condition_quote: "If data in the database requires encryption and `pgcrypto` is not available, this is a fail."
+interpretation:
+  - "DBGuard shows whether pgcrypto is among the server's available extensions and its installed version in the connected database. A person decides whether data requires encryption. Other databases are not covered."
+  - "CIS's disk or filesystem encryption check is outside the database and stays on the person's checklist."

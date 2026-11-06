@@ -5,6 +5,9 @@ import { Card } from "./LiveUI"
 import { cisRule, conditionPhrase, POLICY_MISSING_LABEL } from "./explanations"
 import {
   DEMO_APPROVAL_LABEL,
+  PGAUDIT_CLASSES,
+  PGAUDIT_CLASS_HELP,
+  PGAUDIT_DEFAULT_CLASSES,
   assessmentProfilePin,
   draftBody,
   errorsFromDetail,
@@ -15,6 +18,7 @@ import {
   settingHelp,
   shapeHint,
   shortSha,
+  toggleClass,
   type ProfileForm,
 } from "./profileForm"
 
@@ -543,6 +547,12 @@ export function PolicyProfileScreen({ onBack }: { onBack: () => void }) {
               <p className="text-sm">No controls need a site-specific fix.</p>
             )}
           </Card>
+          <PgauditClasses
+            form={form}
+            seed={seedDoc?.pgaudit_log_classes}
+            errors={grouped.pgaudit}
+            update={update}
+          />
           <ConnectionLimits
             form={form}
             hasSnapshot={!!s.snapshot}
@@ -967,6 +977,72 @@ function ConnectionLimits({
       >
         Add role override
       </button>
+      <ErrorList errors={errors} />
+    </Card>
+  )
+}
+
+// CIS 3.2 (Gate W2B ruling 2): which pgaudit.log classes the company requires.
+function PgauditClasses({
+  form,
+  seed,
+  errors,
+  update,
+}: {
+  form: ProfileForm
+  seed: any
+  errors: string[]
+  update: (next: (f: ProfileForm) => ProfileForm) => void
+}) {
+  const chosen = form.pgauditClasses ?? []
+  const recommended = Array.isArray(seed) ? seed : PGAUDIT_DEFAULT_CLASSES
+  return (
+    <Card title="Audit logging classes (CIS 3.2 pgaudit)">
+      <p className="text-sm">
+        CIS 3.2 asks that the pgaudit audit logger records the kinds of database
+        activity your company chose. Tick the classes to require. Once this
+        profile is approved, 3.2 shows PASS only when the server's{" "}
+        <code>pgaudit.log</code> setting covers at least these classes, and the
+        sandbox fix sets <code>pgaudit.log</code> to them.
+      </p>
+      <p className="text-xs text-slate-500">
+        Recommended: <code>{recommended.join(", ")}</code> (CIS's example{" "}
+        <code>ddl, write</code> plus <code>role</code>, so grants and account
+        changes are audited). <code>read</code> is left out because it
+        multiplies log volume.
+      </p>
+      <fieldset className="space-y-1">
+        <legend className="sr-only">pgaudit.log classes to require</legend>
+        {PGAUDIT_CLASSES.map((cls) => (
+          <label key={cls} className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              aria-label={`Require pgaudit class ${cls}`}
+              checked={chosen.includes(cls)}
+              onChange={(e) =>
+                update((f) => ({
+                  ...f,
+                  pgauditClasses: toggleClass(
+                    f.pgauditClasses ?? [],
+                    cls,
+                    e.target.checked,
+                  ),
+                }))
+              }
+            />
+            <span>
+              <code>{cls}</code>: {PGAUDIT_CLASS_HELP[cls]}
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      {!chosen.length && (
+        <p className="text-xs text-amber-800">
+          No class ticked: this profile has no value for 3.2, so it shows{" "}
+          {POLICY_MISSING_LABEL}.
+        </p>
+      )}
       <ErrorList errors={errors} />
     </Card>
   )

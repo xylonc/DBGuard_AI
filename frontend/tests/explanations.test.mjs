@@ -2,12 +2,16 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   GENERIC_UNKNOWN_SENTENCE,
+  HIGHLIGHT_SENTENCES,
   KNOWN_CODES,
+  UNKNOWN_HIGHLIGHT_SENTENCE,
+  UNKNOWN_NEVER_PASS,
   UNKNOWN_LABEL,
   cisRule,
   conditionPhrase,
   explainRow,
   explanationSentence,
+  highlightSentences,
   isPolicyMissing,
   needsExplanation,
   policyMissingRows,
@@ -220,6 +224,137 @@ const CASES = {
       max_age_hours: 24,
     },
     "The last successful archive was at 2026-10-26T06:35:54+00:00, within 24 hours of the snapshot, with no later failure.",
+  ],
+  // ---- Wave 2b (3.2, 5.6, 4.8, 6.10, 6.8) ----
+  preload_list_unparseable: [
+    {
+      code: "preload_list_unparseable",
+      setting_name: "shared_preload_libraries",
+    },
+    "DBGuard could not read the list in shared_preload_libraries for certain (it uses quoting, path parts or characters DBGuard does not interpret), so it can't tell whether the add-on this rule needs is loaded. A person must check the list.",
+  ],
+  pgaudit_not_preloaded: [
+    { code: "pgaudit_not_preloaded" },
+    "The pgaudit audit logger is not in shared_preload_libraries, so it is not loaded and database activity is not audited. CIS requires pgaudit to be loaded.",
+  ],
+  pgaudit_log_missing: [
+    { code: "pgaudit_log_missing" },
+    "pgaudit is in shared_preload_libraries, but the server has no pgaudit.log setting, so nothing is being audited. pgaudit may not be installed, or the server has not been restarted since the list changed. CIS requires pgaudit.log to name the activity to audit.",
+  ],
+  pgaudit_log_unparseable: [
+    { code: "pgaudit_log_unparseable", setting_name: "pgaudit.log" },
+    "DBGuard could not read pgaudit.log for certain (it has a word or list syntax DBGuard does not interpret), so it can't tell which activity is audited. A person must check the value.",
+  ],
+  pgaudit_log_classes_missing: [
+    {
+      code: "pgaudit_log_classes_missing",
+      policy_classes: ["write", "role", "ddl"],
+      effective_classes: ["write"],
+      missing_classes: ["role", "ddl"],
+    },
+    "pgaudit.log audits 'write', but your company policy requires 'write', 'role' and 'ddl'. Missing: 'role' and 'ddl'. CIS requires pgaudit.log to cover the activity your company chose to audit.",
+  ],
+  pgaudit_log_classes_present: [
+    {
+      code: "pgaudit_log_classes_present",
+      policy_classes: ["write", "role", "ddl"],
+      effective_classes: ["read", "write", "role", "ddl"],
+    },
+    "pgaudit is loaded and pgaudit.log audits 'read', 'write', 'role' and 'ddl', which covers every class your company policy requires ('write', 'role' and 'ddl').",
+  ],
+  passwordcheck_not_preloaded: [
+    { code: "passwordcheck_not_preloaded" },
+    "The passwordcheck module is not in shared_preload_libraries, so PostgreSQL does not check new passwords for complexity. CIS requires passwordcheck to be loaded.",
+  ],
+  dynamic_library_path_not_libdir: [
+    {
+      code: "dynamic_library_path_not_libdir",
+      dynamic_library_path: "/opt/lib",
+    },
+    "passwordcheck is loaded by its bare name, but dynamic_library_path is '/opt/lib' instead of '$libdir', so PostgreSQL may load a different library called passwordcheck from another folder. CIS requires dynamic_library_path to be '$libdir'.",
+  ],
+  libdir_form_with_custom_library_path: [
+    {
+      code: "libdir_form_with_custom_library_path",
+      dynamic_library_path: "/opt/lib:$libdir",
+    },
+    "passwordcheck is loaded as '$libdir/passwordcheck', so the standard module is used, but dynamic_library_path is '/opt/lib:$libdir' instead of '$libdir'. CIS expects '$libdir'; a person should confirm the custom path is intended.",
+  ],
+  passwordcheck_preloaded: [
+    { code: "passwordcheck_preloaded" },
+    "passwordcheck is loaded and dynamic_library_path is '$libdir', so new passwords are checked for complexity as CIS requires.",
+  ],
+  set_user_not_available: [
+    {
+      code: "set_user_not_available",
+      extension_name: "set_user",
+      available: false,
+      default_version: null,
+      installed_version: null,
+      database: "postgres",
+    },
+    "The set_user extension is not available on this server, so superuser access cannot be routed through it and logged. CIS requires set_user to be installed; installing the package is a server change the DBA makes.",
+  ],
+  superuser_login_review: [
+    {
+      code: "superuser_login_review",
+      evidence_count: 3,
+      extension_name: "set_user",
+      available: true,
+      default_version: "4.1.0",
+      installed_version: null,
+      database: "postgres",
+    },
+    "The set_user extension is available but not installed in the database 'postgres'. CIS leaves it to a person to decide which login accounts may hold superuser powers. Review the 2 login accounts listed below, which hold them directly or through a role they belong to.",
+  ],
+  unapproved_ciphers_configured: [
+    { code: "unapproved_ciphers_configured", other_items: ["HIGH", "!aNULL"] },
+    "ssl_ciphers allows ciphers outside the four CIS approves for TLS 1.2: 'HIGH' and '!aNULL'. Older, weaker ciphers make encrypted traffic easier to break. CIS requires ssl_ciphers to list only the four approved ciphers.",
+  ],
+  unapproved_cipher_in_use: [
+    {
+      code: "unapproved_cipher_in_use",
+      connection_count: 2,
+      ciphers: ["AES128-SHA"],
+    },
+    "2 current connections use TLS 1.2 with a cipher CIS does not approve: 'AES128-SHA'. CIS requires every TLS 1.2 connection to use one of the four approved ciphers.",
+  ],
+  connections_not_visible: [
+    {
+      code: "connections_not_visible",
+      section: "connections",
+      hidden_connection_count: 3,
+      tls_details_gap: true,
+    },
+    "DBGuard could not see whether every connection is encrypted: 3 sessions belong to other accounts and were hidden from the collecting account; the collector could not read the encryption details of other sessions. The collecting account needs the pg_read_all_stats role (or pg_monitor, which includes it) to see other sessions. Grant it and collect a new snapshot. Unknown never counts as a pass.",
+  ],
+  ssl_ciphers_empty: [
+    { code: "ssl_ciphers_empty" },
+    "ssl_ciphers is empty, so DBGuard can't tell which ciphers the server allows. A person must check the server's TLS cipher settings.",
+  ],
+  approved_ciphers_only: [
+    { code: "approved_ciphers_only" },
+    "ssl_ciphers lists only the four ciphers CIS approves for TLS 1.2, and no visible TLS 1.2 connection uses another cipher.",
+  ],
+  tls_not_enabled_or_enforced: [
+    {
+      code: "tls_not_enabled_or_enforced",
+      failing_parts: ["ssl_off", "non_tls_hba_rules"],
+      unknown_parts: ["connections"],
+    },
+    "Encryption (TLS) is not fully switched on and required: ssl is off, so the server accepts no encrypted connections; some login rules (type host or hostnossl) let clients log in over TCP without encryption. CIS requires ssl to be on, only hostssl login rules for TCP, and every TCP connection to be encrypted. DBGuard also could not read the encryption state of every current connection.",
+  ],
+  gss_hba_rules: [
+    { code: "gss_hba_rules", rule_count: 1, evidence_count: 1 },
+    "1 login rule uses a GSSAPI encryption type (hostgssenc or hostnogssenc). CIS's check does not cover these, so a person must decide whether these logins are encrypted as required.",
+  ],
+  hba_rule_error: [
+    { code: "hba_rule_error", rule_count: 2, evidence_count: 2 },
+    "2 lines in the login rules file (pg_hba.conf) have an error, so DBGuard can't tell what they allow. A person must check or fix them.",
+  ],
+  tls_enabled_and_enforced: [
+    { code: "tls_enabled_and_enforced" },
+    "ssl is on, every TCP login rule requires encryption (hostssl), and every visible TCP connection is encrypted.",
   ],
 }
 
@@ -604,4 +739,199 @@ test("catalog facts are quoted and clipped, never trusted as text", () => {
   })
   assert.ok(sentence.length < 300, sentence)
   assert.match(sentence, /…'/)
+})
+
+// ---- Wave 2b ----------------------------------------------------------------------
+
+test("connections_not_visible: unknown label, pg_read_all_stats advice, standard closing sentence", () => {
+  const row = {
+    spec_id: "cis-pg17-v1.1.0:6.10",
+    status: "GAPPED",
+    evidence_paths: ["connections"],
+    cis: {
+      recommendation: "6.10",
+      title: "Ensure weak SSL/TLS ciphers are disabled",
+    },
+    explanation: { ...CASES.connections_not_visible[0] },
+  }
+  const why = explainRow(row)
+  assert.equal(why.unknown, true)
+  assert.equal(why.cis, "CIS 6.10: Ensure weak SSL/TLS ciphers are disabled")
+  assert.ok(why.sentence.startsWith(`${UNKNOWN_LABEL}. `), why.sentence)
+  assert.match(why.sentence, /pg_read_all_stats/)
+  assert.match(why.sentence, /pg_monitor/)
+  assert.ok(why.sentence.endsWith(UNKNOWN_NEVER_PASS), why.sentence)
+  // Each cause on its own, and neither recorded: the advice still stands.
+  const onlyHidden = explanationSentence({
+    code: "connections_not_visible",
+    hidden_connection_count: 1,
+    tls_details_gap: false,
+  })
+  assert.match(
+    onlyHidden,
+    /: 1 session belongs to other accounts and was hidden/,
+  )
+  assert.doesNotMatch(onlyHidden, /encryption details/)
+  const onlyTls = explanationSentence({
+    code: "connections_not_visible",
+    hidden_connection_count: 0,
+    tls_details_gap: true,
+  })
+  assert.match(onlyTls, /: the collector could not read the encryption details/)
+  assert.doesNotMatch(onlyTls, /hidden/)
+  const bare = explanationSentence({ code: "connections_not_visible" })
+  assert.match(
+    bare,
+    /^DBGuard could not see whether every connection is encrypted\. /,
+  )
+  assert.ok(bare.endsWith(UNKNOWN_NEVER_PASS))
+})
+
+test("tls_not_enabled_or_enforced renders every failing and unknown part as a plain phrase", () => {
+  const all = explanationSentence({
+    code: "tls_not_enabled_or_enforced",
+    failing_parts: [
+      "ssl_off",
+      "non_tls_hba_rules",
+      "unencrypted_tcp_connections",
+    ],
+    unknown_parts: ["ssl", "hba_rules", "connections"],
+  })
+  assert.match(all, /ssl is off/)
+  assert.match(all, /type host or hostnossl/)
+  assert.match(all, /some current TCP connections are not encrypted/)
+  assert.match(
+    all,
+    /DBGuard also could not read the ssl setting, the login rules \(pg_hba\.conf\) and the encryption state of every current connection\./,
+  )
+  // No raw part codes leak into the sentence.
+  assert.doesNotMatch(
+    all,
+    /ssl_off|non_tls_hba_rules|unencrypted_tcp_connections|hba_rules\b/,
+  )
+  const one = explanationSentence({
+    code: "tls_not_enabled_or_enforced",
+    failing_parts: ["unencrypted_tcp_connections"],
+  })
+  assert.doesNotMatch(one, /also could not read/)
+  // An unrecognised part is named as such, quoted, never trusted as text.
+  assert.match(
+    explanationSentence({
+      code: "tls_not_enabled_or_enforced",
+      failing_parts: ["<b>x</b>"],
+    }),
+    /an unrecognised part '<b>x<\/b>'/,
+  )
+})
+
+test("singular and plural forms for rule and connection counts", () => {
+  assert.match(
+    explanationSentence({ code: "hba_rule_error", rule_count: 1 }),
+    /^1 line in the login rules file \(pg_hba\.conf\) has an error, so DBGuard can't tell what it allows\. A person must check or fix it\.$/,
+  )
+  assert.match(
+    explanationSentence({ code: "gss_hba_rules", rule_count: 3 }),
+    /^3 login rules use a GSSAPI/,
+  )
+  assert.match(
+    explanationSentence({
+      code: "unapproved_cipher_in_use",
+      connection_count: 1,
+      ciphers: ["X"],
+    }),
+    /^1 current connection uses TLS 1\.2/,
+  )
+})
+
+test("superuser_login_review names the installed version and counts only accounts", () => {
+  const sentence = explanationSentence({
+    code: "superuser_login_review",
+    evidence_count: 2,
+    installed_version: "4.1.0",
+    database: "appdb",
+  })
+  assert.match(
+    sentence,
+    /is installed \(version 4\.1\.0\) in the database 'appdb'\./,
+  )
+  assert.match(sentence, /Review the 1 login account listed below/)
+})
+
+test("pgaudit sentences say 'nothing' for an empty class list", () => {
+  assert.match(
+    explanationSentence({
+      code: "pgaudit_log_classes_missing",
+      policy_classes: ["ddl"],
+      effective_classes: [],
+      missing_classes: ["ddl"],
+    }),
+    /^pgaudit\.log audits nothing, but your company policy requires 'ddl'\. Missing: 'ddl'\./,
+  )
+})
+
+test("manual_review mentions highlighted login rules (5.3 / 5.4)", () => {
+  assert.equal(
+    explanationSentence({
+      code: "manual_review",
+      evidence_count: 4,
+      highlight_count: 2,
+    }),
+    "CIS leaves this decision to a person. Review the 4 items listed below. 2 of them are highlighted for a closer look.",
+  )
+  assert.equal(
+    explanationSentence({
+      code: "manual_review",
+      evidence_count: 4,
+      highlight_count: 0,
+    }),
+    "CIS leaves this decision to a person. Review the 4 items listed below.",
+  )
+})
+
+test("5.3 / 5.4 highlight codes map to fixed sentences; unknown codes never echo", () => {
+  assert.deepEqual(Object.keys(HIGHLIGHT_SENTENCES).sort(), [
+    "any_address",
+    "auth_method_md5",
+    "auth_method_not_for_remote",
+    "auth_method_not_peer_or_reject",
+    "line_error",
+  ])
+  assert.deepEqual(
+    highlightSentences({
+      type: "hba_rule",
+      highlights: [
+        "auth_method_not_for_remote",
+        "auth_method_md5",
+        "any_address",
+        "line_error",
+      ],
+    }),
+    [
+      HIGHLIGHT_SENTENCES.auth_method_not_for_remote,
+      HIGHLIGHT_SENTENCES.auth_method_md5,
+      HIGHLIGHT_SENTENCES.any_address,
+      HIGHLIGHT_SENTENCES.line_error,
+    ],
+  )
+  assert.deepEqual(
+    highlightSentences({ highlights: ["auth_method_not_peer_or_reject"] }),
+    [HIGHLIGHT_SENTENCES.auth_method_not_peer_or_reject],
+  )
+  assert.deepEqual(
+    highlightSentences({ highlights: ["<img onerror=x>", "__proto__", 7] }),
+    [
+      UNKNOWN_HIGHLIGHT_SENTENCE,
+      UNKNOWN_HIGHLIGHT_SENTENCE,
+      UNKNOWN_HIGHLIGHT_SENTENCE,
+    ],
+  )
+  for (const item of [
+    null,
+    undefined,
+    "x",
+    {},
+    { highlights: [] },
+    { highlights: "line_error" },
+  ])
+    assert.deepEqual(highlightSentences(item), [])
 })

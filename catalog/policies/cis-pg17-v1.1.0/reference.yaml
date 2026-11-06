@@ -48,3 +48,9 @@ values:
   # break: America/New_York (synthetic; the canonical IANA name, since US/Eastern is a legacy
   # alias that newer tzdata packages may drop). SHOW echoes each name as set (live-checked).
   "cis-pg17-v1.1.0:3.1.26": {expected: ["GMT", "UTC", "Etc/UTC"], fix: "GMT", break: "America/New_York"}
+# CIS 3.2 "desired auditing components": the pgaudit.log classes 3.2 requires. Source:
+# Gate W2B ruling 2 (docs/gates/W2B-gate1.md): default ddl, role and write, i.e. the CIS
+# remediation example `ddl,write` plus ROLE so grants and account changes are audited;
+# READ is left out because it multiplies log volume. 3.2 passes when pgaudit.log contains
+# at least these classes. Read only once this profile is approved (approved_by above).
+pgaudit_log_classes: [ddl, role, write]

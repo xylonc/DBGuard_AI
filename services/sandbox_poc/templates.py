@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from app.services.template_service import safe_render_template
 
-from .handoff import OBJECT_TEMPLATE_NAMES, SETTING_TEMPLATE_PATTERN, TEMPLATE_NAME_PATTERN
+from .handoff import LIST_TEMPLATE_NAME, OBJECT_TEMPLATE_NAMES, SETTING_TEMPLATE_PATTERN, TEMPLATE_NAME_PATTERN
 from .shared import ContractError
 
 # Fixed probe parameters: from_registry renders a per-object template with these
@@ -53,6 +53,17 @@ class ApprovedTemplate:
             raise ContractError(error)
         return sql
 
+    def render_list(self, name: str = "shared_preload_libraries", values=("dbguard_probe",)) -> str:
+        """The W2B list template (set_config_list) with schema-validated, evidence-derived values."""
+        if self.registry_name != LIST_TEMPLATE_NAME or self.version < 1:
+            raise ContractError("Unsupported template identity")
+        self._verified()
+        success, sql, error = safe_render_template(
+            LIST_TEMPLATE_NAME, self.sql, {"param_name": name, "param_values": list(values)})
+        if not success:
+            raise ContractError(error)
+        return sql
+
     def render_object(self, params: dict) -> str:
         """A Wave 2a per-object template with schema-validated parameters.
 
@@ -72,6 +83,8 @@ class ApprovedTemplate:
         if self.registry_name in OBJECT_TEMPLATE_NAMES:
             for action in ("apply", "rollback"):
                 self.render_object({**OBJECT_TEMPLATE_PROBES[self.registry_name], "action": action})
+        elif self.registry_name == LIST_TEMPLATE_NAME:
+            self.render_list("shared_preload_libraries", ["dbguard_probe", "$libdir/passwordcheck"])
         else:
             self.render()
 
@@ -178,6 +191,24 @@ def export_reference(database_url: str, version: int, evidence_refs: list[str],
     template = from_registry(database_url, version, reference.sha256, evidence_refs,
                              environment, evidence_pins=pins, registry_name=registry_name)
     return reference, template
+
+
+def approved_list_template_version(database_url: str) -> int | None:
+    """Highest active, human-approved set_config_list version: a read-only display hint for
+    the fix plan, like approved_object_template_versions. It authorizes nothing."""
+    import psycopg2
+
+    conn = psycopg2.connect(database_url, connect_timeout=10)
+    try:
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '10s'")
+            cur.execute("""SELECT max(version) FROM templates WHERE template_name = %s
+                AND status = 'active' AND approved_by IS NOT NULL""", (LIST_TEMPLATE_NAME,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return row[0] if row and type(row[0]) is int else None
 
 
 def approved_object_template_versions(database_url: str) -> dict[str, int | None]:

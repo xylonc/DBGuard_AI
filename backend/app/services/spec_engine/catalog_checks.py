@@ -15,17 +15,24 @@ Rules shared by every evaluator:
   policy expressions and archive_command text are never read or returned.
 
 Every function here is pure: no clock, no I/O. 7.4 compares timestamps with
-the snapshot's own ``envelope.collected_at``.
+the snapshot's own ``envelope.collected_at``. 3.2 reads one key of the policy
+profile passed to ``evaluate`` (never a file), and only when it is approved.
 
 This module must not import ``validate`` (validate imports REGISTRY).
 """
 from __future__ import annotations
 
 import copy
+import ipaddress
+import re
+import string
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Callable
+
+from .redaction import is_redacted
+from .sources import session_override
 
 # 7.4: maximum age of the last successful archive, relative to the collection
 # time, for a PASS. Default approved by Melvin at Gate 1 (recorded in
@@ -78,8 +85,9 @@ def _field_missing(section: str, field: str) -> _Gapped:
 
 
 class _Context:
-    def __init__(self, spec: dict[str, Any], snapshot: dict[str, Any]):
+    def __init__(self, spec: dict[str, Any], snapshot: dict[str, Any], policy: Any = None):
         self.spec = spec
+        self.policy = policy  # a PolicyProfile or None; read only by evaluators with policy_keys
         snapshot = snapshot if isinstance(snapshot, dict) else {}
         baseline = snapshot.get("baseline")
         self.baseline = baseline if isinstance(baseline, dict) else {}
@@ -425,19 +433,53 @@ def _superuser_roles(ctx: _Context) -> dict:  # 4.9
     return _manual(ctx, evidence, ["roles"])
 
 
-def _hba_rows(ctx: _Context, rules: list | None) -> list[dict[str, Any]]:
+def _hba_rows(ctx: _Context, rules: list | None, extra: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """pg_hba_file_rules rows as evidence. ``extra`` adds address, netmask and/or
+    options; each is read (and must be well formed) only when a caller asks for it.
+    The error text is never returned (it can quote the line), only has_error."""
     out = []
     for row in rules or []:
         if not isinstance(row, dict):
             raise _field_missing("hba_rules", "row")
-        out.append({
+        rule = {
             "line_number": _need(row, "hba_rules", "line_number", int),
             "connection_type": _need(row, "hba_rules", "type", str, nullable=True),
             "database": _str_list(row, "hba_rules", "database", nullable=True),
             "user_name": _str_list(row, "hba_rules", "user_name", nullable=True),
             "auth_method": _need(row, "hba_rules", "auth_method", str, nullable=True),
             "has_error": _need(row, "hba_rules", "error", str, nullable=True) is not None,
-        })
+        }
+        for field in extra:
+            if field == "options":
+                rule["options"] = _hba_options(row)
+            else:
+                rule[field] = _need(row, "hba_rules", field, str, nullable=True)
+        out.append(rule)
+    return out
+
+
+# pg_hba options whose VALUE is shown (W2B E0). Every other option is shown by
+# name only, so a secret-bearing value (ldapbindpasswd, radiussecrets, or one the
+# collector failed to mask) never reaches evidence. Nothing is ever unmasked.
+HBA_OPTION_VALUES_SHOWN = ("map", "clientcert", "clientname")
+_HBA_OPTION_NAME_RE = re.compile(r"[a-z_][a-z0-9_]*")
+
+
+def _hba_options(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """options ('name=value' strings, or null) as [{name[, value]}].
+
+    A name that is not a plain lower-case option name is shown as null, never as text.
+    """
+    options = _str_list(row, "hba_rules", "options", nullable=True)
+    out = []
+    for item in options or []:
+        name, sep, value = item.partition("=")
+        if not sep or not _HBA_OPTION_NAME_RE.fullmatch(name):
+            out.append({"name": None})
+        elif name in HBA_OPTION_VALUES_SHOWN:
+            out.append({"name": name, "value": value})
+        else:
+            out.append({"name": name})
     return out
 
 
@@ -612,6 +654,639 @@ def _wal_archiving(ctx: _Context) -> dict:  # 7.4
 
 
 # ---------------------------------------------------------------------------
+# Wave 2b (Gate W2B, rulings 1-9 and round 2): add-ons (F5) and login and
+# encryption (F7). Shared rules (E0):
+#
+# - Settings are read by name from baseline.settings (_setting). A section that
+#   was not collected is GAPPED section_not_collected; a sanitised or redacted row
+#   is GAPPED redacted_secret_setting; a per-role, database or session source is
+#   GAPPED session_override (sources.session_override, the setting-check rule).
+# - shared_preload_libraries is split by preload_items, which mirrors PostgreSQL
+#   17 SplitDirectoriesString + canonicalize_path. Anything it cannot read for
+#   certain is MANUAL preload_list_unparseable, never PASS.
+# - connections rows (_read_connections): backend_type NULL means not visible,
+#   never "not a client"; rows are never filtered by backend_type before the
+#   visibility check; only TCP classes (loopback, private, public) say anything
+#   about encryption. A not_visible row or a 'connections.tls' gap makes the TLS
+#   part GAPPED connections_not_visible, unless something readable already FAILs.
+# ---------------------------------------------------------------------------
+
+# CIS 6.10: the four TLS 1.2 ciphers named in the audit (verbatim quote tokens).
+CIS_TLS12_CIPHERS = ("ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384",
+                     "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-GCM-SHA256")
+# OpenSSL's cipher-list separators (ssl_ciph.c ITEM_SEP): colon, space, semicolon, comma.
+_CIPHER_SEPARATORS_RE = re.compile(r"[:, ;]")
+
+# pgaudit.log classes (pgaudit 17). 'all' and 'none' are keywords, not classes.
+PGAUDIT_LOG_CLASSES = ("read", "write", "function", "role", "ddl", "misc", "misc_set")
+PGAUDIT_POLICY_KEY = "pgaudit_log_classes"
+
+TCP_ADDR_CLASSES = ("loopback", "private", "public")
+CONNECTION_ADDR_CLASSES = ("not_visible", "unix_socket") + TCP_ADDR_CLASSES
+CONNECTIONS_TLS_GAP = "connections.tls"
+
+NON_TLS_HBA_TYPES = ("host", "hostnossl")          # CIS 6.8 query
+GSS_HBA_TYPES = ("hostgssenc", "hostnogssenc")     # Gate W2B round 2 ruling 2
+LOCAL_OK_METHODS = ("peer", "reject")              # 5.3 highlight: anything else
+REMOTE_WEAK_METHODS = ("trust", "password", "ident")  # 5.4: "not to be used for remote logins"
+
+# PostgreSQL scanner_isspace: space, \t, \n, \r, \f (and \v, as in SplitGUCList's callers).
+_SCANNER_SPACE = " \t\n\r\f\v"
+MAXPGPATH = 1024
+# ASCII-only case folding, as pg_strcasecmp and downcase_identifier do for UTF-8:
+# str.lower() would fold U+212A KELVIN SIGN onto 'k'.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def _setting(ctx: _Context, name: str) -> str | None:
+    """The server-wide value of a baseline.settings row, or None when there is no row."""
+    rows = ctx.rows("settings")
+    matches = [r for r in rows if r.get("name") == name]
+    if not matches:
+        return None
+    if len(matches) > 1:  # two rows for one name: the collector contract is broken
+        raise _field_missing("settings", name)
+    row = matches[0]
+    path = [f"settings.{name}"]
+    if ("sanitised" in row and row["sanitised"] is not False) or is_redacted(row.get("setting")):
+        raise _Gapped({"code": "redacted_secret_setting", "setting_name": name}, path)
+    override = session_override(rows, name)
+    if override is not None:
+        raise _Gapped({"code": "session_override", **override}, path)
+    value = row.get("setting")
+    if not isinstance(value, str):
+        raise _field_missing("settings", name)
+    return value
+
+
+def _required_setting(ctx: _Context, name: str) -> str:
+    """Like _setting, but a missing row is GAPPED field_missing (settings.<name>)."""
+    value = _setting(ctx, name)
+    if value is None:
+        raise _field_missing("settings", name)
+    return value
+
+
+def _canonical_library_path(name: str) -> str:
+    """The subset of PostgreSQL canonicalize_path that is certain on Linux.
+
+    Duplicate and trailing '/' are removed. A '.' or '..' component, an empty name
+    or a name PostgreSQL would truncate is not read (ValueError)."""
+    if name == "" or len(name.encode("utf-8")) >= MAXPGPATH:
+        raise ValueError("empty or over-long library name")
+    parts = name.split("/")
+    if any(part in (".", "..") for part in parts):
+        raise ValueError("relative path component")
+    out = "/".join(p for p in parts if p)
+    return "/" + out if name.startswith("/") else out
+
+
+def preload_items(value: str) -> list[str]:
+    """Split shared_preload_libraries the way PostgreSQL 17 does.
+
+    Mirrors SplitDirectoriesString(rawstring, ',') (utils/adt/varlena.c):
+    leading and trailing whitespace is skipped; a double-quoted name keeps
+    everything inside, with '""' read as '"'; an unquoted name runs to the next
+    ',' and loses trailing whitespace (inner spaces stay); names are not
+    case-folded; an empty unquoted name (',,', a trailing ',') or text after a
+    closing quote is a syntax error. Each name is then canonicalised
+    (_canonical_library_path). A control character, a syntax error or a name
+    that cannot be canonicalised for certain raises ValueError.
+    """
+    if not isinstance(value, str):
+        raise ValueError("not a string")
+    if any((ord(c) < 32 and c not in _SCANNER_SPACE) or ord(c) == 127 for c in value):
+        raise ValueError("control character")
+    items: list[str] = []
+    i, n = 0, len(value)
+    while i < n and value[i] in _SCANNER_SPACE:
+        i += 1
+    if i == n:
+        return items
+    while True:
+        if i == n:
+            raise ValueError("empty list element after ','")
+        if value[i] == '"':
+            chars = []
+            i += 1
+            while True:
+                if i >= n:
+                    raise ValueError("unclosed double quote")
+                if value[i] == '"':
+                    if i + 1 < n and value[i + 1] == '"':
+                        chars.append('"')
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                chars.append(value[i])
+                i += 1
+            name = "".join(chars)
+        else:
+            start = end = i
+            while i < n and value[i] != ",":
+                if value[i] not in _SCANNER_SPACE:
+                    end = i + 1
+                i += 1
+            if end == start:
+                raise ValueError("empty list element")
+            name = value[start:end]
+        while i < n and value[i] in _SCANNER_SPACE:
+            i += 1
+        items.append(_canonical_library_path(name))
+        if i == n:
+            return items
+        if value[i] != ",":
+            raise ValueError("invalid list syntax")
+        i += 1
+        while i < n and value[i] in _SCANNER_SPACE:
+            i += 1
+
+
+def names_pgaudit(item: str) -> bool:
+    """True when the last path part, minus one trailing '.so', is exactly 'pgaudit'."""
+    last = item.rsplit("/", 1)[-1]
+    return (last[:-3] if last.endswith(".so") else last) == "pgaudit"
+
+
+def _split_identifier_string(value: str) -> list[str]:
+    """PostgreSQL 17 SplitIdentifierString(rawstring, ','), as pgaudit reads pgaudit.log.
+
+    Unquoted names end at ',' or whitespace and are ASCII-downcased; quoted names
+    keep their case, with '""' read as '"'. ValueError on a syntax error."""
+    if any((ord(c) < 32 and c not in _SCANNER_SPACE) or ord(c) == 127 for c in value):
+        raise ValueError("control character")
+    names: list[str] = []
+    i, n = 0, len(value)
+    while i < n and value[i] in _SCANNER_SPACE:
+        i += 1
+    if i == n:
+        return names
+    while True:
+        if i == n:
+            raise ValueError("empty list element after ','")
+        if value[i] == '"':
+            chars = []
+            i += 1
+            while True:
+                if i >= n:
+                    raise ValueError("unclosed double quote")
+                if value[i] == '"':
+                    if i + 1 < n and value[i + 1] == '"':
+                        chars.append('"')
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                chars.append(value[i])
+                i += 1
+            name = "".join(chars)
+        else:
+            start = i
+            while i < n and value[i] != "," and value[i] not in _SCANNER_SPACE:
+                i += 1
+            if i == start:
+                raise ValueError("empty list element")
+            name = value[start:i].translate(_ASCII_LOWER)
+        while i < n and value[i] in _SCANNER_SPACE:
+            i += 1
+        names.append(name)
+        if i == n:
+            return names
+        if value[i] != ",":
+            raise ValueError("invalid list syntax")
+        i += 1
+        while i < n and value[i] in _SCANNER_SPACE:
+            i += 1
+
+
+def pgaudit_log_classes(value: str) -> list[str]:
+    """The classes pgaudit logs for a pgaudit.log value, in PGAUDIT_LOG_CLASSES order.
+
+    pgaudit check_pgaudit_log: words left to right, compared case-insensitively;
+    'all' adds every class, 'none' adds nothing, a leading '-' removes. Any other
+    word, or a list syntax error, raises ValueError."""
+    if not isinstance(value, str):
+        raise ValueError("not a string")
+    found: set[str] = set()
+    for token in _split_identifier_string(value):
+        subtract = token.startswith("-")
+        word = (token[1:] if subtract else token).translate(_ASCII_LOWER)
+        if word == "none":
+            bits: set[str] = set()
+        elif word == "all":
+            bits = set(PGAUDIT_LOG_CLASSES)
+        elif word in PGAUDIT_LOG_CLASSES:
+            bits = {word}
+        else:
+            raise ValueError("unknown pgaudit.log class")
+        found = found - bits if subtract else found | bits
+    return [c for c in PGAUDIT_LOG_CLASSES if c in found]
+
+
+def pgaudit_policy_classes_error(value: Any) -> str | None:
+    """Why value is not a valid pgaudit_log_classes policy value, or None (E9)."""
+    if not (isinstance(value, list) and value):
+        return "must be a non-empty list of pgaudit.log classes"
+    for item in value:
+        if not isinstance(item, str) or item not in PGAUDIT_LOG_CLASSES:
+            return f"item {item!r} is not one of {PGAUDIT_LOG_CLASSES}"
+    if len(set(value)) != len(value):
+        return "must not repeat items"
+    return None
+
+
+def _policy_missing(ctx: _Context) -> dict[str, Any]:
+    policy = ctx.policy
+    case = ("no_profile" if policy is None else
+            "profile_unapproved" if getattr(policy, "approved", False) is not True else "no_value_for_spec")
+    facts: dict[str, Any] = {"code": "policy_missing", "case": case}
+    profile_id = getattr(policy, "profile_id", None)
+    if isinstance(profile_id, str) and profile_id:
+        facts["profile_id"] = profile_id
+    return facts
+
+
+def _approved_pgaudit_classes(ctx: _Context) -> list[str] | None:
+    """pgaudit_log_classes from an APPROVED profile, or None (policy_missing)."""
+    policy = ctx.policy
+    if policy is None or getattr(policy, "approved", False) is not True:
+        return None
+    value = getattr(policy, PGAUDIT_POLICY_KEY, None)
+    value = list(value) if isinstance(value, (list, tuple)) else value
+    if pgaudit_policy_classes_error(value) is not None:
+        return None
+    return [c for c in PGAUDIT_LOG_CLASSES if c in value]
+
+
+def _setting_evidence(name: str, value: str | None, **extra) -> dict[str, Any]:
+    return {"type": "setting", "setting_name": name, "value": value, **extra}
+
+
+def _pgaudit_enabled(ctx: _Context) -> dict:  # 3.2
+    preload = _required_setting(ctx, "shared_preload_libraries")
+    paths = ["settings.shared_preload_libraries"]
+    try:
+        items = preload_items(preload)
+    except ValueError:
+        return _result(ctx, "MANUAL", [_setting_evidence("shared_preload_libraries", preload)], paths,
+                       {"code": "preload_list_unparseable", "setting_name": "shared_preload_libraries"})
+    preloaded = any(names_pgaudit(item) for item in items)
+    evidence = [_setting_evidence("shared_preload_libraries", preload, items=items, pgaudit_preloaded=preloaded)]
+    if not preloaded:
+        return _result(ctx, "FAIL", evidence, paths, {"code": "pgaudit_not_preloaded"})
+    paths.append("settings.pgaudit.log")
+    log = _setting(ctx, "pgaudit.log")  # GAPPED: redacted row or session_override
+    if log is None:
+        evidence.append(_setting_evidence("pgaudit.log", None))
+        return _result(ctx, "FAIL", evidence, paths, {"code": "pgaudit_log_missing"})
+    policy_classes = _approved_pgaudit_classes(ctx)
+    if policy_classes is None:
+        evidence.append(_setting_evidence("pgaudit.log", log))
+        return _result(ctx, "MANUAL", evidence, paths, _policy_missing(ctx))
+    try:
+        effective = pgaudit_log_classes(log)
+    except ValueError:
+        evidence.append(_setting_evidence("pgaudit.log", log))
+        return _result(ctx, "MANUAL", evidence, paths,
+                       {"code": "pgaudit_log_unparseable", "setting_name": "pgaudit.log"})
+    evidence.append(_setting_evidence("pgaudit.log", log, effective_classes=effective))
+    missing = [c for c in policy_classes if c not in effective]
+    facts = {"policy_classes": policy_classes, "effective_classes": effective}
+    if missing:
+        return _result(ctx, "FAIL", evidence, paths,
+                       {"code": "pgaudit_log_classes_missing", **facts, "missing_classes": missing})
+    return _result(ctx, "PASS", evidence, paths, {"code": "pgaudit_log_classes_present", **facts})
+
+
+PASSWORDCHECK_ITEMS = ("passwordcheck", "$libdir/passwordcheck")  # CIS 5.6, exact items
+
+
+def _password_complexity_module(ctx: _Context) -> dict:  # 5.6
+    preload = _required_setting(ctx, "shared_preload_libraries")
+    paths = ["settings.shared_preload_libraries"]
+    try:
+        items = preload_items(preload)
+    except ValueError:
+        return _result(ctx, "MANUAL", [_setting_evidence("shared_preload_libraries", preload)], paths,
+                       {"code": "preload_list_unparseable", "setting_name": "shared_preload_libraries"})
+    found = [item for item in items if item in PASSWORDCHECK_ITEMS]
+    evidence = [_setting_evidence("shared_preload_libraries", preload, items=items, passwordcheck_items=found)]
+    if not found:
+        return _result(ctx, "FAIL", evidence, paths, {"code": "passwordcheck_not_preloaded"})
+    paths.append("settings.dynamic_library_path")
+    path = _required_setting(ctx, "dynamic_library_path")  # GAPPED: session_override
+    evidence.append(_setting_evidence("dynamic_library_path", path))
+    if path == "$libdir":
+        return _result(ctx, "PASS", evidence, paths, {"code": "passwordcheck_preloaded"})
+    if "passwordcheck" in found:  # a bare name may load another library from the path
+        return _result(ctx, "FAIL", evidence, paths,
+                       {"code": "dynamic_library_path_not_libdir", "dynamic_library_path": path})
+    return _result(ctx, "MANUAL", evidence, paths,
+                   {"code": "libdir_form_with_custom_library_path", "dynamic_library_path": path})
+
+
+class _Connections:
+    """What the connections section says, without deciding the result."""
+
+    def __init__(self) -> None:
+        self.collected = False
+        self.problem: _Gapped | None = None   # first unreadable-row or section problem
+        self.hidden = 0                        # sessions the collector could not see
+        self.tls_gap = False
+        self.visible: list[dict[str, Any]] = []
+
+    def unknown(self) -> _Gapped | None:
+        """The GAPPED reason for the TLS facts, or None when they are complete."""
+        if self.problem is not None:
+            return self.problem
+        if self.hidden or self.tls_gap:
+            return _Gapped({"code": "connections_not_visible", "section": "connections",
+                            "hidden_connection_count": self.hidden, "tls_details_gap": self.tls_gap},
+                           ["connections"])
+        return None
+
+
+def _read_connections(ctx: _Context) -> _Connections:
+    """Parse baseline.connections; never raises (6.8 and 6.10 report a FAIL first)."""
+    out = _Connections()
+    try:
+        rows = ctx.section("connections", list)
+    except _Gapped as gap:
+        ctx.not_collected.append("connections")
+        out.problem = gap
+        return out
+    out.collected = True
+    out.tls_gap = ctx.gap_for(CONNECTIONS_TLS_GAP) is not None
+    for row in rows:
+        try:
+            parsed = _connection_row(row)
+        except _Gapped as gap:
+            out.problem = out.problem or gap
+            continue
+        if parsed is None:
+            count = row.get("connection_count")
+            out.hidden += count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 1
+        else:
+            out.visible.append(parsed)
+    return out
+
+
+def _connection_row(row: Any) -> dict[str, Any] | None:
+    """A visible connection group, or None when the collector could not see it."""
+    section = "connections"
+    if not isinstance(row, dict):
+        raise _field_missing(section, "row")
+    backend_type = _need(row, section, "backend_type", str, nullable=True)
+    visible = _need(row, section, "visible", bool)
+    addr_class = _need(row, section, "client_addr_class", str)
+    if addr_class not in CONNECTION_ADDR_CLASSES:
+        raise _field_missing(section, "client_addr_class")
+    # Visibility first, on every row: a NULL backend_type is a hidden session.
+    if backend_type is None or not visible or addr_class == "not_visible":
+        return None
+    count = _need(row, section, "connection_count", int)
+    if count < 1:
+        raise _field_missing(section, "connection_count")
+    entry = {"backend_type": backend_type,
+             "usename": _need(row, section, "usename", str, nullable=True),
+             "datname": _need(row, section, "datname", str, nullable=True),
+             "client_addr_class": addr_class, "connection_count": count, "tcp": addr_class in TCP_ADDR_CLASSES}
+    if not entry["tcp"]:
+        return entry  # a Unix socket says nothing about encryption
+    entry["ssl"] = _need(row, section, "ssl", bool)
+    entry["tls_version"] = _need(row, section, "tls_version", str, nullable=not entry["ssl"])
+    entry["tls_cipher"] = _need(row, section, "tls_cipher", str, nullable=not entry["ssl"])
+    return entry
+
+
+def _connection_evidence(row: dict[str, Any], *keys: str) -> dict[str, Any]:
+    base = ("backend_type", "usename", "datname", "client_addr_class")
+    return {"type": "connection", **{k: row[k] for k in base + keys}, "connection_count": row["connection_count"]}
+
+
+def _tls_cipher_suites(ctx: _Context) -> dict:  # 6.10
+    value = _required_setting(ctx, "ssl_ciphers")
+    items = [item for item in _CIPHER_SEPARATORS_RE.split(value) if item]
+    other = list(dict.fromkeys(item for item in items if item not in CIS_TLS12_CIPHERS))
+    conns = _read_connections(ctx)
+    in_use = [r for r in conns.visible if r["tcp"] and r["ssl"] and r["tls_version"] == "TLSv1.2"
+              and r["tls_cipher"] not in CIS_TLS12_CIPHERS]
+    evidence = [_setting_evidence("ssl_ciphers", value, items=items, other_items=other)]
+    evidence += [_connection_evidence(r, "tls_version", "tls_cipher") for r in in_use]
+    paths = ["settings.ssl_ciphers", "connections"]
+    if other:
+        return _result(ctx, "FAIL", evidence, paths, {"code": "unapproved_ciphers_configured", "other_items": other})
+    if in_use:
+        return _result(ctx, "FAIL", evidence, paths,
+                       {"code": "unapproved_cipher_in_use",
+                        "connection_count": sum(r["connection_count"] for r in in_use),
+                        "ciphers": sorted({r["tls_cipher"] for r in in_use})})
+    unknown = conns.unknown()
+    if unknown is not None:
+        raise unknown
+    if not items:
+        return _result(ctx, "MANUAL", evidence, paths, {"code": "ssl_ciphers_empty"})
+    return _result(ctx, "PASS", evidence, paths, {"code": "approved_ciphers_only"})
+
+
+def _tls_enabled_and_enforced(ctx: _Context) -> dict:  # 6.8
+    failing: list[str] = []
+    unknown: list[tuple[str, _Gapped]] = []   # (part, reason) for parts that could not be read
+    evidence: list[dict[str, Any]] = []
+    try:
+        ssl = _required_setting(ctx, "ssl")
+        if ssl not in ("on", "off"):
+            raise _field_missing("settings", "ssl")
+        evidence.append(_setting_evidence("ssl", ssl))
+        if ssl == "off":
+            failing.append("ssl_off")
+    except _Gapped as gap:
+        unknown.append(("ssl", gap))
+    try:
+        rules = _hba_rows(ctx, ctx.section("hba_rules"), extra=("address", "netmask"))
+    except _Gapped as gap:
+        if gap.explanation["code"] == "section_not_collected":
+            ctx.not_collected.append("hba_rules")
+        unknown.append(("hba_rules", gap))
+        rules = []
+    non_tls = [r for r in rules if r["connection_type"] in NON_TLS_HBA_TYPES]
+    gss = [r for r in rules if r["connection_type"] in GSS_HBA_TYPES]
+    broken = [r for r in rules if r["has_error"]]
+    if non_tls:
+        failing.append("non_tls_hba_rules")
+    conns = _read_connections(ctx)
+    unencrypted = [r for r in conns.visible if r["tcp"] and r["ssl"] is False]
+    if unencrypted:
+        failing.append("unencrypted_tcp_connections")
+    if conns.unknown() is not None:
+        unknown.append(("connections", conns.unknown()))
+    for finding, group in (("non_tls_hba_rule", non_tls), ("gss_hba_rule", gss), ("hba_rule_error", broken)):
+        evidence += [{"type": "hba_rule", **r, "finding": finding} for r in group]
+    evidence += [{**_connection_evidence(r, "ssl"), "finding": "unencrypted_tcp_connection"} for r in unencrypted]
+    paths = ["settings.ssl", "hba_rules", "connections"]
+    if failing:
+        facts: dict[str, Any] = {"code": "tls_not_enabled_or_enforced", "failing_parts": failing}
+        if unknown:
+            facts["unknown_parts"] = [part for part, _ in unknown]
+        return _result(ctx, "FAIL", evidence, paths, facts)
+    if unknown:
+        raise unknown[0][1]
+    if gss:
+        return _manual(ctx, evidence, paths, "gss_hba_rules", rule_count=len(gss))
+    if broken:
+        return _manual(ctx, evidence, paths, "hba_rule_error", rule_count=len(broken))
+    return _result(ctx, "PASS", evidence, paths, {"code": "tls_enabled_and_enforced"})
+
+
+def _available_extension(ctx: _Context, name: str) -> dict[str, Any]:
+    """Evidence row for one pg_available_extensions name (installed_version: connected DB only)."""
+    section = "available_extensions"
+    found = None
+    for row in ctx.rows(section):
+        if _need(row, section, "name", str) == name and found is None:
+            found = {"default_version": _need(row, section, "default_version", str, nullable=True),
+                     "installed_version": _need(row, section, "installed_version", str, nullable=True)}
+    database = ctx.envelope.get("database")
+    return {"type": "extension", "name": name, "available": found is not None,
+            "default_version": found["default_version"] if found else None,
+            "installed_version": found["installed_version"] if found else None,
+            "database": database if isinstance(database, str) and database else None}
+
+
+def _extension_facts(row: dict[str, Any]) -> dict[str, Any]:
+    return {"extension_name": row["name"], "available": row["available"],
+            "default_version": row["default_version"], "installed_version": row["installed_version"],
+            "database": row["database"]}
+
+
+def _membership_path(memberships: list[dict[str, Any]], top: str, target: str) -> list[str]:
+    """Shortest path top -> ... -> target down the membership graph (BFS)."""
+    parent: dict[str, str | None] = {top: None}
+    queue = [top]
+    while queue:
+        current = queue.pop(0)
+        if current == target:
+            break
+        for row in memberships:
+            if _need(row, "role_memberships", "role", str) != current:
+                continue
+            member = _need(row, "role_memberships", "member", str)
+            if member not in parent:
+                parent[member] = current
+                queue.append(member)
+    path, node = [], target
+    while node is not None:
+        path.append(node)
+        node = parent.get(node)
+    return path[::-1]
+
+
+def _set_user_extension(ctx: _Context) -> dict:  # 4.8
+    extension = _available_extension(ctx, "set_user")
+    facts = _extension_facts(extension)
+    paths = ["available_extensions"]
+    if not extension["available"]:
+        return _result(ctx, "FAIL", [extension], paths, {"code": "set_user_not_available", **facts})
+    roles = _role_index(ctx)                  # required from here on: GAPPED if missing
+    memberships = ctx.rows("role_memberships")
+    paths += ["roles", "role_memberships"]
+    ancestors: dict[str, list[str]] = {}
+    for name, row in sorted(roles.items()):
+        if _need(row, "roles", "rolsuper", bool):
+            for member in _members_of(memberships, name):
+                ancestors.setdefault(member, []).append(name)
+    review = []
+    for name in sorted(set(ancestors) | {n for n, r in roles.items() if _need(r, "roles", "rolsuper", bool)}):
+        row = roles.get(name)
+        if row is None:  # a member the roles list does not have: the list is incomplete
+            raise _field_missing("roles", "rolname")
+        if not _need(row, "roles", "rolcanlogin", bool):
+            continue
+        review.append({"type": "superuser_login", "rolname": name,
+                       "rolsuper": _need(row, "roles", "rolsuper", bool),
+                       "superuser_ancestors": [{"rolname": top, "path": _membership_path(memberships, top, name)}
+                                               for top in ancestors.get(name, [])],
+                       "bootstrap_superuser": _is_bootstrap(row)})
+    evidence = [extension] + review
+    if not review:
+        return _result(ctx, "PASS", evidence, paths, {"code": "empty_review_set", "evidence_count": 0, **facts})
+    return _manual(ctx, evidence, paths, "superuser_login_review", **facts)
+
+
+def _pgcrypto_extension(ctx: _Context) -> dict:  # 6.11
+    extension = _available_extension(ctx, "pgcrypto")
+    return _manual(ctx, [extension], ["available_extensions", "envelope.database"],
+                   installed_version_scope="connected_database", **_extension_facts(extension))
+
+
+def _local_hba_rules(ctx: _Context) -> dict:  # 5.3
+    raw = ctx.rows("hba_rules")
+    # Options are read (and must be well formed) only on the rules shown.
+    selected = [{**rule, "options": _hba_options(row)} for row, rule in zip(raw, _hba_rows(ctx, raw))
+                if rule["connection_type"] == "local" or rule["has_error"]]
+    mappings = None
+    if any(o["name"] == "map" for r in selected for o in r["options"]):
+        rows = ctx.optional("ident_mappings")
+        if rows is not None:
+            mappings = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise _field_missing("ident_mappings", "row")
+                mappings.append({
+                    "line_number": _need(row, "ident_mappings", "line_number", int),
+                    "map_name": _need(row, "ident_mappings", "map_name", str, nullable=True),
+                    "sys_name": _need(row, "ident_mappings", "sys_name", str, nullable=True),
+                    "pg_username": _need(row, "ident_mappings", "pg_username", str, nullable=True),
+                    "has_error": _need(row, "ident_mappings", "error", str, nullable=True) is not None})
+    evidence = []
+    for rule in selected:
+        highlights = []
+        if rule["connection_type"] == "local" and rule["auth_method"] not in LOCAL_OK_METHODS:
+            highlights.append("auth_method_not_peer_or_reject")
+        if rule["has_error"]:
+            highlights.append("line_error")
+        entry = {"type": "hba_rule", **rule, "highlights": highlights}
+        maps = [o["value"] for o in rule["options"] if o["name"] == "map"]
+        if maps:
+            entry["ident_mappings"] = (None if mappings is None else
+                                       [m for m in mappings if m["map_name"] in maps])
+        evidence.append(entry)
+    return _manual(ctx, evidence, ["hba_rules", "ident_mappings"],
+                   highlight_count=sum(1 for e in evidence if e["highlights"]))
+
+
+def _is_any_address(rule: dict[str, Any]) -> bool:
+    """address 'all', or a netmask of all zero bits (0.0.0.0/0, ::/0) that matches every address."""
+    if rule["address"] == "all":
+        return True
+    try:
+        return rule["netmask"] is not None and int(ipaddress.ip_address(rule["netmask"])) == 0
+    except ValueError:
+        return False
+
+
+def _host_hba_rules(ctx: _Context) -> dict:  # 5.4
+    rules = _hba_rows(ctx, ctx.rows("hba_rules"), extra=("address", "netmask"))
+    evidence = []
+    for rule in rules:
+        host = isinstance(rule["connection_type"], str) and rule["connection_type"].startswith("host")
+        if not (host or rule["has_error"]):
+            continue
+        highlights = []
+        if host and rule["auth_method"] in REMOTE_WEAK_METHODS:
+            highlights.append("auth_method_not_for_remote")
+        if host and rule["auth_method"] == "md5":
+            highlights.append("auth_method_md5")
+        if host and _is_any_address(rule):
+            highlights.append("any_address")
+        if rule["has_error"]:
+            highlights.append("line_error")
+        evidence.append({"type": "hba_rule", **rule, "highlights": highlights})
+    return _manual(ctx, evidence, ["hba_rules"], highlight_count=sum(1 for e in evidence if e["highlights"]))
+
+
+# ---------------------------------------------------------------------------
 # Registry. One evaluator serves exactly one recommendation. quote_tokens are
 # the CIS words or constants the evaluator hard-codes; validate.py requires each
 # to be a whole token in the spec's pass_condition_quote.
@@ -625,14 +1300,21 @@ class CatalogEvaluator:
     required_sections: tuple[str, ...]
     optional_sections: tuple[str, ...] = ()
     quote_tokens: tuple[str, ...] = ()
-    # PostgreSQL settings whose value can change this evaluator's inputs. The
-    # sandbox only changes settings, so none of these may ever be a fixable
-    # setting (planning.POLICIES); a unit test enforces it.
+    # PostgreSQL settings whose value can change this evaluator's inputs. A fixable
+    # setting (planning.POLICIES) may be one of these only through a reviewed
+    # declaration (planning.CATALOG_FIX_LINKS or CATALOG_INPUT_AFFECTS); every fix of
+    # it then re-checks this evaluator for regressions in the sandbox. A unit test
+    # enforces it.
     setting_inputs: tuple[str, ...] = ()
+    # Policy-profile keys the evaluator reads (only from an APPROVED profile passed
+    # to evaluate). Non-empty means the result depends on the profile, which is
+    # then pinned in the assessment report (assess.py).
+    policy_keys: tuple[str, ...] = ()
 
 
 _MANUAL = ("manual_checklist",)
 _AUTOMATED = ("automated",)
+_POLICY = ("parameterised",)
 
 REGISTRY: "MappingProxyType[str, CatalogEvaluator]" = MappingProxyType({
     "roles_with_admin_attributes": CatalogEvaluator(
@@ -663,16 +1345,58 @@ REGISTRY: "MappingProxyType[str, CatalogEvaluator]" = MappingProxyType({
         ("archive_mode", "on", "archive_command", "archive_library"),
         # wal_level is not read, but archive_mode=on needs it at replica or above.
         ("archive_mode", "archive_library", "archive_command", "wal_level")),
+    # ---- Wave 2b (Gate W2B) ----
+    "pgaudit_enabled": CatalogEvaluator(
+        _pgaudit_enabled, "3.2", _POLICY, ("settings",), (), ("pgaudit", "pgaudit.log"),
+        ("shared_preload_libraries", "pgaudit.log"), (PGAUDIT_POLICY_KEY,)),
+    "password_complexity_module": CatalogEvaluator(
+        _password_complexity_module, "5.6", _AUTOMATED, ("settings",), (),
+        ("passwordcheck", "$libdir/passwordcheck", "$libdir"),
+        ("shared_preload_libraries", "dynamic_library_path")),
+    "tls_cipher_suites": CatalogEvaluator(
+        # Connections depend on ssl (TLS at all) and ssl_min_protocol_version (whether
+        # a TLS 1.2 session can exist), as well as on ssl_ciphers itself.
+        _tls_cipher_suites, "6.10", _AUTOMATED, ("settings",), ("connections",),
+        CIS_TLS12_CIPHERS + ("TLSv1.2",), ("ssl_ciphers", "ssl", "ssl_min_protocol_version")),
+    "tls_enabled_and_enforced": CatalogEvaluator(
+        # A client with sslmode=prefer falls back to an unencrypted session when the
+        # TLS handshake fails, so the cipher list and minimum protocol can change the
+        # established connections this evaluator reads.
+        _tls_enabled_and_enforced, "6.8", _AUTOMATED, ("settings",), ("hba_rules", "connections"),
+        ("ssl", "off", "host", "hostnossl"), ("ssl", "hba_file", "ssl_ciphers", "ssl_min_protocol_version")),
+    "set_user_extension": CatalogEvaluator(
+        # roles and role_memberships are read only after the availability FAIL; from
+        # that step on they are required and their absence is GAPPED.
+        _set_user_extension, "4.8", _AUTOMATED, ("available_extensions",), ("roles", "role_memberships"),
+        ("set_user",)),
+    "pgcrypto_extension": CatalogEvaluator(
+        _pgcrypto_extension, "6.11", _MANUAL, ("available_extensions",), (), ("pgcrypto",)),
+    "local_hba_rules": CatalogEvaluator(
+        _local_hba_rules, "5.3", _MANUAL, ("hba_rules",), ("ident_mappings",), (), ("hba_file", "ident_file")),
+    "host_hba_rules": CatalogEvaluator(
+        _host_hba_rules, "5.4", _MANUAL, ("hba_rules",), (), (), ("hba_file",)),
 })
 
 
-def evaluate(spec: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+def uses_policy_profile(spec: Any) -> bool:
+    """True when a catalog spec's evaluator reads a policy-profile key (3.2)."""
+    check = spec.get("check") if isinstance(spec, dict) else None
+    if not (isinstance(check, dict) and check.get("kind") == "catalog"):
+        return False
+    entry = REGISTRY.get(check.get("evaluator"))
+    return entry is not None and bool(entry.policy_keys)
+
+
+def evaluate(spec: dict[str, Any], snapshot: dict[str, Any], policy: Any = None) -> dict[str, Any]:
     """Evaluate a validated catalog spec against a v0.3.0-shaped snapshot.
 
     ``snapshot`` needs ``baseline`` (collector sections) and, for 4.5/4.6/4.7
-    and 7.4, ``envelope``. Returns {result, evidence, evidence_paths,
-    explanation, notices}; result is PASS, FAIL, MANUAL or GAPPED. notices are the
-    fixed NOTICES for the recommendation, present for every result.
+    and 7.4, ``envelope``. ``policy`` is the PolicyProfile (or None); an
+    evaluator with policy_keys (3.2) reads them only when it is approved,
+    otherwise the result is MANUAL policy_missing, never PASS. Returns {result,
+    evidence, evidence_paths, explanation, notices}; result is PASS, FAIL, MANUAL
+    or GAPPED. notices are the fixed NOTICES for the recommendation, present for
+    every result.
     """
     check = spec.get("check") or {}
     entry = REGISTRY.get(check.get("evaluator"))
@@ -680,7 +1404,7 @@ def evaluate(spec: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
     if check.get("kind") != "catalog" or entry is None or entry.recommendation != ref.get("recommendation"):
         raise ValueError("spec is not a valid catalog check")
     # Evidence lists are taken from the snapshot; copy so callers cannot mutate it.
-    outcome = copy.deepcopy(_evaluate(entry, ref, _Context(spec, snapshot)))
+    outcome = copy.deepcopy(_evaluate(entry, ref, _Context(spec, snapshot, policy)))
     outcome["notices"] = notices_for(ref.get("recommendation"))
     return outcome
 

@@ -1,0 +1,23 @@
+spec_id: "cis-pg17-v1.1.0:5.6"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "5.6"
+  title: "Ensure password complexity is configured"
+  source_sha256: "d3299fcf1f59458c61bc0efb76dbd2b086e3d559f18ad8bc5951f0ec055ce31e"
+tier: automated
+reason: null
+check:
+  kind: catalog
+  evaluator: password_complexity_module
+  pass_condition_quote: "If neither `passwordcheck` nor `$libdir/passwordcheck` is listed in `shared_preload_libraries` (based on `$libdir` being returned for `dynamic_library_path`), this is a failure."
+interpretation:
+  - "CIS marks 5.6 as Manual. DBGuard automates it because the audit procedure gives a mechanical fail sentence (Gate W2B ruling 1)."
+  - "shared_preload_libraries is read as a list, split the way PostgreSQL splits it, and an item must be exactly `passwordcheck` or `$libdir/passwordcheck`. Other path forms are not listed by CIS and do not count. If neither is listed, the result is FAIL. An unparseable list gives MANUAL, never PASS."
+  - "A bare `passwordcheck` item needs dynamic_library_path to be exactly `$libdir`, otherwise the result is FAIL (Gate W2B ruling 1), because the bare name may load a different library. This is stricter than CIS, whose sentence assumes `$libdir` and does not say what happens otherwise."
+  - "If passwordcheck is listed only as `$libdir/passwordcheck` and dynamic_library_path is not `$libdir`, the result is MANUAL, not PASS or FAIL (Gate W2B round 2 ruling 4). CIS's sentence is based on `$libdir` being returned, so this case is outside what CIS says, and a person decides."
+  - "dynamic_library_path set per role, per database or per session (a non-server-wide source on the collected row) gives GAPPED, because the collected value may not be the one the server used at start-up."
+  - "PASS means the module is preloaded. As CIS's own note says, passwordcheck only checks passwords set later in plain text, not existing or pre-hashed ones, and it has significant limitations."

@@ -225,7 +225,7 @@ def load_spec_controls(definition_cls, benchmark_id: str = DEFAULT_BENCHMARK) ->
             cis_title=f"{ref['recommendation']} {ref['title']}",
             description=f"{ref['benchmark']} v{ref['benchmark_version']} recommendation {ref['recommendation']}",
             severity=None,
-            rule_func=(_catalog_rule(spec) if _is_catalog(spec)  # F6 block below
+            rule_func=(_catalog_rule(spec, policy) if _is_catalog(spec)  # F6 block below
                        else _setting_rule(spec, policy) if automated else _manual_rule(spec)),
             template_id="SET_CONFIG_PARAMETER" if automated else "MANUAL_PROCEDURE",
             template_version=1,
@@ -258,7 +258,8 @@ def _is_catalog(spec: dict) -> bool:
     return isinstance(check, dict) and check.get("kind") == "catalog"
 
 
-def _catalog_rule(spec: dict):
+def _catalog_rule(spec: dict, policy=None):
+    """``policy`` is the installed profile; only 3.2 reads it, and only when approved."""
     from app.services.spec_engine import catalog_checks
 
     spec_id, ref = spec["spec_id"], spec["ref"]
@@ -270,7 +271,7 @@ def _catalog_rule(spec: dict):
             native = snapshot
         else:
             native = {"envelope": snapshot.get("envelope") or {}, "baseline": snapshot}
-        outcome = catalog_checks.evaluate(spec, native)
+        outcome = catalog_checks.evaluate(spec, native, policy)
         result = outcome["result"]
         return Finding(
             control_id=spec_id, status=_CATALOG_STATUS[result], title=ref["title"],

@@ -1,0 +1,24 @@
+spec_id: "cis-pg17-v1.1.0:3.2"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "3.2"
+  title: "Ensure the PostgreSQL Audit Extension (pgAudit) is enabled"
+  source_sha256: "d7540d07f2677c2caa0f99994050e1f7d334469011c437ce50b44a7eeabceffa"
+tier: parameterised
+reason: "the desired auditing components are set by the organization's audit policy; the required pgaudit.log classes come from the approved policy profile key pgaudit_log_classes"
+check:
+  kind: catalog
+  evaluator: pgaudit_enabled
+  pass_condition_quote: "If the output does not contain `pgaudit`, this is a fail. Next, verify that desired auditing components are enabled: ``` postgres=# show pgaudit.log; ERROR: unrecognized configuration parameter \"pgaudit.log\" ``` If the output reports the above error or does not contain the desired auditing components, this is a fail."
+interpretation:
+  - "shared_preload_libraries is read as a list, split the way PostgreSQL splits it. An item names pgaudit when its last path part, minus any trailing `.so`, is exactly `pgaudit`, so `pgaudit`, `$libdir/pgaudit` and `pgaudit.so` all count (Gate W2B round 2 ruling 4, because CIS says the output must contain `pgaudit`). This is wider than the bare `pgaudit` in the CIS example output."
+  - "If no item names pgaudit, the result is FAIL, whatever the policy says. An unparseable list gives MANUAL, never PASS."
+  - "If pgaudit is preloaded but the collected settings have no pgaudit.log row, the result is FAIL, as CIS fails the unrecognized-parameter error. If the settings section was not collected, the result is GAPPED."
+  - "The desired auditing components are the organisation's choice, so this is a company-policy rule. DBGuard takes them from the approved policy profile key pgaudit_log_classes (Gate W2B ruling 2, default ddl, role and write). Without an approved value the result after the preload checks is MANUAL (policy_missing), never PASS."
+  - "pgaudit.log is read the way pgaudit reads it: comma-separated words, case-insensitive, applied left to right. `all` adds every class, `none` adds nothing, and a leading minus removes a class. The known classes are read, write, function, role, ddl, misc and misc_set. A value with any other word gives MANUAL."
+  - "PASS needs every policy class in the resulting set, so `none` (pgaudit's default) is a FAIL against any policy. Extra classes, such as read, do not fail the check (Gate W2B ruling 2), although CIS warns that pgaudit can produce an enormous volume of logging."
+  - "pgaudit.log set per role, per database or per session (a non-server-wide source on the collected row) gives GAPPED, as for setting checks, because the collected value may not be the server-wide one."

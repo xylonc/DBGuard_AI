@@ -4,21 +4,23 @@
 
 The CIS PostgreSQL 17 Benchmark (version 1.1.0) has 72 security rules. This page shows, for each rule, what DBGuard can do with it today.
 
-- **38 of 72** rules are live: DBGuard checks them against evidence from the database (or gives a person a checklist).
-- **26** of those have a fix DBGuard can test on a throwaway copy of the database: 16 straight away and 10 once the company policy is approved. DBGuard never changes the real database; a database administrator applies the tested fix.
+- **46 of 72** rules are live: DBGuard checks them against evidence from the database (or gives a person a checklist).
+- **29** of those have a fix DBGuard can test on a throwaway copy of the database: 18 straight away and 11 once the company policy is approved. DBGuard never changes the real database; a database administrator applies the tested fix.
+- **2** are checked, and the DBA follows guided steps for the fix, because it needs a software install, a certificate or a login-rule edit, which DBGuard never does.
 - **10** are report-only: DBGuard shows the accounts or settings involved and a person decides. For 7 of them the DBA can pick a fix for one account, table or function, which DBGuard tests first.
-- **33** are not started yet and **1** needs a new kind of check; each has a planned week below.
+- **26** are not started yet and **0** needs a new kind of check; each has a planned week below.
 
 ## Summary
 
 ```
-Live: fixable                                  16  ################
-Live: fixable once company policy is approved  10  ##########
-Live: report-only, person decides              10  ##########
-Live: human checklist                           2  ##
-Needs capability (planned)                      1  #
-Not started                                    33  #################################
-Total                                          72
+Live: fixable                                    18  ##################
+Live: fixable once company policy is approved    11  ###########
+Live: checked, the DBA follows guided fix steps   2  ##
+Live: report-only, person decides                10  ##########
+Live: human checklist                             5  #####
+Needs capability (planned)                        0  
+Not started                                      26  ##########################
+Total                                            72
 ```
 
 ## All rules
@@ -61,7 +63,7 @@ Total                                          72
 | 3.1.24 | Ensure 'log_line_prefix' is set correctly | F2 Richer comparison | Live: fixable | Yes | DBGuard checks this setting and can prove the CIS fix on a throwaway test copy. |
 | 3.1.25 | Ensure 'log_statement' is set correctly | F1 Fixed-value settings | Live: fixable | Yes | DBGuard checks this setting and can prove the CIS fix on a throwaway test copy. |
 | 3.1.26 | Ensure 'log_timezone' is set correctly | F3 Organisation policy | Live: fixable once company policy is approved | After policy approval | DBGuard compares this with the company policy and can test the fix once a person approves that policy. |
-| 3.2 | Ensure the PostgreSQL Audit Extension (pgAudit) is enabled | F5 Extensions | Not started | Planned | Not built yet; planned with the database add-ons work (2–8 Nov). |
+| 3.2 | Ensure the PostgreSQL Audit Extension (pgAudit) is enabled | F5 Extensions | Live: fixable once company policy is approved | After policy approval | DBGuard compares this with the company policy and can test the fix once a person approves that policy. |
 | 4.1 | Ensure Interactive Login is Disabled | F8 Host and OS | Not started | — | Concerns the server's operating system, not the database; to be assessed with guided manual steps (9–13 Nov). |
 | 4.2 | Ensure sudo is configured correctly | F8 Host and OS | Not started | — | Concerns the server's operating system, not the database; to be assessed with guided manual steps (9–13 Nov). |
 | 4.3 | Ensure excessive administrative privileges are revoked | F6 Roles and privileges | Live: report-only, person decides; per-object fixes the DBA picks | Person decides | DBGuard lists the accounts or permissions involved; the DBA can pick a fix for one object, which DBGuard tests on a throwaway copy first. |
@@ -69,15 +71,15 @@ Total                                          72
 | 4.5 | Ensure excessive function privileges are revoked | F6 Roles and privileges | Live: report-only, person decides; per-object fixes the DBA picks | Person decides | DBGuard lists the accounts or permissions involved; the DBA can pick a fix for one object, which DBGuard tests on a throwaway copy first. |
 | 4.6 | Ensure excessive DML privileges are revoked | F6 Roles and privileges | Live: report-only, person decides; per-object fixes the DBA picks | Person decides | DBGuard lists the accounts or permissions involved; the DBA can pick a fix for one object, which DBGuard tests on a throwaway copy first. |
 | 4.7 | Ensure Row Level Security (RLS) is configured correctly | F6 Roles and privileges | Live: report-only, person decides | Person decides | DBGuard lists the accounts or permissions involved; a person decides what to change. |
-| 4.8 | Ensure the set_user extension is installed | F5 Extensions | Not started | Planned | Not built yet; planned with the database add-ons work (2–8 Nov). |
+| 4.8 | Ensure the set_user extension is installed | F5 Extensions | Live: checked, the DBA follows guided fix steps | Guided steps | DBGuard checks that the set_user add-on is installed and lists logins with superuser powers; installing it is a guided step for the DBA. |
 | 4.9 | Make use of predefined roles | F6 Roles and privileges | Live: report-only, person decides; per-object fixes the DBA picks | Person decides | DBGuard lists the accounts or permissions involved; the DBA can pick a fix for one object, which DBGuard tests on a throwaway copy first. |
 | 4.10 | Ensure all accounts that can log in have passwords | F6 Roles and privileges | Live: report-only, person decides; per-object fixes the DBA picks | Person decides | DBGuard lists the accounts or permissions involved; the DBA can pick a fix for one object, which DBGuard tests on a throwaway copy first. |
 | 5.1 | Do Not Specify Passwords in the Command Line | F8 Host and OS | Not started | — | Concerns the server's operating system, not the database; to be assessed with guided manual steps (9–13 Nov). |
 | 5.2 | Ensure PostgreSQL is Bound to an IP Address | F4 Restart required | Live: fixable once company policy is approved | After policy approval | DBGuard checks this setting; the fix needs this server's network address, taken from the approved company policy. |
-| 5.3 | Ensure login via "local" UNIX Domain Socket is configured correctly | F7 Authentication and TLS | Not started | Planned | Not built yet; planned with the login and encryption work (2–8 Nov). |
-| 5.4 | Ensure login via "host" TCP/IP Socket is configured correctly | F7 Authentication and TLS | Not started | Planned | Not built yet; planned with the login and encryption work (2–8 Nov). |
+| 5.3 | Ensure login via "local" UNIX Domain Socket is configured correctly | F7 Authentication and TLS | Live: human checklist | — | A person reviews the local (socket) login rules DBGuard lists, with methods other than peer and reject highlighted. |
+| 5.4 | Ensure login via "host" TCP/IP Socket is configured correctly | F7 Authentication and TLS | Live: human checklist | — | A person reviews the network login rules DBGuard lists, with weak methods and rules open to every address highlighted. |
 | 5.5 | Ensure per-account connection limits are used | F6 Roles and privileges | Live: report-only, person decides; per-object fixes the DBA picks | Person decides | DBGuard lists the accounts or permissions involved; the DBA can pick a fix for one object, which DBGuard tests on a throwaway copy first. |
-| 5.6 | Ensure password complexity is configured | F5 Extensions | Not started | Planned | Not built yet; planned with the database add-ons work (2–8 Nov). |
+| 5.6 | Ensure password complexity is configured | F5 Extensions | Live: fixable | Yes | DBGuard checks this setting and can prove the CIS fix on a throwaway test copy. |
 | 6.1 | Understanding attack vectors and runtime parameters | F9 Review and procedure | Not started | — | Needs a person's review and sign-off; to be assessed with guided manual steps (9–13 Nov). |
 | 6.2 | Ensure 'backend' runtime parameters are configured correctly | F9 Review and procedure | Not started | — | Needs a person's review and sign-off; to be assessed with guided manual steps (9–13 Nov). |
 | 6.3 | Ensure 'Postmaster' Runtime Parameters are Configured | F9 Review and procedure | Not started | — | Needs a person's review and sign-off; to be assessed with guided manual steps (9–13 Nov). |
@@ -85,10 +87,10 @@ Total                                          72
 | 6.5 | Ensure 'Superuser' Runtime Parameters are Configured | F9 Review and procedure | Not started | — | Needs a person's review and sign-off; to be assessed with guided manual steps (9–13 Nov). |
 | 6.6 | Ensure 'User' Runtime Parameters are Configured | F9 Review and procedure | Not started | — | Needs a person's review and sign-off; to be assessed with guided manual steps (9–13 Nov). |
 | 6.7 | Ensure FIPS 140-2 OpenSSL Cryptography Is Used | F8 Host and OS | Not started | — | Concerns the server's operating system, not the database; to be assessed with guided manual steps (9–13 Nov). |
-| 6.8 | Ensure TLS is enabled and configured correctly | F7 Authentication and TLS | Not started | Planned | Not built yet; planned with the login and encryption work (2–8 Nov). |
+| 6.8 | Ensure TLS is enabled and configured correctly | F7 Authentication and TLS | Live: checked, the DBA follows guided fix steps | Guided steps | DBGuard checks that encryption is on and required for network logins; the fix needs a certificate and login-rule edits, so the DBA follows guided steps. |
 | 6.9 | Ensure the TLSv1.0 and TLSv1.1 Protocols are Disabled | F1 Fixed-value settings | Live: fixable | Yes | DBGuard checks this setting and can prove the CIS fix on a throwaway test copy. |
-| 6.10 | Ensure Weak SSL/TLS Ciphers Are Disabled | F7 Authentication and TLS | Needs capability (planned) | Planned | Needs a new kind of check, planned with the login and encryption work (2–8 Nov). |
-| 6.11 | Ensure the pgcrypto extension is installed and configured correctly | F5 Extensions | Not started | Planned | Not built yet; planned with the database add-ons work (2–8 Nov). |
+| 6.10 | Ensure Weak SSL/TLS Ciphers Are Disabled | F7 Authentication and TLS | Live: fixable | Yes | DBGuard checks this setting and can prove the CIS fix on a throwaway test copy. |
+| 6.11 | Ensure the pgcrypto extension is installed and configured correctly | F5 Extensions | Live: human checklist | — | A person decides whether data needs encryption; DBGuard shows whether the pgcrypto add-on is available and installed. |
 | 7.1 | Ensure a replication-only user is created and used for streaming replication | F6 Roles and privileges | Live: report-only, person decides | Person decides | DBGuard lists the accounts or permissions involved; a person decides what to change. |
 | 7.2 | Ensure logging of replication commands is configured | F1 Fixed-value settings | Live: human checklist | — | CIS gives no exact value DBGuard can check, so a person confirms it from a checklist. |
 | 7.3 | Ensure base backups are configured and functional1 | F9 Review and procedure | Not started | — | Needs a person's review and sign-off; to be assessed with guided manual steps (9–13 Nov). |
@@ -107,4 +109,4 @@ This page and `docs/coverage.json` are generated by `scripts/coverage_report.py`
 - `services/sandbox_poc/planning.py`: POLICIES (reviewed fixes; fixed value or from the policy profile)
 - `docs/ROADMAP.md`: the Control families table
 
-Planned weeks, plain-language wording, the per-object fix rules and the 6.10 family move are small reviewed mappings in the script. Regenerate with `python scripts/coverage_report.py`; CI-style check: `python scripts/coverage_report.py --check`.
+Planned weeks, plain-language wording, the per-object fix rules and which catalog checks have a setting fix, guided steps or a checklist are small reviewed mappings in the script. Regenerate with `python scripts/coverage_report.py`; CI-style check: `python scripts/coverage_report.py --check`.

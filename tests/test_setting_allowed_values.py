@@ -25,7 +25,7 @@ from app.services.setting_values import (
 from app.services.spec_engine import RecordsIndex, load_spec
 from app.services.spec_engine.policy import parse_profile, profile_value_errors
 from scripts.sandbox_poc import demo_template
-from services.sandbox_poc.planning import FROM_PROFILE, POLICIES, fix_scope
+from services.sandbox_poc.planning import COMPUTED, FROM_PROFILE, POLICIES, fix_scope
 from services.sandbox_poc.shared import ROOT, ContractError
 from services.sandbox_poc.workflow import template_action
 
@@ -82,7 +82,10 @@ def test_table_is_exactly_the_reviewed_sets():
 def test_every_allowlisted_bool_and_enum_setting_has_allowed_values():
     allowlisted = allowlisted_settings()
     assert set(EXPECTED) <= allowlisted
-    assert set(POLICIES) <= allowlisted
+    list_only = {n for n, (v, *_r) in POLICIES.items() if v == COMPUTED}
+    assert list_only == {"shared_preload_libraries"}   # pinned: the exemption cannot grow silently
+    assert set(POLICIES) - list_only <= allowlisted
+    assert not (list_only & allowlisted)               # never reachable via set_config_parameter
     assert not set(SETTING_ALLOWED_VALUES) & set(SETTING_VALUE_RULES)
     # Independent source: the vartype a real PostgreSQL 17 reported in the live fixture.
     rows = {r["name"]: r for r in json.loads(LIVE_SNAPSHOT.read_text())["baseline"]["settings"]}

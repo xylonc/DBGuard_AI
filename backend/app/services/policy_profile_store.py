@@ -167,6 +167,8 @@ class PolicyProfileStore:
             doc["fixes"] = profile.fixes
         if profile.connection_limits is not None:
             doc["connection_limits"] = profile.connection_limits
+        if profile.pgaudit_log_classes is not None:  # CIS 3.2; kept when a draft is approved
+            doc["pgaudit_log_classes"] = list(profile.pgaudit_log_classes)
         return doc
 
     # ---- writing ----------------------------------------------------------------
@@ -193,7 +195,8 @@ class PolicyProfileStore:
             os.fsync(handle.fileno())
 
     def create_draft(self, *, profile_id: str, values: dict, fixes: dict | None = None,
-                     connection_limits: dict | None = None, based_on: str | None = None) -> PolicyProfile:
+                     connection_limits: dict | None = None, based_on: str | None = None,
+                     pgaudit_log_classes: list | None = None) -> PolicyProfile:
         """Validate and store a new draft. There is no way to pass an approver here."""
         doc: dict[str, Any] = {"profile_id": profile_id, "benchmark": self.records.benchmark_id,
                                "approved_by": None, "approved_at": None, "values": values or {}}
@@ -201,6 +204,8 @@ class PolicyProfileStore:
             doc["fixes"] = fixes
         if connection_limits is not None:
             doc["connection_limits"] = connection_limits
+        if pgaudit_log_classes is not None:  # CIS 3.2; parse_profile validates it strictly
+            doc["pgaudit_log_classes"] = pgaudit_log_classes
         if based_on is not None:
             self.get(based_on)  # must exist; the draft records where it came from in the log
         data = _dump(doc)

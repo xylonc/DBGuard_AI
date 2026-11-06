@@ -8,5 +8,17 @@ ref:
   recommendation: "6.10"
   title: "Ensure Weak SSL/TLS Ciphers Are Disabled"
   source_sha256: "9ae40c2a823e243666cf62749fd7a8649bb8b4b8582b51b33ff7e486df62972e"
-tier: needs_capability
-reason: "needs capability: a cipher-subset check of ssl_ciphers plus a read-only check of established TLS connections (pg_stat_ssl); without superuser or pg_read_all_stats the connection query returns no rows, so an empty result must be treated as unknown, never PASS. Planned with F7."
+tier: automated
+reason: null
+check:
+  kind: catalog
+  evaluator: tls_cipher_suites
+  pass_condition_quote: "2. Verify the output does NOT include values other than these; if any other values are present, this is a fail: ``` ECDHE-ECDSA-AES256-GCM-SHA384 ECDHE-RSA-AES256-GCM-SHA384 ECDHE-ECDSA-AES128-GCM-SHA256 ECDHE-RSA-AES128-GCM-SHA256 ``` 3. Ensure there are no established TLS 1.2 connections using unapproved ciphers; if any rows are returned, this is a fail: ``` postgres=# SELECT s.pid, a.usename, a.client_addr, s.version, s.cipher FROM pg_stat_ssl s JOIN pg_stat_activity a ON s.pid = a.pid WHERE s.ssl AND s.version = 'TLSv1.2' AND s.cipher NOT IN ('ECDHE-ECDSA-AES256-GCM-SHA384','ECDHE-RSA-AES256-GCM-SHA384','ECDHE-ECDSA-AES128-GCM-SHA256','ECDHE-RSA-AES128-GCM-SHA256');"
+interpretation:
+  - "ssl_ciphers is split into items at every separator OpenSSL accepts (colon, comma, space and semicolon). Any item that is not one of the four CIS cipher names, compared exactly, is a FAIL. This includes OpenSSL keywords and exclusions such as `HIGH` or `!aNULL`, which is the literal reading of 'values other than these'."
+  - "An empty value gives MANUAL, never PASS. This is stricter than CIS, because an empty value has no values other than the four, so the literal sentence would not fail it."
+  - "The check applies whether or not `ssl` is on. CIS sets no condition, and its additional information says ssl_ciphers should stay configured as a fallback control."
+  - "Every established connection is compared, client and replication (walsender) sessions alike, because the CIS query does not filter by session type. Only connections reported as TLS with version TLSv1.2 are compared with the four ciphers, as in the CIS query. TLS 1.3 connections are excluded, as CIS notes, and TLS 1.0 and 1.1 are left to 6.9."
+  - "A configuration FAIL is reported first. Then a visible TLS 1.2 connection with another cipher is a FAIL."
+  - "Otherwise the result is GAPPED, never PASS, when the connection list was not collected or any session is hidden from the collecting account (it lacks pg_read_all_stats). CIS's additional information says the query then returns no rows whatever the compliance state. This is stricter than the literal query."
+  - "Connections reflect only sessions open at collection time, as in the CIS query."

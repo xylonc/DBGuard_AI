@@ -36,11 +36,16 @@ SPEC_DIR = REPO_ROOT / "catalog" / "specs" / "cis-pg17-v1.1.0"
 RECORDS = RecordsIndex.load(REPO_ROOT / "catalog" / "benchmarks" / "cis-pg17-v1.1.0" / "records.json")
 ALL_SPECS = [load_spec(p) for p in sorted(SPEC_DIR.glob("*.yaml"))]
 SPECS = {s["ref"]["recommendation"]: s for s in ALL_SPECS if s.get("check", {}).get("kind") == "catalog"}
-CATALOG_RECS = ("4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4")
+CATALOG_RECS = ("4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4",
+                # Wave 2b (Gate W2B); evaluator-specific tests: tests/test_catalog_checks_w2b.py
+                "3.2", "4.8", "5.3", "5.4", "5.6", "6.8", "6.10", "6.11")
 EVALUATOR_OF = {"4.3": "roles_with_admin_attributes", "4.4": "login_roles", "4.5": "elevated_functions",
                 "4.6": "table_dml_grants", "4.7": "rls_tables_and_bypass_roles", "4.9": "superuser_roles",
                 "4.10": "login_roles_without_password", "5.5": "role_connection_limits",
-                "7.1": "replication_roles", "7.4": "wal_archiving"}
+                "7.1": "replication_roles", "7.4": "wal_archiving",
+                "3.2": "pgaudit_enabled", "4.8": "set_user_extension", "5.3": "local_hba_rules",
+                "5.4": "host_hba_rules", "5.6": "password_complexity_module",
+                "6.8": "tls_enabled_and_enforced", "6.10": "tls_cipher_suites", "6.11": "pgcrypto_extension"}
 SPEC_SCHEMA = json.loads((REPO_ROOT / "catalog" / "specs" / "schema.json").read_text(encoding="utf-8"))
 REPORT_CONTRACT = json.loads(
     (REPO_ROOT / "catalog" / "specs" / "contracts" / "assessment-report-v1.json").read_text(encoding="utf-8"))
@@ -172,7 +177,9 @@ DATABASES_READERS = ("4.5", "4.6", "4.7")
 # in this list: [] there contradicts the bootstrap superuser / connected database.
 LEGIT_EMPTY = [("4.5", "functions"), ("4.6", "object_acls"), ("4.6", "role_memberships"),
                ("4.7", "object_acls"), ("4.7", "rls_policies"), ("4.10", "hba_rules"),
-               ("7.1", "hba_rules"), ("7.1", "replication.slots")]
+               ("7.1", "hba_rules"), ("7.1", "replication.slots"),
+               ("5.3", "hba_rules"), ("5.4", "hba_rules"), ("6.8", "hba_rules"), ("6.8", "connections"),
+               ("6.10", "connections"), ("4.8", "available_extensions"), ("6.11", "available_extensions")]
 
 
 class TestIncompleteListsNeverPass:
@@ -1191,12 +1198,44 @@ class TestCatalogValidation:
         assert validate_spec(s, RECORDS) == ["check.kind 'catalog' must not have proof present"]
         assert schema_errors(s)
 
-    @pytest.mark.parametrize("tier", ["parameterised", "needs_capability"])
-    def test_check_on_parameterised_or_needs_capability_still_rejected(self, tier):
+    def test_check_on_needs_capability_still_rejected(self):
         s = spec("4.3")
-        s["tier"] = tier
-        assert f"tier {tier!r} must not have check present" in validate_spec(s, RECORDS)
+        s["tier"] = "needs_capability"
+        assert "tier 'needs_capability' must not have check present" in validate_spec(s, RECORDS)
         assert schema_errors(s)
+
+    def test_parameterised_catalog_check_only_for_an_evaluator_that_allows_it(self):
+        """Gate W2B: parameterised is a catalog tier (3.2), but only for an evaluator whose
+        registry entry allows it. The schema cannot see the registry; validate.py can."""
+        s = spec("4.3")
+        s["tier"] = "parameterised"
+        assert validate_spec(s, RECORDS) == [
+            "check.evaluator 'roles_with_admin_attributes' does not support tier 'parameterised' "
+            "(allowed: ('manual_checklist',))"]
+        assert schema_errors(s) == []
+        three_two = spec("3.2")
+        assert three_two["tier"] == "parameterised" and validate_spec(three_two, RECORDS) == []
+        three_two["tier"], three_two["reason"] = "automated", None
+        assert validate_spec(three_two, RECORDS) == [
+            "check.evaluator 'pgaudit_enabled' does not support tier 'automated' (allowed: ('parameterised',))"]
+
+    def test_parameterised_catalog_check_needs_a_reason_and_no_expected_from(self):
+        s = spec("3.2")
+        s["reason"] = None
+        assert "tier 'parameterised' requires reason to be a non-empty string" in validate_spec(s, RECORDS)
+        assert schema_errors(s)
+        s = spec("3.2")
+        s["check"]["expected_from"] = "policy"
+        assert "Unknown check key: expected_from" in validate_spec(s, RECORDS)
+        assert schema_errors(s)
+
+    def test_parameterised_setting_check_still_needs_expected_from(self):
+        """allOf[3] keeps requiring expected_from for a parameterised SETTING check."""
+        s = next(copy.deepcopy(x) for x in ALL_SPECS if x["spec_id"].endswith(":3.1.2"))
+        assert s["check"]["expected_from"] == "policy"
+        del s["check"]["expected_from"]
+        assert schema_errors(s)
+        assert validate_spec(s, RECORDS)
 
     def test_setting_check_on_manual_checklist_still_rejected(self):
         s = next(copy.deepcopy(x) for x in ALL_SPECS if x["spec_id"].endswith(":3.1.12"))
@@ -1317,7 +1356,7 @@ class TestAssessRows:
     def test_catalog_rows_carry_evidence_explanation_and_cis_but_no_setting_keys(self):
         s = snap()
         report = assess(CATALOG_SPEC_LIST, s, RECORDS)
-        assert len(report["results"]) == 10
+        assert len(report["results"]) == len(CATALOG_RECS) == 18
         for row in report["results"]:
             rec = row["spec_id"].split(":")[1]
             out = run(rec, s)
@@ -1617,7 +1656,34 @@ class TestRestoreTestReminder:
 # ---------------------------------------------------------------------------
 # Safeguard: the sandbox only changes settings, so no fixable setting may feed
 # a catalog evaluator (Melvin's request).
+#
+# Redesigned deliberately for W2B gate 1 (rulings 3, 4, 9): a fixable setting may be a
+# catalog input ONLY through an explicit, reviewed declaration, and every such
+# declaration has a consequence enforced in code:
+#  - its own catalog link (services/sandbox_poc/planning.CATALOG_FIX_LINKS: 3.2, 5.6,
+#    6.10): the fix's proof IS that catalog check (FAIL -> PASS -> FAIL);
+#  - a declared "affects" pair (planning.CATALOG_INPUT_AFFECTS), e.g. the existing 6.9
+#    fix (ssl_min_protocol_version) and the TLS checks 6.8 and 6.10: every fix of the
+#    setting re-checks those catalog controls in the sandbox and fails on a regression
+#    (catalog_fixes.catalog_regressions, called by the setting loop, catalog loop,
+#    batch steps and bundle checks).
+# The fixable catalog inputs must equal exactly those pairs (no undeclared input, no
+# stale declaration), and the source may name no other fixable setting. Everything
+# else keeps the original strict rule.
 # ---------------------------------------------------------------------------
+
+REVIEWED_CATALOG_FIX_LINKS = {
+    "pgaudit_enabled": ("shared_preload_libraries", "pgaudit.log"),
+    "password_complexity_module": ("shared_preload_libraries",),
+    "tls_cipher_suites": ("ssl_ciphers",),
+}
+REVIEWED_AFFECTS = {
+    "ssl_min_protocol_version": ("tls_cipher_suites", "tls_enabled_and_enforced"),
+    "ssl_ciphers": ("tls_enabled_and_enforced",),
+}
+LINKED_SETTINGS = {s for settings in REVIEWED_CATALOG_FIX_LINKS.values() for s in settings}
+DECLARED_PAIRS = ({(name, s) for name, settings in REVIEWED_CATALOG_FIX_LINKS.items() for s in settings}
+                  | {(name, s) for s, names in REVIEWED_AFFECTS.items() for name in names})
 
 def _sql_function_body(name: str) -> str:
     sql = (REPO_ROOT / "collector" / "collect.sql").read_text(encoding="utf-8")
@@ -1634,20 +1700,96 @@ class TestSettingInputsSafeguard:
             "role_connection_limits": (),
             "replication_roles": ("hba_file", "primary_conninfo"),
             "wal_archiving": ("archive_mode", "archive_library", "archive_command", "wal_level"),
+            # Wave 2b. Declared in full, including settings that change the established
+            # connections 6.8 and 6.10 read (ssl_min_protocol_version is 6.9's fix).
+            "pgaudit_enabled": ("shared_preload_libraries", "pgaudit.log"),
+            "password_complexity_module": ("shared_preload_libraries", "dynamic_library_path"),
+            "tls_cipher_suites": ("ssl_ciphers", "ssl", "ssl_min_protocol_version"),
+            "tls_enabled_and_enforced": ("ssl", "hba_file", "ssl_ciphers", "ssl_min_protocol_version"),
+            "set_user_extension": (), "pgcrypto_extension": (),
+            "local_hba_rules": ("hba_file", "ident_file"), "host_hba_rules": ("hba_file",),
         }
 
     def test_no_fixable_setting_is_a_catalog_input(self):
+        """A fixable setting is a catalog input only through a reviewed declaration: the
+        (evaluator, setting) pairs are exactly the own-link and declared affects pairs."""
         from services.sandbox_poc.planning import POLICIES
         assert POLICIES  # the allowlist is non-empty, so the check is not vacuous
-        inputs = {s for e in REGISTRY.values() for s in e.setting_inputs}
-        assert sorted(set(POLICIES) & inputs) == []
+        actual = {(name, setting) for name, e in REGISTRY.items() for setting in e.setting_inputs
+                  if setting in POLICIES}
+        assert sorted(actual - DECLARED_PAIRS) == []   # nothing undeclared
+        assert sorted(DECLARED_PAIRS - actual) == []   # no stale declaration
+
+    def test_affects_declarations_are_exactly_the_reviewed_ones(self):
+        from services.sandbox_poc.planning import CATALOG_INPUT_AFFECTS, POLICIES
+        assert CATALOG_INPUT_AFFECTS == REVIEWED_AFFECTS
+        for setting, names in CATALOG_INPUT_AFFECTS.items():
+            assert setting in POLICIES
+            for name in names:
+                assert setting in REGISTRY[name].setting_inputs
+                assert setting not in REVIEWED_CATALOG_FIX_LINKS.get(name, ())  # not its own link
+
+    def test_a_setting_fix_fails_when_a_declared_dependent_catalog_check_regresses(self):
+        """The consequence of an affects pair: the plain setting loop compares the catalog checks."""
+        from services.sandbox_poc.workflow import setting_catalog_regressions
+        specs = list(SPECS.values())
+        engine = SimpleNamespace(specs=specs)
+        before = {"upstream_report": {"results": [{"spec_id": s["spec_id"], "result": "PASS"} for s in specs]}}
+        after = {"upstream_report": {"results": [{"spec_id": s["spec_id"], "result": "GAPPED"} for s in specs]}}
+        for setting, names in REVIEWED_AFFECTS.items():
+            expected = sorted(SPECS[REGISTRY[n].recommendation]["spec_id"] for n in names)
+            got = setting_catalog_regressions(engine, before, after, setting, "cis-pg17-v1.1.0:6.9")
+            assert set(expected) <= set(got)
+        assert setting_catalog_regressions(engine, before, before, "ssl_min_protocol_version", "x") == []
+
+    def test_catalog_fix_links_are_exactly_the_reviewed_ones(self):
+        from services.sandbox_poc.planning import CATALOG_FIX_LINKS, POLICIES
+        assert {name: link["settings"] for name, link in CATALOG_FIX_LINKS.items()} == REVIEWED_CATALOG_FIX_LINKS
+        for name, link in CATALOG_FIX_LINKS.items():
+            entry = REGISTRY[name]
+            assert entry.recommendation == link["recommendation"]
+            # Declared on both sides: the evaluator reads every setting its fix changes.
+            assert set(link["settings"]) <= set(entry.setting_inputs)
+            assert set(link["settings"]) <= set(POLICIES)
+
+    def test_linked_settings_are_reachable_only_through_their_link(self):
+        """No setting spec reads a linked setting, so only the catalog-fix loop (which
+        compares the catalog checks) can change one; fix_scope refuses the COMPUTED marker."""
+        from services.sandbox_poc.planning import COMPUTED, POLICIES
+        setting_specs = [s for s in ALL_SPECS if (s.get("check") or {}).get("kind") == "setting"]
+        assert setting_specs  # not vacuous
+        assert sorted(s["spec_id"] for s in setting_specs if s["check"]["setting_name"] in LINKED_SETTINGS) == []
+        assert POLICIES["shared_preload_libraries"][0] == COMPUTED
+
+    def test_every_catalog_reader_of_a_changed_setting_is_regression_checked(self):
+        """catalog_regressions compares every OTHER catalog check whose evaluator reads a
+        changed setting, e.g. 6.8 for a 6.10 ssl_ciphers fix and 5.6 for a 3.2 preload fix."""
+        from services.sandbox_poc.catalog_fixes import catalog_regressions
+        specs = list(SPECS.values())
+        engine = SimpleNamespace(specs=specs)
+        for name, settings in REVIEWED_CATALOG_FIX_LINKS.items():
+            control = next(s["spec_id"] for s in specs if s["check"]["evaluator"] == name)
+            readers = sorted(s["spec_id"] for s in specs if s["spec_id"] != control
+                             and set(settings) & set(REGISTRY[s["check"]["evaluator"]].setting_inputs))
+            before = {"upstream_report": {"results": [{"spec_id": s["spec_id"], "result": "PASS"} for s in specs]}}
+            after = {"upstream_report": {"results": [{"spec_id": s["spec_id"], "result": "FAIL"} for s in specs]}}
+            assert catalog_regressions(engine, before, after, list(settings), control) == readers
+            assert catalog_regressions(engine, before, before, list(settings), control) == []
 
     def test_setting_inputs_are_settings_the_collector_reads(self):
         """Each input is a setting the collector reads: a pg_settings row in the recorded
-        fixture (hba_file, primary_conninfo, archive_*) or a current_setting() call in
-        sql_archiving (archive_library is not in the settings section)."""
+        fixture (hba_file, primary_conninfo, archive_*), a current_setting() call in
+        sql_archiving (archive_library is not in the settings section), or a name in the
+        settings section's explicit list (pgaudit.log exists only once pgaudit is loaded,
+        so the stock-image fixture has no row for it)."""
         collected = {r["name"] for r in live_snapshot()["baseline"]["settings"]}
         collected |= set(re.findall(r"current_setting\('([a-z_]+)'", _sql_function_body("sql_archiving")))
+        sql = (REPO_ROOT / "collector" / "collect.sql").read_text(encoding="utf-8")
+        listed = sql[sql.index("'settings', ("):]
+        listed = listed[listed.index("OR s.name IN ("):listed.index(")", listed.index("OR s.name IN ("))]
+        explicit = set(re.findall(r"'([a-z_.]+)'", listed))
+        assert {"pgaudit.log", "shared_preload_libraries", "ssl_ciphers"} <= explicit  # parser sanity
+        collected |= explicit
         inputs = {s for e in REGISTRY.values() for s in e.setting_inputs}
         assert sorted(inputs - collected) == []
 
@@ -1675,6 +1817,9 @@ class TestSettingInputsSafeguard:
         assert sorted(set(POLICIES) & (sql_keys | fixture_keys)) == []
 
     def test_no_fixable_setting_is_named_in_the_evaluators(self):
+        """Only a reviewed linked or declared-affects setting may be named in the evaluators."""
         from services.sandbox_poc.planning import POLICIES
         source = (REPO_ROOT / "backend/app/services/spec_engine/catalog_checks.py").read_text(encoding="utf-8")
-        assert [name for name in POLICIES if re.search(rf"\b{re.escape(name)}\b", source)] == []
+        declared = LINKED_SETTINGS | set(REVIEWED_AFFECTS)
+        assert [name for name in POLICIES if name not in declared
+                and re.search(rf"\b{re.escape(name)}\b", source)] == []

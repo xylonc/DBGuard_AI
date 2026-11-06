@@ -15,6 +15,7 @@ expected value, sandbox fix value and break value from an approved profile:
     connection_limits:                     # optional: CIS 5.5 fix proposals
       default_login_limit: null | <int >= 0>
       roles: {<rolename>: <int >= 0>}
+    pgaudit_log_classes: [<class>, ...]    # optional: CIS 3.2 required pgaudit.log classes
 
 The profile is pinned by the SHA-256 of the file bytes. The engine never
 treats a value as authoritative unless ``approved_by`` is a non-empty string;
@@ -38,6 +39,12 @@ services/sandbox_poc/object_fixes.py, for non-superuser login roles with no limi
 without a value there is no proposal (policy_missing). The limit is never applied
 by DBGuard: it is rehearsed in the sandbox and exported for the DBA.
 
+``pgaudit_log_classes`` (Gate W2B ruling 2) is the set of pgaudit.log classes CIS 3.2
+requires ("desired auditing components"): a non-empty list of unique items from
+catalog_checks.PGAUDIT_LOG_CLASSES (read, write, function, role, ddl, misc, misc_set;
+never the keywords all or none). The 3.2 catalog evaluator reads it only from an
+APPROVED profile; without one 3.2 is MANUAL policy_missing.
+
 Every fix/break value must also pass the reviewed per-setting value rule
 (app.services.setting_values) because it may be rendered into SQL.
 """
@@ -54,6 +61,7 @@ from typing import Any
 
 import yaml
 
+from .catalog_checks import PGAUDIT_POLICY_KEY, pgaudit_policy_classes_error
 from .records import RecordsIndex
 from .specs import DuplicateKeyLoader
 from .validate import OPERATORS, expected_errors, proof_value_errors, uses_policy
@@ -61,7 +69,7 @@ from ..setting_values import SettingValueError, check_setting_value
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROFILE_KEYS = ("profile_id", "benchmark", "approved_by", "approved_at", "values")
-OPTIONAL_PROFILE_KEYS = ("fixes", "connection_limits")
+OPTIONAL_PROFILE_KEYS = ("fixes", "connection_limits", PGAUDIT_POLICY_KEY)
 CONNECTION_LIMIT_KEYS = ("default_login_limit", "roles")
 # Role names accepted in connection_limits: a plain lower/upper-case identifier of at
 # most 63 bytes (PostgreSQL NAMEDATALEN - 1), not a reserved pg_ role.
@@ -133,6 +141,7 @@ class PolicyProfile:
     fixes: dict[str, str] = field(default_factory=dict, compare=False)
     connection_limits: dict[str, Any] | None = field(default=None, compare=False)
     source: str = field(default="", compare=False)
+    pgaudit_log_classes: list[str] | None = field(default=None, compare=False)
 
     @property
     def approved(self) -> bool:
@@ -234,12 +243,19 @@ def parse_profile(data: bytes, records: RecordsIndex, source: str = "<bytes>") -
     connection_limits = doc.get("connection_limits")
     errors.extend(connection_limit_errors(connection_limits))
 
+    pgaudit_classes = doc.get(PGAUDIT_POLICY_KEY)
+    if pgaudit_classes is not None:
+        problem = pgaudit_policy_classes_error(pgaudit_classes)
+        if problem is not None:
+            errors.append(f"{PGAUDIT_POLICY_KEY} {problem}")
+
     if errors:
         raise PolicyProfileError(f"{source}: invalid policy profile: " + "; ".join(errors))
     return PolicyProfile(profile_id=profile_id, benchmark=doc["benchmark"], approved_by=approved_by,
                          approved_at=approved_at, values=values,
                          sha256=hashlib.sha256(data).hexdigest(), source=source,
-                         fixes=dict(fixes), connection_limits=connection_limits)
+                         fixes=dict(fixes), connection_limits=connection_limits,
+                         pgaudit_log_classes=list(pgaudit_classes) if pgaudit_classes is not None else None)
 
 
 def _is_limit(value: Any) -> bool:

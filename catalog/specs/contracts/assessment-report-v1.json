@@ -87,7 +87,7 @@
           }
         },
         "policy_profile": {
-          "description": "Present when a spec takes its expected value from a policy profile (check.expected_from: policy), or when an approved profile supplies a site-specific fix value (fixes) for a spec in the set. null means no profile was supplied; policy specs are then MANUAL with reason_code policy_missing.",
+          "description": "Present when a spec takes its expected value from a policy profile (check.expected_from: policy) or its catalog evaluator reads a profile key (3.2 pgaudit_log_classes), or when an approved profile supplies a site-specific fix value (fixes) for a spec in the set. null means no profile was supplied; policy specs are then MANUAL with reason_code policy_missing.",
           "oneOf": [
             { "type": "null" },
             {
@@ -231,7 +231,7 @@
           "reason_code": {
             "description": "Short code explaining the result.",
             "type": "string",
-            "enum": ["hash_mismatch", "no_entry", "status_not_collected", "status_error", "non_string_result", "operator_true", "operator_false", "operator_error", "tier_manual", "tier_needs_capability", "policy_missing", "condition_no_entry", "condition_hash_mismatch", "condition_status_not_collected", "condition_status_error", "condition_non_string_result", "condition_operator_error", "condition_false", "session_override", "condition_session_override", "redacted_secret_setting", "condition_redacted_secret_setting", "wrong_pg_major", "section_not_collected", "field_missing", "manual_review", "databases_not_covered", "empty_review_set", "unlimited_connections", "connection_limits_set", "archive_mode_off", "archive_destination_missing", "archive_destination_conflict", "archive_standby", "archive_latest_failed", "archive_stats_reset_recent", "archive_never_run", "archive_timestamp_missing", "archive_timestamp_after_collection", "archive_older_than_max_age", "archive_recent"]
+            "enum": ["hash_mismatch", "no_entry", "status_not_collected", "status_error", "non_string_result", "operator_true", "operator_false", "operator_error", "tier_manual", "tier_needs_capability", "policy_missing", "condition_no_entry", "condition_hash_mismatch", "condition_status_not_collected", "condition_status_error", "condition_non_string_result", "condition_operator_error", "condition_false", "session_override", "condition_session_override", "redacted_secret_setting", "condition_redacted_secret_setting", "wrong_pg_major", "section_not_collected", "field_missing", "manual_review", "databases_not_covered", "empty_review_set", "unlimited_connections", "connection_limits_set", "archive_mode_off", "archive_destination_missing", "archive_destination_conflict", "archive_standby", "archive_latest_failed", "archive_stats_reset_recent", "archive_never_run", "archive_timestamp_missing", "archive_timestamp_after_collection", "archive_older_than_max_age", "archive_recent", "preload_list_unparseable", "pgaudit_not_preloaded", "pgaudit_log_missing", "pgaudit_log_unparseable", "pgaudit_log_classes_missing", "pgaudit_log_classes_present", "passwordcheck_not_preloaded", "dynamic_library_path_not_libdir", "libdir_form_with_custom_library_path", "passwordcheck_preloaded", "unapproved_ciphers_configured", "unapproved_cipher_in_use", "connections_not_visible", "ssl_ciphers_empty", "approved_ciphers_only", "tls_not_enabled_or_enforced", "gss_hba_rules", "hba_rule_error", "tls_enabled_and_enforced", "set_user_not_available", "superuser_login_review"]
           },
           "setting_name": {
             "description": "PostgreSQL setting name (specs with a check, when an entry was collected).",
@@ -323,7 +323,7 @@
             "additionalProperties": false,
             "required": ["code"],
             "properties": {
-              "code": { "enum": ["condition_false", "condition_unknown", "policy_missing", "not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting", "wrong_pg_major", "section_not_collected", "field_missing", "manual_review", "databases_not_covered", "empty_review_set", "unlimited_connections", "connection_limits_set", "archive_mode_off", "archive_destination_missing", "archive_destination_conflict", "archive_standby", "archive_latest_failed", "archive_stats_reset_recent", "archive_never_run", "archive_timestamp_missing", "archive_timestamp_after_collection", "archive_older_than_max_age", "archive_recent"] },
+              "code": { "enum": ["condition_false", "condition_unknown", "policy_missing", "not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting", "wrong_pg_major", "section_not_collected", "field_missing", "manual_review", "databases_not_covered", "empty_review_set", "unlimited_connections", "connection_limits_set", "archive_mode_off", "archive_destination_missing", "archive_destination_conflict", "archive_standby", "archive_latest_failed", "archive_stats_reset_recent", "archive_never_run", "archive_timestamp_missing", "archive_timestamp_after_collection", "archive_older_than_max_age", "archive_recent", "preload_list_unparseable", "pgaudit_not_preloaded", "pgaudit_log_missing", "pgaudit_log_unparseable", "pgaudit_log_classes_missing", "pgaudit_log_classes_present", "passwordcheck_not_preloaded", "dynamic_library_path_not_libdir", "libdir_form_with_custom_library_path", "passwordcheck_preloaded", "unapproved_ciphers_configured", "unapproved_cipher_in_use", "connections_not_visible", "ssl_ciphers_empty", "approved_ciphers_only", "tls_not_enabled_or_enforced", "gss_hba_rules", "hba_rule_error", "tls_enabled_and_enforced", "set_user_not_available", "superuser_login_review"] },
               "cause": { "description": "condition_unknown only: the evidence problem with the condition setting.", "enum": ["not_collected", "stale_spec_hash", "collector_error", "unit_or_non_text_value", "uninterpretable_value", "session_override", "redacted_secret_setting"] },
               "case": { "description": "policy_missing only.", "enum": ["no_profile", "profile_unapproved", "no_value_for_spec"] },
               "profile_id": { "type": "string", "minLength": 1 },
@@ -355,7 +355,26 @@
               "last_failed_time": { "type": ["string", "null"] },
               "stats_reset": { "type": ["string", "null"] },
               "collected_at": { "type": "string" },
-              "max_age_hours": { "type": "integer", "minimum": 1 }
+              "max_age_hours": { "type": "integer", "minimum": 1 },
+              "policy_classes": { "description": "3.2: pgaudit.log classes the approved policy requires (pgaudit_log_classes).", "type": "array", "items": { "enum": ["read", "write", "function", "role", "ddl", "misc", "misc_set"] } },
+              "effective_classes": { "description": "3.2: classes the collected pgaudit.log value logs, read as pgaudit does.", "type": "array", "items": { "enum": ["read", "write", "function", "role", "ddl", "misc", "misc_set"] } },
+              "missing_classes": { "description": "3.2: policy classes pgaudit.log does not log.", "type": "array", "items": { "enum": ["read", "write", "function", "role", "ddl", "misc", "misc_set"] } },
+              "dynamic_library_path": { "description": "5.6: collected dynamic_library_path.", "type": "string" },
+              "other_items": { "description": "6.10: ssl_ciphers items that are not one of the four CIS ciphers.", "type": "array", "items": { "type": "string" } },
+              "connection_count": { "description": "6.10: established TLS 1.2 sessions using another cipher.", "type": "integer", "minimum": 1 },
+              "ciphers": { "description": "6.10: the unapproved ciphers those sessions use.", "type": "array", "items": { "type": "string" } },
+              "hidden_connection_count": { "description": "connections_not_visible: sessions the collecting role could not see.", "type": "integer", "minimum": 0 },
+              "tls_details_gap": { "description": "connections_not_visible: the collector recorded a connections.tls gap (no pg_read_all_stats).", "type": "boolean" },
+              "failing_parts": { "description": "6.8: every failing CIS step.", "type": "array", "minItems": 1, "items": { "enum": ["ssl_off", "non_tls_hba_rules", "unencrypted_tcp_connections"] } },
+              "unknown_parts": { "description": "6.8 FAIL: steps that could not be read.", "type": "array", "items": { "enum": ["ssl", "hba_rules", "connections"] } },
+              "rule_count": { "description": "6.8: login rules behind gss_hba_rules or hba_rule_error.", "type": "integer", "minimum": 1 },
+              "extension_name": { "type": "string", "minLength": 1 },
+              "available": { "description": "4.8, 6.11: listed in pg_available_extensions.", "type": "boolean" },
+              "default_version": { "type": ["string", "null"] },
+              "installed_version": { "description": "Installed version in the connected database only.", "type": ["string", "null"] },
+              "database": { "description": "The connected database (envelope.database).", "type": ["string", "null"] },
+              "installed_version_scope": { "enum": ["connected_database"] },
+              "highlight_count": { "description": "5.3, 5.4: listed rules with at least one highlight.", "type": "integer", "minimum": 0 }
             }
           }
         }

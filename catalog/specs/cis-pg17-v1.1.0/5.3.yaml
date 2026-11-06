@@ -1,0 +1,21 @@
+spec_id: "cis-pg17-v1.1.0:5.3"
+schema_version: 1
+authored_by: agent
+ref:
+  benchmark: "CIS PostgreSQL 17 Benchmark"
+  benchmark_version: "1.1.0"
+  pg_major: 17
+  recommendation: "5.3"
+  title: "Ensure login via \"local\" UNIX Domain Socket is configured correctly"
+  source_sha256: "92e06519065aa490c3e42b9f8bd6f74e17ca5e3f1d711dcb64ff69f838e33392"
+tier: manual_checklist
+reason: "CIS assessment status is Manual and the audit is a set of interactive login tests as different operating-system users with no fail sentence; a person reviews the local login rules"
+check:
+  kind: catalog
+  evaluator: local_hba_rules
+  pass_condition_quote: "Login attempts by another UNIX user account as the superuser should be denied:"
+interpretation:
+  - "DBGuard cannot run CIS's login tests as other operating-system users. It lists the `local` login rules from the rules file view, in file order, with their databases, users, methods and options. A person decides."
+  - "Methods other than `peer` and `reject` are highlighted (Gate W2B round 2 ruling 4), because the CIS description calls `peer` the most secure method for local connections. Highlighting is evidence emphasis, not a fail rule, and the result stays MANUAL."
+  - "For a rule with a user-name map option, the matching user-name mappings are shown with it. Secret-bearing option values stay masked as the collector ships them. If the mappings were not collected, the evidence says so."
+  - "Lines with an error are listed too, because their type cannot be trusted. The file view may differ from the loaded rules until a reload."

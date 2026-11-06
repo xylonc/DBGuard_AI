@@ -293,7 +293,7 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
         # Determine result using _decide
         entry = snapshot_checks.get(spec_id)
         condition = snapshot_checks.get(condition_check_id(spec_id))
-        catalog = _catalog_outcome(spec, snapshot)  # F6 block below; None for setting checks
+        catalog = _catalog_outcome(spec, snapshot, policy)  # F6 block below; None for setting checks
         if catalog is None:
             result, reason_code = _decide(spec, entry, spec_hash, condition, policy, settings)
         else:
@@ -393,13 +393,15 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
             except (ValueError, IndexError):
                 pass
 
-    # Pin the policy profile when a spec depends on it (null = none supplied), and
-    # whenever an approved profile is used for anything else, such as a site-specific
-    # fix value for a spec in this set (fixes[spec], e.g. 5.2 listen_addresses).
+    # Pin the policy profile when a spec depends on it (null = none supplied): a
+    # setting check with expected_from: policy, or a catalog evaluator that reads a
+    # profile key (3.2 pgaudit_log_classes). Also whenever an approved profile is used
+    # for anything else, such as a site-specific fix value for a spec in this set
+    # (fixes[spec], e.g. 5.2 listen_addresses).
     inputs_extra: dict[str, Any] = {}
     uses_site_fix = (policy is not None and policy.approved
                      and any(site_fix(s, policy) is not None for s in specs))
-    if any(uses_policy(s) for s in specs) or uses_site_fix:
+    if any(uses_policy(s) or catalog_checks.uses_policy_profile(s) for s in specs) or uses_site_fix:
         inputs_extra["policy_profile"] = policy.pin() if policy is not None else None
 
     # Build report
@@ -441,16 +443,19 @@ def assess(specs: list[dict[str, Any]], snapshot: dict[str, Any], records: Recor
 _CATALOG_RESULTS = {"PASS": "PASS", "FAIL": "FAIL", "MANUAL": "MANUAL", "GAPPED": "NOT_COLLECTED"}
 
 
-def _catalog_outcome(spec: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any] | None:
+def _catalog_outcome(spec: dict[str, Any], snapshot: dict[str, Any],
+                     policy: PolicyProfile | None = None) -> dict[str, Any] | None:
     """Result for a catalog check, or None when the spec is not one.
 
     GAPPED maps to NOT_COLLECTED; reason_code is the explanation code. The row
     gains evidence, evidence_paths, explanation, cis and notices, never setting keys.
+    ``policy`` reaches only evaluators that read a profile key (3.2), and only an
+    approved profile's value is ever used.
     """
     check = spec.get("check")
     if not (isinstance(check, dict) and check.get("kind") == "catalog"):
         return None
-    outcome = catalog_checks.evaluate(spec, snapshot)
+    outcome = catalog_checks.evaluate(spec, snapshot, policy)
     ref = spec.get("ref", {})
     return {
         "result": _CATALOG_RESULTS[outcome["result"]],

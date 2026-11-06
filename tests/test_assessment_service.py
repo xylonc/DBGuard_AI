@@ -29,17 +29,17 @@ from catalog.controls.assess.registry import CONTROL_REGISTRY, LEGACY_CONTROL_ID
 LOG_CONNECTIONS = "cis-pg17-v1.1.0:3.1.20"
 PUBLIC_SCHEMA = "DBGUARD-PUBLIC-SCHEMA-CREATE"
 MD5 = "DBGUARD-MD5-PASSWORDS"
-# 39 installed CIS PG17 specs (17 automated setting checks, 9 parameterised policy
-# specs, 1 needs_capability, 2 manual_checklist, 10 F6 catalog checks) + 2
-# supplementary checks.
-TOTAL_CONTROLS = 41
+# 46 installed CIS PG17 specs (17 automated setting checks, 9 parameterised policy
+# specs, 2 manual_checklist, 18 catalog checks) + 2 supplementary checks.
+TOTAL_CONTROLS = 48
 AUTOMATED_SPECS = 17
-# F6 catalog checks (4.3-4.10, 5.5, 7.1, 7.4). base_snapshot has no identity or
-# catalog sections, so each of them is GAPPED (never PASS) in these tests.
-CATALOG_SPECS = 10
+# Catalog checks: F6 (4.3-4.10, 5.5, 7.1, 7.4) and Wave 2b (3.2, 4.8, 5.3, 5.4, 5.6,
+# 6.8, 6.10, 6.11). base_snapshot has no identity or catalog sections, so each of
+# them is GAPPED (never PASS) in these tests.
+CATALOG_SPECS = 18
 # MANUAL_REVIEW without an approved policy profile: 9 policy specs (policy_missing),
-# 6.10 (needs_capability), 3.1.12 and 7.2 (manual_checklist).
-NON_AUTOMATED_SPECS = 12
+# 3.1.12 and 7.2 (manual_checklist).
+NON_AUTOMATED_SPECS = 11
 # Passing values for every automated spec setting. log_destination includes syslog so
 # 3.1.11 (applies only when logging to syslog) is evaluated, not NOT_APPLICABLE.
 PASSING_SETTINGS = [
@@ -406,7 +406,7 @@ class TestAssessmentSummary:
         assert report.summary.fail_count == 0
         assert report.summary.gapped_count == CATALOG_SPECS  # no catalog sections collected
         assert report.summary.not_applicable_count == 0
-        # 9 policy specs without an approved profile, 6.10, 3.1.12 and 7.2.
+        # 9 policy specs without an approved profile, 3.1.12 and 7.2.
         assert report.summary.manual_review_count == NON_AUTOMATED_SPECS
 
     def test_summary_counts_not_applicable_when_not_logging_to_syslog(self, assessment_service,
@@ -444,7 +444,7 @@ class TestAssessmentSummary:
         assert report.summary.pass_count == 17  # 16 automated specs + public schema
         assert report.summary.fail_count == 1
         assert report.summary.gapped_count == CATALOG_SPECS  # no catalog sections collected
-        assert report.summary.manual_review_count == 13  # md5 passwords + NON_AUTOMATED_SPECS
+        assert report.summary.manual_review_count == 12  # md5 passwords + NON_AUTOMATED_SPECS
 
     def test_summary_counts_gapped_results(self, assessment_service, base_snapshot):
         """Test summary counts with GAPPED findings."""
@@ -461,7 +461,7 @@ class TestAssessmentSummary:
 
         # Note: DBGUARD-MD5-PASSWORDS is always MANUAL_REVIEW (non-SQL manual procedure)
         # even when data cannot be collected; so are the NON_AUTOMATED_SPECS (policy
-        # specs without an approved profile, 6.10, 3.1.12, 7.2). Never PASS.
+        # specs without an approved profile, 3.1.12, 7.2). Never PASS.
         assert report.summary.total == TOTAL_CONTROLS
         assert report.summary.pass_count == 0
         assert report.summary.fail_count == 0
@@ -578,10 +578,13 @@ class TestSingleRulebook:
         assert findings[LOG_CONNECTIONS].status == FindingStatus.GAPPED
         assert "PostgreSQL 17" in findings[LOG_CONNECTIONS].rationale
 
-    def test_needs_capability_spec_is_manual_review(self, assessment_service, base_snapshot):
-        # 6.10 is the needs_capability spec now; 3.1.14 became automated (severity operator),
-        # so with no settings row it is GAPPED, never MANUAL_REVIEW or PASS.
+    def test_former_needs_capability_specs_are_never_pass_without_evidence(self, assessment_service,
+                                                                          base_snapshot):
+        # 6.10 was the last needs_capability spec; Wave 2b made it a catalog check, which
+        # without identity or settings is GAPPED (never PASS) and never maps to a fix
+        # template. 3.1.14 became automated (severity operator), so with no settings row
+        # it is GAPPED, never MANUAL_REVIEW or PASS.
         findings = {f.control_id: f for f in assessment_service.evaluate(base_snapshot).findings}
-        assert findings["cis-pg17-v1.1.0:6.10"].status == FindingStatus.MANUAL_REVIEW
+        assert findings["cis-pg17-v1.1.0:6.10"].status == FindingStatus.GAPPED
         assert findings["cis-pg17-v1.1.0:6.10"].control_metadata.is_automatable is False
         assert findings["cis-pg17-v1.1.0:3.1.14"].status == FindingStatus.GAPPED

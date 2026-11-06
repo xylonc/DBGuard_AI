@@ -265,7 +265,9 @@ class TestAssessRealSpecs:
         """The break/fix parametrisation only drops catalog specs, never a setting spec."""
         assert len(setting_specs) == 17
         assert {s["spec_id"] for s in automated_specs} - {s["spec_id"] for s in setting_specs} == {
-            "cis-pg17-v1.1.0:5.5", "cis-pg17-v1.1.0:7.4"}
+            "cis-pg17-v1.1.0:5.5", "cis-pg17-v1.1.0:7.4",
+            # Wave 2b automated catalog checks (Gate W2B)
+            "cis-pg17-v1.1.0:4.8", "cis-pg17-v1.1.0:5.6", "cis-pg17-v1.1.0:6.8", "cis-pg17-v1.1.0:6.10"}
         assert all("proof" in s for s in setting_specs)
 
     @pytest.mark.parametrize("spec", catalog_specs, ids=lambda s: s["spec_id"])
@@ -296,7 +298,7 @@ class TestAssessRealSpecs:
         # as a plain MANUAL on a snapshot without their catalog sections.
         catalog_manual = [s for s in non_automated_specs if s["spec_id"] in {c["spec_id"] for c in catalog_specs}]
         assert sorted(s["ref"]["recommendation"] for s in catalog_manual) == [
-            "4.10", "4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "7.1"]
+            "3.2", "4.10", "4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "5.3", "5.4", "6.11", "7.1"]
         for spec in catalog_manual:
             row = assess([copy.deepcopy(spec)], make_snapshot_with_checks({}), records)["results"][0]
             assert (row["result"], row["reason_code"]) == ("NOT_COLLECTED", "section_not_collected"), spec["spec_id"]
@@ -323,7 +325,14 @@ class TestAssessRealSpecs:
                     assert got == ("MANUAL", "tier_manual"), spec["spec_id"]
             else:
                 pytest.fail(f"Unknown tier: {tier}")
-        assert seen_tiers == {"needs_capability", "manual_checklist", "parameterised"}
+        # 6.10 (the last needs_capability spec) became a catalog check in Wave 2b, so
+        # the tier is exercised on a copy of a reasoned manual spec without a check.
+        assert seen_tiers == {"manual_checklist", "parameterised"}
+        spec_copy = copy.deepcopy(specs_by_id["cis-pg17-v1.1.0:3.1.12"])
+        assert "check" not in spec_copy
+        spec_copy["tier"] = "needs_capability"
+        row = assess([spec_copy], make_snapshot_with_checks({}), records)["results"][0]
+        assert (row["result"], row["reason_code"]) == expected["needs_capability"]
 
 
 class TestAssessSpecificCases:
@@ -658,8 +667,31 @@ class TestAssessLiveSnapshot:
         baseline = snapshot["baseline"]
         assert baseline["gaps"] == []
         rows = {r["spec_id"].split(":")[1]: r for r in assess(catalog_specs, snapshot, records)["results"]}
-        assert set(rows) == {"4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4"}
+        assert set(rows) == {"4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4",
+                             "3.2", "4.8", "5.3", "5.4", "5.6", "6.8", "6.10", "6.11"}
         assert not [rec for rec, r in rows.items() if r["result"] == "NOT_COLLECTED"]
+
+        # Wave 2b on the same fixture (stock postgres:17, nothing preloaded, ssl off).
+        settings = {r["name"]: r["setting"] for r in baseline["settings"]}
+        assert settings["shared_preload_libraries"] == "" and settings["ssl"] == "off"
+        assert rows["3.2"]["result"] == "FAIL"
+        assert rows["3.2"]["explanation"] == {"code": "pgaudit_not_preloaded"}
+        assert rows["5.6"]["result"] == "FAIL"
+        assert rows["5.6"]["explanation"] == {"code": "passwordcheck_not_preloaded"}
+        assert rows["6.10"]["result"] == "FAIL"  # the PostgreSQL default list is not the CIS four
+        assert rows["6.10"]["explanation"] == {"code": "unapproved_ciphers_configured",
+                                               "other_items": ["HIGH", "MEDIUM", "+3DES", "!aNULL"]}
+        assert rows["6.8"]["result"] == "FAIL"
+        assert rows["6.8"]["explanation"] == {"code": "tls_not_enabled_or_enforced",
+                                              "failing_parts": ["ssl_off", "non_tls_hba_rules"]}
+        assert rows["4.8"]["result"] == "FAIL"
+        assert rows["4.8"]["explanation"]["code"] == "set_user_not_available"
+        assert rows["6.11"]["result"] == "MANUAL"
+        assert rows["6.11"]["explanation"]["available"] is True
+        assert rows["6.11"]["explanation"]["installed_version"] is None
+        assert rows["5.3"]["result"] == "MANUAL" and rows["5.4"]["result"] == "MANUAL"
+        assert [e["line_number"] for e in rows["5.3"]["evidence"]] == [117, 124]
+        assert [e["line_number"] for e in rows["5.4"]["evidence"]] == [119, 121, 125, 126, 128]
 
         # 4.5: a fresh cluster has no SECURITY DEFINER / SET-clause function, but the
         # postgres database is connectable and not covered, so MANUAL (never PASS).

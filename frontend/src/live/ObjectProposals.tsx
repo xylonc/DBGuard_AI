@@ -22,6 +22,8 @@ type ObjectProposalsProps = {
   selected: string[]
   onToggle: (fixId: string, on: boolean) => void
   onOpenPolicy?: () => void
+  // Inside a collapsible group that already has the heading: no border or title.
+  embedded?: boolean
 }
 
 const RISK_STYLE: Record<string, string> = {
@@ -37,6 +39,7 @@ export function ObjectProposals({
   selected,
   onToggle,
   onOpenPolicy,
+  embedded = false,
 }: ObjectProposalsProps) {
   const all: any[] = groups.flatMap((g) => g.proposals ?? [])
   // Changes already ticked, so the same change under another CIS rule is blocked.
@@ -47,13 +50,17 @@ export function ObjectProposals({
   )
   return (
     <section
-      className="border border-teal-200 rounded p-4 space-y-4"
+      className={
+        embedded ? "space-y-4" : "border border-teal-200 rounded p-4 space-y-4"
+      }
       aria-label="Proposed fixes for accounts and permissions"
     >
       <div className="space-y-1">
-        <h3 className="font-semibold">
-          Proposed fixes for accounts and permissions
-        </h3>
+        {!embedded && (
+          <h3 className="font-semibold">
+            Proposed fixes for accounts and permissions
+          </h3>
+        )}
         <p className="text-sm">
           Each fix changes one account, function or table, and only what the
           collected evidence shows. DBGuard rehearses it on a throwaway stand-in

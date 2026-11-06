@@ -1,3 +1,4 @@
+import { FileButton } from "./FileButton"
 import { useState } from "react"
 import { api, request } from "@/adapters/live"
 import { useLive } from "@/store/liveStore"
@@ -16,9 +17,9 @@ export function BenchmarkImport() {
         listed as manual or needing capability; they are never silently marked
         automated.
       </p>
-      <input
+      <FileButton
+        label="Choose benchmark workbook (.xlsx)"
         aria-label="Benchmark XLSX"
-        type="file"
         accept=".xlsx"
         disabled={!!live.state.busy}
         onChange={(e) => {

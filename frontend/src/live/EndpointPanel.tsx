@@ -1,3 +1,4 @@
+import { FileButton } from "./FileButton"
 import { useState } from "react"
 import contract from "@/imports/dbguard-openapi.json"
 import { request } from "@/adapters/live"
@@ -181,8 +182,8 @@ export function EndpointPanel() {
           </label>
         ))}
         {content["multipart/form-data"] && (
-          <input
-            type="file"
+          <FileButton
+            label="Choose file to upload"
             aria-label="Knowledge upload file"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />

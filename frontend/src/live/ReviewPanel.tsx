@@ -1,7 +1,11 @@
+import { FileButton } from "./FileButton"
 import { useEffect, useState } from "react"
 import { api, request, findings } from "@/adapters/live"
 import { activeObjectFix, useLive } from "@/store/liveStore"
-import { Card, Raw } from "./LiveUI"
+import type { ReactNode } from "react"
+import { Badge, Card, Fold, Raw, SandboxChanges } from "./LiveUI"
+import { combinedResultTitle, titlesBySpec } from "./resultLabels"
+import { batchAfter } from "./sandboxChanges"
 import { ObjectProposals } from "./ObjectProposals"
 import {
   MAX_BATCH,
@@ -32,8 +36,17 @@ const button = "rounded bg-teal-700 text-white px-4 py-2 disabled:opacity-40"
 type FixPlanProps = {
   // Opens the Policy Profile screen (for COMPANY POLICY MISSING notes).
   onOpenPolicy?: () => void
+  // The single-fix test panel (its settings live in the workflow screen).
+  singleTest?: ReactNode
 }
-export function FixPlan({ onOpenPolicy }: FixPlanProps) {
+const RISK_CHIP: Record<string, string> = {
+  low: "bg-slate-100 text-slate-700",
+  medium: "bg-amber-50 text-amber-800",
+  high: "bg-red-50 text-red-800",
+}
+const outline =
+  "rounded border border-teal-700 text-teal-700 px-4 py-2 disabled:opacity-40"
+export function FixPlan({ onOpenPolicy, singleTest }: FixPlanProps) {
   const live = useLive(),
     s = live.state
   const [customOrder, setCustomOrder] = useState(false)
@@ -74,326 +87,440 @@ export function FixPlan({ onOpenPolicy }: FixPlanProps) {
       setPlan(p)
     })
   }
+  const proposalCount = groups.reduce(
+    (n, g) => n + (g.proposals ?? []).length,
+    0,
+  )
   return (
-    <Card title="Fix risk, prerequisites and test plan">
-      <p>
-        Compare operational risk before choosing a fix. Security urgency and
-        application dependencies still need DBA judgement.
-      </p>
-      <div className="flex gap-2">
-        <button
-          className={button}
-          disabled={!!s.busy || !s.assessment}
-          onClick={() => void load()}
-        >
-          Show recommended fixes
-        </button>
-        <button
-          className={button}
-          disabled={!!s.busy || !s.assessment}
-          onClick={() => void load(true)}
-        >
-          Ask LLM to review risk
-        </button>
-      </div>
-      {plan && (
-        <>
-          <p className="text-sm">{plan.ordering_basis}</p>
-          {plan.recommended_order.map((f: any, i: number) => (
-            <section className="border rounded p-4 space-y-2" key={f.fix_id}>
-              <div className="flex gap-2 items-center">
-                <h3 className="font-semibold">
-                  {i + 1}. {f.title}
-                </h3>
-                <span className="rounded bg-amber-50 px-2 text-sm">
-                  {f.operational_risk} operational risk
-                </span>
-              </div>
-              {isCatalogSettingFix(f) ? (
-                <CatalogSettingChanges
-                  fix={f}
-                  listTemplateVersion={plan.list_template_version}
-                />
-              ) : (
-                <p>
-                  {f.setting}:{" "}
-                  <strong>
-                    {f.current_value} → {f.proposed_value}
-                  </strong>{" "}
-                  · {f.requires}
-                </p>
-              )}
-              <p>{f.reasoning}</p>
-              <p className="text-sm">Rollback: {f.rollback_explanation}</p>
-              <p className="text-sm">{f.activation_fact}</p>
-              <p className="text-sm">
-                Prior source: {f.prior_source}. Security severity:{" "}
-                {f.security_severity}.
-              </p>
-              <p className="font-medium">Check before applying</p>
-              <ul className="list-disc pl-5">
-                {f.prerequisites.map((p: string) => (
-                  <li key={p}>{p}</li>
-                ))}
-              </ul>
-              <p className="text-sm">
-                LLM risk review: {f.llm.status}. Model commentary is advisory
-                and requires DBA review. The test runner only executes validated
-                checks.
-              </p>
-              {f.llm.advice && <p>{f.llm.advice.reasoning}</p>}
-              <details>
-                <summary>
-                  Functional checks, unknowns and application tests
-                </summary>
-                <Raw
-                  value={{
-                    checks: f.checks,
-                    unknowns: f.unknowns,
-                    application_checks: f.manual_application_checks,
-                    llm: f.llm,
-                  }}
-                />
-              </details>
-              <div className="flex flex-wrap gap-4 items-center border-t pt-3">
-                {!chosenObject &&
-                (s.controlId || "cis-pg17-v1.1.0:3.1.20") === f.spec_id ? (
-                  <span className="rounded bg-teal-700 text-white px-4 py-2">
-                    ✓ This fix runs in the single-fix test below
-                  </span>
-                ) : (
-                  <button
-                    className="rounded border border-teal-700 text-teal-700 px-4 py-2 disabled:opacity-40"
-                    disabled={!!s.busy || !!s.handoffId}
-                    onClick={() =>
-                      live.configure({
-                        controlId: f.spec_id,
-                        objectFix: null,
-                        // Preload fixes (3.2, 5.6) also send the approved
-                        // set_config_list version; null for every other fix.
-                        listTemplate: chooseListTemplate(
-                          plan,
-                          f.spec_id,
-                          s.snapshot.snapshot_id,
-                          s.policyProfile?.profile_ref ?? null,
-                        ),
-                        // Catalog-linked fixes run once with the approved
-                        // template: no adaptive retries or alternatives.
-                        ...(f.kind === "catalog_setting"
-                          ? { retryMode: "repeat", alternativeTemplates: "" }
-                          : {}),
-                      })
-                    }
-                  >
-                    Use for single-fix test
-                  </button>
-                )}
-                <label className="flex gap-2 items-center">
-                  <input
-                    aria-label={"Include " + f.setting + " in combined test"}
-                    type="checkbox"
-                    checked={selected.includes(f.spec_id)}
-                    onChange={(e) => toggle(f.spec_id, e.target.checked)}
-                  />
-                  Add to combined test
-                </label>
-              </div>
-            </section>
-          ))}
-          {groups.length > 0 && (
-            <ObjectProposals
-              groups={groups}
-              templateVersions={plan.object_template_versions}
-              selected={selected}
-              onToggle={toggle}
-              onOpenPolicy={onOpenPolicy}
-            />
-          )}
-          {plan.manual_review.length > 0 && (
-            <section className="border border-amber-300 rounded p-4 space-y-2">
-              <h3 className="font-semibold">Not fixable automatically</h3>
-              <p className="text-sm">
-                These controls did not pass, but DBGuard will not propose a fix.
-                They stay in the assessment for a person to handle.
-              </p>
-              <ul className="list-disc pl-5 space-y-2">
-                {plan.manual_review.map((f: any) => {
-                  const row = rows.get(f.spec_id)
-                  return (
-                    <li key={f.spec_id}>
-                      <strong>{f.title || f.spec_id}</strong>{" "}
-                      <span className="text-sm">({f.spec_id})</span>:{" "}
-                      {manualReason(
-                        f,
-                        row,
-                        groups.some(
-                          (g) =>
-                            g.spec_id === f.spec_id &&
-                            (g.proposals ?? []).length > 0,
-                        ),
-                      )}
-                      {f.manual_fix && (
-                        <ManualFix fix={f.manual_fix} item={f} />
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
-          {(plan.not_applicable ?? []).length > 0 && (
-            <section className="border border-sky-200 rounded p-4 space-y-2">
-              <h3 className="font-semibold">Not applicable on this server</h3>
-              <p className="text-sm">
-                These controls only apply under a condition this server does not
-                meet. They need neither a fix nor manual review.
-              </p>
-              <ul className="list-disc pl-5 space-y-2">
-                {plan.not_applicable.map((f: any) => {
-                  const row = rows.get(f.spec_id)
-                  return (
-                    <li key={f.spec_id}>
-                      <strong>{cisRule(row ?? { ...f, id: f.spec_id })}</strong>
-                      <p className="text-sm">
-                        {row?.explanation
-                          ? explanationSentence(row.explanation)
-                          : "Its CIS condition is not met on this server, so it doesn't apply."}
-                      </p>
-                      {f.condition && (
-                        <p className="text-xs italic text-slate-600">
-                          CIS: “{f.condition}”
-                        </p>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
-          {selected.length > 1 && (
-            <div className="border rounded p-3 space-y-2">
-              <label className="flex gap-2">
-                <input
-                  type="checkbox"
-                  checked={customOrder}
-                  onChange={(e) => setCustomOrder(e.target.checked)}
-                />
-                Choose a different order and test it
-              </label>
-              {customOrder &&
-                selected.map((sid, index) => (
-                  <p key={sid}>
-                    {index + 1}. {selectionLabel(sid)}{" "}
-                    <button
-                      className="text-teal-700 underline"
-                      disabled={index === 0 || !!s.busy}
-                      onClick={() => {
-                        const next = [...selected]
-                        ;[next[index - 1], next[index]] = [
-                          next[index],
-                          next[index - 1],
-                        ]
-                        setSelected(next)
-                      }}
-                    >
-                      Move earlier
-                    </button>
-                  </p>
-                ))}
-            </div>
-          )}
+    <>
+      <Card
+        title="1. Choose the fixes to test"
+        subtitle="DBGuard lists the fixes it can safely try, safest first. Pick one to test on its own, or tick several to test together. The DBA still decides what is applied."
+      >
+        <div className="flex flex-wrap gap-2">
           <button
             className={button}
-            disabled={
-              !!s.busy || selected.length < 2 || selected.length > MAX_BATCH
-            }
-            onClick={() =>
-              void live.action(
-                "Testing fixes individually and together",
-                async () => {
-                  live.patch({ batch: null })
-                  const b = await api(s.service, "/api/v1/sandbox/batches", {
-                    // Object fixes are ordered by their own fix_id.
-                    requested_order: customOrder
-                      ? selected.map((sid) =>
-                          isObjectFixId(sid)
-                            ? sid
-                            : plan.recommended_order.find(
-                                (f: any) => f.spec_id === sid,
-                              ).fix_id,
-                        )
-                      : null,
-                    // Object fixes send only object_fix_id; never params.
-                    fixes: batchFixes(
-                      selected,
-                      {
-                        snapshot_id: s.snapshot.snapshot_id,
-                        benchmark_id: s.benchmark,
-                        environment: s.environment,
-                        evidence_ids: s.evidenceIds
-                          .split(",")
-                          .map((v: string) => v.trim())
-                          .filter(Boolean),
-                        policy_profile: s.policyProfile?.profile_ref ?? null,
-                      },
-                      {
-                        templateVersion: s.templateVersion,
-                        retryMode: s.retryMode,
-                      },
-                      (fixId: string) =>
-                        objectTemplateVersionFor(
-                          plan,
-                          fixId,
-                          s.objectTemplateVersion,
-                        ),
-                      // Only preload fixes (3.2, 5.6) get list_template_version.
-                      (controlId: string) =>
-                        listTemplateVersionFor(plan, controlId),
-                      // Catalog-linked fixes (3.2, 5.6, 6.10) run once: no retries.
-                      (controlId: string) =>
-                        isCatalogLinkedFix(plan, controlId),
-                    ),
-                  })
-                  live.patch({
-                    batch: {
-                      snapshot_id: s.snapshot.snapshot_id,
-                      benchmark: s.benchmark,
-                      data: b,
-                    },
-                  })
-                },
-              )
-            }
+            disabled={!!s.busy || !s.assessment}
+            onClick={() => void load()}
           >
-            {selected.length < 2
-              ? "Combined test: tick at least two fixes"
-              : selected.length > MAX_BATCH
-                ? `Combined test: tick at most ${MAX_BATCH} fixes`
-                : `Test ${selected.length} selected fixes together`}
+            Show recommended fixes
           </button>
-        </>
-      )}
-      {batch && (
-        <>
-          <p>
-            Combined test: <strong>{batch.status}</strong>
+          <button
+            className={outline}
+            disabled={!!s.busy || !s.assessment}
+            onClick={() => void load(true)}
+          >
+            Ask the AI to review the risks
+          </button>
+        </div>
+        {!plan && (
+          <p className="text-sm text-slate-500">
+            Press “Show recommended fixes” to see what can be fixed.
           </p>
-          {batch.review_bundle?.status === "READY" && (
-            <a
-              className="text-teal-700 underline"
-              href={`/bridge/${s.service}/api/v1/sandbox/runs/${encodeURIComponent(batch.run_id)}/bundle`}
-              download
+        )}
+        {plan && (
+          <>
+            <p className="text-xs text-slate-500">{plan.ordering_basis}</p>
+            <Fold
+              title="Setting fixes"
+              count={plan.recommended_order.length}
+              hint="Each changes one server setting. Listed safest first."
+              open
+              tone="teal"
             >
-              Download combined DBA bundle
-            </a>
-          )}
-          <Raw
-            value={batch}
-            label="Combined test, rollback and cleanup evidence"
-          />
-        </>
+              {plan.recommended_order.map((f: any, i: number) => (
+                <section
+                  className="rounded-lg border border-slate-200 p-3 space-y-2"
+                  key={f.fix_id}
+                >
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <h3 className="font-semibold flex-1">
+                      {i + 1}. {f.title}
+                    </h3>
+                    <span
+                      className={`rounded px-2 py-0.5 text-xs ${
+                        RISK_CHIP[String(f.operational_risk).toLowerCase()] ??
+                        RISK_CHIP.low
+                      }`}
+                    >
+                      {f.operational_risk} risk
+                    </span>
+                  </div>
+                  {isCatalogSettingFix(f) ? (
+                    <CatalogSettingChanges
+                      fix={f}
+                      listTemplateVersion={plan.list_template_version}
+                    />
+                  ) : (
+                    <p>
+                      {f.setting}:{" "}
+                      <strong>
+                        {f.current_value} → {f.proposed_value}
+                      </strong>{" "}
+                      · {f.requires}
+                    </p>
+                  )}
+                  <p className="text-sm">{f.reasoning}</p>
+                  {f.prerequisites.length > 0 && (
+                    <div className="text-sm">
+                      <p className="font-medium">Check before applying</p>
+                      <ul className="list-disc pl-5">
+                        {f.prerequisites.map((p: string) => (
+                          <li key={p}>{p}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <Fold
+                    title="Undo and AI review"
+                    hint="How the change is undone, where the current value comes from, and any AI comments."
+                  >
+                    <p className="text-sm">
+                      <strong>Undo:</strong> {f.rollback_explanation}
+                    </p>
+                    <p className="text-sm">{f.activation_fact}</p>
+                    <p className="text-sm">
+                      Current value comes from: {f.prior_source}. Security
+                      severity: {f.security_severity}.
+                    </p>
+                    <p className="text-sm">
+                      AI risk review: {f.llm.status}. AI comments are advice
+                      only and need DBA review; the test itself runs only
+                      checked steps.
+                    </p>
+                    {f.llm.advice && (
+                      <p className="text-sm">{f.llm.advice.reasoning}</p>
+                    )}
+                    <Raw
+                      value={{
+                        checks: f.checks,
+                        unknowns: f.unknowns,
+                        application_checks: f.manual_application_checks,
+                        llm: f.llm,
+                      }}
+                      label="Functional checks, unknowns and application tests"
+                    />
+                  </Fold>
+                  <div className="flex flex-wrap gap-4 items-center border-t pt-3">
+                    {!chosenObject &&
+                    (s.controlId || "cis-pg17-v1.1.0:3.1.20") === f.spec_id ? (
+                      <span className="rounded bg-teal-700 text-white px-4 py-2 text-sm">
+                        ✓ Chosen for the single-fix test
+                      </span>
+                    ) : (
+                      <button
+                        className={`${outline} text-sm`}
+                        disabled={!!s.busy || !!s.handoffId}
+                        onClick={() =>
+                          live.configure({
+                            controlId: f.spec_id,
+                            objectFix: null,
+                            // Preload fixes (3.2, 5.6) also send the approved
+                            // set_config_list version; null for every other fix.
+                            listTemplate: chooseListTemplate(
+                              plan,
+                              f.spec_id,
+                              s.snapshot.snapshot_id,
+                              s.policyProfile?.profile_ref ?? null,
+                            ),
+                            // Catalog-linked fixes run once with the approved
+                            // template: no adaptive retries or alternatives.
+                            ...(f.kind === "catalog_setting"
+                              ? {
+                                  retryMode: "repeat",
+                                  alternativeTemplates: "",
+                                }
+                              : {}),
+                          })
+                        }
+                      >
+                        Test this fix on its own
+                      </button>
+                    )}
+                    <label className="flex gap-2 items-center text-sm">
+                      <input
+                        aria-label={
+                          "Include " + f.setting + " in combined test"
+                        }
+                        type="checkbox"
+                        checked={selected.includes(f.spec_id)}
+                        onChange={(e) => toggle(f.spec_id, e.target.checked)}
+                      />
+                      Add to the combined test
+                    </label>
+                  </div>
+                </section>
+              ))}
+            </Fold>
+            {groups.length > 0 && (
+              <Fold
+                title="Account and permission fixes"
+                count={proposalCount}
+                hint="Each changes one account, function or table. You choose which ones; nothing is ticked for you."
+                open
+                tone="teal"
+              >
+                <ObjectProposals
+                  embedded
+                  groups={groups}
+                  templateVersions={plan.object_template_versions}
+                  selected={selected}
+                  onToggle={toggle}
+                  onOpenPolicy={onOpenPolicy}
+                />
+              </Fold>
+            )}
+            {plan.manual_review.length > 0 && (
+              <Fold
+                title="Not fixable automatically"
+                count={plan.manual_review.length}
+                hint="These rules did not pass, but need a person. Each has the reason and, where CIS gives them, the manual steps."
+                tone="amber"
+              >
+                <ul className="list-disc pl-5 space-y-2">
+                  {plan.manual_review.map((f: any) => {
+                    const row = rows.get(f.spec_id)
+                    return (
+                      <li key={f.spec_id}>
+                        <strong>{f.title || f.spec_id}</strong>{" "}
+                        <span className="text-sm">({f.spec_id})</span>:{" "}
+                        {manualReason(
+                          f,
+                          row,
+                          groups.some(
+                            (g) =>
+                              g.spec_id === f.spec_id &&
+                              (g.proposals ?? []).length > 0,
+                          ),
+                        )}
+                        {f.manual_fix && (
+                          <ManualFix fix={f.manual_fix} item={f} />
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </Fold>
+            )}
+            {(plan.not_applicable ?? []).length > 0 && (
+              <Fold
+                title="Not applicable on this server"
+                count={plan.not_applicable.length}
+                hint="These rules only apply in a set-up this server doesn't use, so there is nothing to do."
+                tone="sky"
+              >
+                <ul className="list-disc pl-5 space-y-2">
+                  {plan.not_applicable.map((f: any) => {
+                    const row = rows.get(f.spec_id)
+                    return (
+                      <li key={f.spec_id}>
+                        <strong>
+                          {cisRule(row ?? { ...f, id: f.spec_id })}
+                        </strong>
+                        <p className="text-sm">
+                          {row?.explanation
+                            ? explanationSentence(row.explanation)
+                            : "Its CIS condition is not met on this server, so it doesn't apply."}
+                        </p>
+                        {f.condition && (
+                          <p className="text-xs italic text-slate-600">
+                            CIS: “{f.condition}”
+                          </p>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </Fold>
+            )}
+          </>
+        )}
+      </Card>
+      <Card
+        title="2. Test on a throwaway copy"
+        subtitle="Your database is never touched. Each test builds a fresh copy, applies the fix, checks it, undoes it, then deletes the copy."
+      >
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-lg border border-slate-200 p-4 space-y-3">
+            <h3 className="font-semibold">Test one fix on its own</h3>
+            {singleTest}
+          </section>
+          <section className="rounded-lg border border-slate-200 p-4 space-y-3">
+            <h3 className="font-semibold">Test the ticked fixes together</h3>
+            <p className="text-sm text-slate-500">
+              Checks that the fixes still work when applied one after another on
+              the same copy. Tick 2 to {MAX_BATCH} fixes in section 1.
+            </p>
+            {!plan ? (
+              <p className="text-sm">Show the recommended fixes first.</p>
+            ) : selected.length === 0 ? (
+              <p className="text-sm">Nothing ticked yet.</p>
+            ) : (
+              <ol className="list-decimal pl-5 text-sm">
+                {selected.map((sid) => (
+                  <li key={sid}>{selectionLabel(sid)}</li>
+                ))}
+              </ol>
+            )}
+            {plan && selected.length > 1 && (
+              <div className="rounded border border-slate-200 p-3 space-y-2 text-sm">
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    checked={customOrder}
+                    onChange={(e) => setCustomOrder(e.target.checked)}
+                  />
+                  Test them in a different order
+                </label>
+                {customOrder &&
+                  selected.map((sid, index) => (
+                    <p key={sid}>
+                      {index + 1}. {selectionLabel(sid)}{" "}
+                      <button
+                        className="text-teal-700 underline"
+                        disabled={index === 0 || !!s.busy}
+                        onClick={() => {
+                          const next = [...selected]
+                          ;[next[index - 1], next[index]] = [
+                            next[index],
+                            next[index - 1],
+                          ]
+                          setSelected(next)
+                        }}
+                      >
+                        Move earlier
+                      </button>
+                    </p>
+                  ))}
+              </div>
+            )}
+            {plan && (
+              <button
+                className={button}
+                disabled={
+                  !!s.busy || selected.length < 2 || selected.length > MAX_BATCH
+                }
+                onClick={() =>
+                  void live.action(
+                    "Testing fixes individually and together",
+                    async () => {
+                      live.patch({ batch: null })
+                      const b = await api(
+                        s.service,
+                        "/api/v1/sandbox/batches",
+                        {
+                          // Object fixes are ordered by their own fix_id.
+                          requested_order: customOrder
+                            ? selected.map((sid) =>
+                                isObjectFixId(sid)
+                                  ? sid
+                                  : plan.recommended_order.find(
+                                      (f: any) => f.spec_id === sid,
+                                    ).fix_id,
+                              )
+                            : null,
+                          // Object fixes send only object_fix_id; never params.
+                          fixes: batchFixes(
+                            selected,
+                            {
+                              snapshot_id: s.snapshot.snapshot_id,
+                              benchmark_id: s.benchmark,
+                              environment: s.environment,
+                              evidence_ids: s.evidenceIds
+                                .split(",")
+                                .map((v: string) => v.trim())
+                                .filter(Boolean),
+                              policy_profile:
+                                s.policyProfile?.profile_ref ?? null,
+                            },
+                            {
+                              templateVersion: s.templateVersion,
+                              retryMode: s.retryMode,
+                            },
+                            (fixId: string) =>
+                              objectTemplateVersionFor(
+                                plan,
+                                fixId,
+                                s.objectTemplateVersion,
+                              ),
+                            // Only preload fixes (3.2, 5.6) get list_template_version.
+                            (controlId: string) =>
+                              listTemplateVersionFor(plan, controlId),
+                            // Catalog-linked fixes (3.2, 5.6, 6.10) run once: no retries.
+                            (controlId: string) =>
+                              isCatalogLinkedFix(plan, controlId),
+                          ),
+                        },
+                      )
+                      live.patch({
+                        batch: {
+                          snapshot_id: s.snapshot.snapshot_id,
+                          benchmark: s.benchmark,
+                          data: b,
+                        },
+                      })
+                    },
+                  )
+                }
+              >
+                {selected.length < 2
+                  ? "Tick at least two fixes to test together"
+                  : selected.length > MAX_BATCH
+                    ? `Tick at most ${MAX_BATCH} fixes`
+                    : `Test ${selected.length} selected fixes together`}
+              </button>
+            )}
+          </section>
+        </div>
+      </Card>
+    </>
+  )
+}
+
+// Step 5 result panel for the latest combined test (step 6 shows CombinedReview).
+export function CombinedResult() {
+  const s = useLive().state
+  const batch = currentBatch(s)
+  if (!batch) return null
+  const titles = titlesBySpec(findings(s.assessment))
+  return (
+    <section className="rounded-lg border border-slate-200 p-4 space-y-3">
+      <h3 className="font-semibold">{combinedResultTitle(batch, titles)}</h3>
+      <p className="text-sm text-slate-500">
+        These fixes were applied one after another on the same throwaway copy,
+        to check they work together.
+      </p>
+      <div className="flex flex-wrap gap-3 items-center">
+        <Badge value={batch.status} />
+        {batch.run_id && (
+          <span className="text-xs text-slate-500 break-all">
+            Run {batch.run_id}
+          </span>
+        )}
+      </div>
+      {s.assessment && (
+        <SandboxChanges
+          assessment={s.assessment}
+          after={batchAfter(batch)}
+          notice={
+            batch.status === "VERIFIED"
+              ? undefined
+              : `The combined test did not verify (${String(batch.status ?? "Not returned")}). The statuses below may not include every selected fix or what the failure broke; check the test details.`
+          }
+          afterLabel={
+            batch.status === "VERIFIED"
+              ? "After combined test"
+              : "Before the failure"
+          }
+        />
       )}
-    </Card>
+      <Fold
+        title="Test details"
+        hint="Each fix tested alone, the combined run, the undo and clean-up, as raw evidence."
+      >
+        <Raw value={batch} label="Combined test, undo and clean-up evidence" />
+      </Fold>
+    </section>
   )
 }
 
@@ -466,17 +593,19 @@ export function CombinedReview() {
   const untested = runs
     .map(fixIdOf)
     .filter((fid) => fid && !rows.some((u: any) => u.fix_id === fid))
+  const titles = titlesBySpec(findings(s.assessment))
   return (
-    <Card title="Combined fixes for DBA review">
-      <p>
-        Combined test: <strong>{batch.status}</strong>
+    <Card
+      title={`For the DBA: ${combinedResultTitle(batch, titles)}`}
+      subtitle="Each fix was tested alone, then all together. Only fixes that passed both go into the combined bundle."
+    >
+      <p className="flex flex-wrap items-center gap-2">
+        <Badge value={batch.status} />
         {batch.order_source && (
-          <span className="text-slate-500">
-            {" "}
-            · order{" "}
+          <span className="text-sm text-slate-500">
             {batch.order_source === "DBA_SELECTED"
-              ? "chosen by DBA"
-              : "recommended"}
+              ? "Tested in the order you chose"
+              : "Tested in the recommended order"}
           </span>
         )}
       </p>
@@ -486,11 +615,11 @@ export function CombinedReview() {
           <thead>
             <tr className="text-left">
               <th className="py-2 pr-3">#</th>
-              <th className="py-2 pr-3">Control</th>
-              <th className="py-2 pr-3">Change</th>
+              <th className="py-2 pr-3">CIS rule</th>
+              <th className="py-2 pr-3">What changes</th>
               <th className="py-2 pr-3">Tested alone</th>
-              <th className="py-2 pr-3">After combined test</th>
-              <th className="py-2">DBA action</th>
+              <th className="py-2 pr-3">Tested together</th>
+              <th className="py-2">What the DBA does</th>
             </tr>
           </thead>
           <tbody>
@@ -507,7 +636,10 @@ export function CombinedReview() {
                   className="border-t border-slate-200 align-top"
                 >
                   <td className="py-2 pr-3">{i + 1}</td>
-                  <td className="py-2 pr-3">{u.spec_id}</td>
+                  <td className="py-2 pr-3">
+                    {titles.get(u.spec_id) ?? u.spec_id}
+                    <small className="block text-slate-500">{u.spec_id}</small>
+                  </td>
                   <td className="py-2 pr-3">
                     {object ? (
                       <>
@@ -547,8 +679,8 @@ export function CombinedReview() {
                   </td>
                   <td className="py-2">
                     {ok
-                      ? "Review, then apply with the combined bundle"
-                      : "Needs manual DBA review; not in a bundle"}
+                      ? "Review it, then apply it with the combined bundle"
+                      : "Not in a bundle: needs the DBA's own review"}
                   </td>
                 </tr>
               )
@@ -558,21 +690,18 @@ export function CombinedReview() {
       </div>
       {untested.length > 0 && (
         <p className="text-amber-800">
-          Stopped before combined testing: {untested.join(", ")}
+          Stopped before the combined test: {untested.join(", ")}
         </p>
       )}
-      {batch.review_bundle?.status === "READY" ? (
-        <a
-          className={`${button} inline-block`}
-          href={`/bridge/${s.service}/api/v1/sandbox/runs/${encodeURIComponent(batch.run_id)}/bundle`}
-          download
-        >
-          Download combined DBA bundle
-        </a>
-      ) : (
-        <p>No combined bundle: every fix must pass alone and together first.</p>
-      )}
-      <Raw value={batch} label="Combined test, rollback and cleanup evidence" />
+      <p className="text-xs text-slate-500">
+        The download is in “Hand over to the DBA” below.
+      </p>
+      <Fold
+        title="Test details"
+        hint="Each fix tested alone, the combined run, the undo and clean-up, as raw evidence."
+      >
+        <Raw value={batch} label="Combined test, undo and clean-up evidence" />
+      </Fold>
     </Card>
   )
 }
@@ -742,8 +871,8 @@ export function RunHistory() {
                 <option key={id}>{id}</option>
               ))}
             </select>
-            <input
-              type="file"
+            <FileButton
+              label="Choose screenshot (PNG or JPEG)"
               accept="image/png,image/jpeg"
               aria-label="Database evidence screenshot"
               disabled={!!s.busy || !operator.trim()}

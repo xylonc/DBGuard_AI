@@ -10,11 +10,13 @@ Everything that can be derived is read from the repository:
 - catalog/specs/cis-pg17-v1.1.0/*.yaml: which rules have a spec, its tier and check kind;
 - services/sandbox_poc/planning.py POLICIES: which setting specs have a reviewed fix, and
   whether its value is fixed or comes from the approved policy profile (FROM_PROFILE);
+- backend/app/services/spec_engine/catalog_checks.py REGISTRY: whether a catalog check reads
+  the policy profile (3.2);
 - docs/ROADMAP.md "Control families" table: the family of every recommendation.
 
-Facts that cannot be derived (planned weeks, plain-language wording, Wave 2a work in
-progress, the 6.10 family move) live in the small reviewed mappings below. The output has
-no timestamps, so --check is deterministic.
+Facts that cannot be derived (planned weeks, plain-language wording, which catalog checks
+have a rehearsed setting fix, guided steps or a checklist) live in the small reviewed
+mappings below. The output has no timestamps, so --check is deterministic.
 """
 
 import argparse
@@ -29,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "backend"))
 
+from app.services.spec_engine.catalog_checks import uses_policy_profile  # noqa: E402
 from app.services.spec_engine.validate import uses_policy  # noqa: E402
 from services.sandbox_poc.planning import FROM_PROFILE, POLICIES  # noqa: E402
 
@@ -45,6 +48,7 @@ SCRIPT_REL = "scripts/coverage_report.py"
 CATEGORIES = [
     ("fixable", "Live: fixable", "Yes"),
     ("fixable_after_policy", "Live: fixable once company policy is approved", "After policy approval"),
+    ("checked_guided", "Live: checked, the DBA follows guided fix steps", "Guided steps"),
     ("report_only", "Live: report-only, person decides", "Person decides"),
     ("human_checklist", "Live: human checklist", "—"),
     ("needs_capability", "Needs capability (planned)", "Planned"),
@@ -55,14 +59,14 @@ CATEGORIES = [
 ]
 CATEGORY_LABEL = {cid: label for cid, label, _ in CATEGORIES}
 CATEGORY_FIX = {cid: fix for cid, _, fix in CATEGORIES}
-LIVE_CATEGORIES = ("fixable", "fixable_after_policy", "report_only", "human_checklist", "check_only")
+LIVE_CATEGORIES = ("fixable", "fixable_after_policy", "checked_guided", "report_only", "human_checklist",
+                   "check_only")
 
 # ---- Reviewed mappings (not derivable from the repository) ----
 
-# docs/ROADMAP.md Status: "6.10 moved to F7" (the 6.10 spec reason also says "Planned
-# with F7"), but the family table still lists it under F2. The table is not edited
-# here; this override records the move. Remove it once the table is updated.
-FAMILY_OVERRIDES = {"6.10": "F7"}
+# Family moves not yet in the ROADMAP table (recommendation -> family). Empty since the
+# table lists 6.10 under F7.
+FAMILY_OVERRIDES: dict[str, str] = {}
 
 # Planned week and fix outlook per family, for rules without a working check yet.
 # Weeks come from the ROADMAP Status/Schedule rows (F5 and F7: Wave 2, next week;
@@ -91,12 +95,37 @@ FAMILY_PLAIN = {
 # report-only catalog checks; DBGuard rehearses it on a stand-in copy first.
 PER_OBJECT_FIXES = {"4.3", "4.4", "4.5", "4.6", "4.9", "4.10", "5.5"}
 
+# Wave 2b (Gate W2B rulings 3 and 4): catalog checks whose fix is a reviewed setting
+# change rehearsed in the sandbox, and the settings it changes. Each counts as fixable
+# only once every setting has a reviewed POLICIES entry; until then it is check_only.
+CATALOG_SETTING_FIXES = {
+    "3.2": ("shared_preload_libraries", "pgaudit.log"),
+    "5.6": ("shared_preload_libraries",),
+    "6.10": ("ssl_ciphers",),
+}
+# Gate W2B ruling 8: checked, but the fix needs a package install, a certificate or a
+# pg_hba.conf edit, which DBGuard never does; the DBA gets guided steps.
+GUIDED_FIX_CHECKS = {"6.8", "4.8"}
+# Catalog checks that are human checklists with evidence (CIS Manual, no fail rule
+# DBGuard can apply): the evaluator only ever returns MANUAL.
+CATALOG_CHECKLISTS = {"6.11", "5.3", "5.4"}
+
 # Per-rule plain reasons where the category sentence would be wrong or vague.
 REASON_OVERRIDES = {
     "5.2": "DBGuard checks this setting; the fix needs this server's network address, "
            "taken from the approved company policy.",
     "7.4": "DBGuard reports whether copies of the database change log are archived; "
            "a person decides how to set that up.",
+    "6.8": "DBGuard checks that encryption is on and required for network logins; the fix "
+           "needs a certificate and login-rule edits, so the DBA follows guided steps.",
+    "4.8": "DBGuard checks that the set_user add-on is installed and lists logins with superuser "
+           "powers; installing it is a guided step for the DBA.",
+    "6.11": "A person decides whether data needs encryption; DBGuard shows whether the pgcrypto "
+            "add-on is available and installed.",
+    "5.3": "A person reviews the local (socket) login rules DBGuard lists, with methods other "
+           "than peer and reject highlighted.",
+    "5.4": "A person reviews the network login rules DBGuard lists, with weak methods and rules "
+           "open to every address highlighted.",
 }
 
 # Plain wording for applies_when conditions, keyed by (setting, expected item).
@@ -182,6 +211,15 @@ def classify(spec: dict | None) -> str:
     if not check:
         return "human_checklist"
     if check["kind"] == "catalog":
+        rec = spec["ref"]["recommendation"]
+        if rec in CATALOG_SETTING_FIXES:
+            if not all(name in POLICIES for name in CATALOG_SETTING_FIXES[rec]):
+                return "check_only"
+            return "fixable_after_policy" if uses_policy_profile(spec) else "fixable"
+        if rec in GUIDED_FIX_CHECKS:
+            return "checked_guided"
+        if rec in CATALOG_CHECKLISTS:
+            return "human_checklist"
         return "report_only"
     if check["kind"] == "setting":
         name = check["setting_name"]
@@ -213,13 +251,18 @@ def reason_for(rec: str, status: str, spec: dict | None, family: str) -> str:
     if status == "fixable":
         base = "DBGuard checks this setting and can prove the CIS fix on a throwaway test copy"
     elif status == "fixable_after_policy":
-        if uses_policy(spec):
+        if uses_policy(spec) or uses_policy_profile(spec):
             base = ("DBGuard compares this with the company policy and can test the fix "
                     "once a person approves that policy")
         else:
             base = ("DBGuard checks this setting; the fix needs a value for this particular "
                     "server, taken from the approved company policy")
+    elif status == "checked_guided":
+        raise SystemExit(f"{rec}: a guided-fix check needs a reviewed reason in REASON_OVERRIDES")
     elif status == "report_only":
+        if family != "F6":
+            # The category sentence talks about accounts and permissions (F6 only).
+            raise SystemExit(f"{rec}: a report-only rule outside F6 needs a reviewed reason in REASON_OVERRIDES")
         if rec in PER_OBJECT_FIXES:
             return ("DBGuard lists the accounts or permissions involved; the DBA can pick a fix "
                     "for one object, which DBGuard tests on a throwaway copy first.")
@@ -257,6 +300,12 @@ def build() -> dict:
     for rec in PER_OBJECT_FIXES:
         if classify(specs.get(rec)) != "report_only":
             raise SystemExit(f"PER_OBJECT_FIXES: {rec} is not a report-only catalog check")
+    for mapping, label in ((CATALOG_SETTING_FIXES, "CATALOG_SETTING_FIXES"), (GUIDED_FIX_CHECKS, "GUIDED_FIX_CHECKS"),
+                           (CATALOG_CHECKLISTS, "CATALOG_CHECKLISTS")):
+        for rec in mapping:
+            check = (specs.get(rec) or {}).get("check") or {}
+            if check.get("kind") != "catalog":
+                raise SystemExit(f"{label}: {rec} is not a catalog check")
     rec_family, family_names = load_families(all_recs)
 
     rows = []
@@ -342,6 +391,8 @@ def render_markdown(data: dict) -> str:
         f"{counts['fixable']} straight away and {counts['fixable_after_policy']} once the company "
         "policy is approved. DBGuard never changes the real database; a database administrator "
         "applies the tested fix.",
+        f"- **{counts['checked_guided']}** are checked, and the DBA follows guided steps for the fix, "
+        "because it needs a software install, a certificate or a login-rule edit, which DBGuard never does.",
         f"- **{counts['report_only']}** are report-only: DBGuard shows the accounts or settings "
         f"involved and a person decides. For {per_object} of them the DBA can pick a fix for one account, table or function, which DBGuard tests first.",
         f"- **{total - specced}** are not started yet and **{counts['needs_capability']}** needs a "
@@ -376,8 +427,9 @@ def render_markdown(data: dict) -> str:
     out += [f"- `{i['path']}`: {i['what']}" for i in data["inputs"]]
     out += [
         "",
-        "Planned weeks, plain-language wording, the per-object fix rules and the 6.10 family "
-        "move are small reviewed mappings in the script. Regenerate with "
+        "Planned weeks, plain-language wording, the per-object fix rules and which catalog checks "
+        "have a setting fix, guided steps or a checklist are small reviewed mappings in the script. "
+        "Regenerate with "
         f"`python {data['generated_by']}`; CI-style check: `python {data['generated_by']} --check`.",
         "",
     ]

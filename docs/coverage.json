@@ -21,17 +21,22 @@
     }
   ],
   "total": 72,
-  "specced": 39,
+  "specced": 46,
   "categories": [
     {
       "id": "fixable",
       "label": "Live: fixable",
-      "count": 16
+      "count": 18
     },
     {
       "id": "fixable_after_policy",
       "label": "Live: fixable once company policy is approved",
-      "count": 10
+      "count": 11
+    },
+    {
+      "id": "checked_guided",
+      "label": "Live: checked, the DBA follows guided fix steps",
+      "count": 2
     },
     {
       "id": "report_only",
@@ -41,17 +46,17 @@
     {
       "id": "human_checklist",
       "label": "Live: human checklist",
-      "count": 2
+      "count": 5
     },
     {
       "id": "needs_capability",
       "label": "Needs capability (planned)",
-      "count": 1
+      "count": 0
     },
     {
       "id": "not_started",
       "label": "Not started",
-      "count": 33
+      "count": 26
     },
     {
       "id": "check_only",
@@ -714,17 +719,17 @@
       "cis_assessment": "Automated",
       "family": "F5",
       "family_name": "Extensions",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the database add-ons work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "fixable_after_policy",
+      "status": "Live: fixable once company policy is approved",
+      "fix": "After policy approval",
+      "reason": "DBGuard compares this with the company policy and can test the fix once a person approves that policy.",
+      "has_spec": true,
+      "tier": "parameterised",
+      "check_kind": "catalog",
       "setting_name": null,
-      "fix_value_from": null,
+      "fix_value_from": "policy_profile",
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "4.1",
@@ -858,17 +863,17 @@
       "cis_assessment": "Automated",
       "family": "F5",
       "family_name": "Extensions",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the database add-ons work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "checked_guided",
+      "status": "Live: checked, the DBA follows guided fix steps",
+      "fix": "Guided steps",
+      "reason": "DBGuard checks that the set_user add-on is installed and lists logins with superuser powers; installing it is a guided step for the DBA.",
+      "has_spec": true,
+      "tier": "automated",
+      "check_kind": "catalog",
       "setting_name": null,
       "fix_value_from": null,
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "4.9",
@@ -948,17 +953,17 @@
       "cis_assessment": "Manual",
       "family": "F7",
       "family_name": "Authentication and TLS",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the login and encryption work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "human_checklist",
+      "status": "Live: human checklist",
+      "fix": "—",
+      "reason": "A person reviews the local (socket) login rules DBGuard lists, with methods other than peer and reject highlighted.",
+      "has_spec": true,
+      "tier": "manual_checklist",
+      "check_kind": "catalog",
       "setting_name": null,
       "fix_value_from": null,
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "5.4",
@@ -966,17 +971,17 @@
       "cis_assessment": "Manual",
       "family": "F7",
       "family_name": "Authentication and TLS",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the login and encryption work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "human_checklist",
+      "status": "Live: human checklist",
+      "fix": "—",
+      "reason": "A person reviews the network login rules DBGuard lists, with weak methods and rules open to every address highlighted.",
+      "has_spec": true,
+      "tier": "manual_checklist",
+      "check_kind": "catalog",
       "setting_name": null,
       "fix_value_from": null,
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "5.5",
@@ -1002,17 +1007,17 @@
       "cis_assessment": "Manual",
       "family": "F5",
       "family_name": "Extensions",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the database add-ons work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "fixable",
+      "status": "Live: fixable",
+      "fix": "Yes",
+      "reason": "DBGuard checks this setting and can prove the CIS fix on a throwaway test copy.",
+      "has_spec": true,
+      "tier": "automated",
+      "check_kind": "catalog",
       "setting_name": null,
-      "fix_value_from": null,
+      "fix_value_from": "reviewed_policy",
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "6.1",
@@ -1146,17 +1151,17 @@
       "cis_assessment": "Automated",
       "family": "F7",
       "family_name": "Authentication and TLS",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the login and encryption work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "checked_guided",
+      "status": "Live: checked, the DBA follows guided fix steps",
+      "fix": "Guided steps",
+      "reason": "DBGuard checks that encryption is on and required for network logins; the fix needs a certificate and login-rule edits, so the DBA follows guided steps.",
+      "has_spec": true,
+      "tier": "automated",
+      "check_kind": "catalog",
       "setting_name": null,
       "fix_value_from": null,
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "6.9",
@@ -1182,17 +1187,17 @@
       "cis_assessment": "Automated",
       "family": "F7",
       "family_name": "Authentication and TLS",
-      "status_id": "needs_capability",
-      "status": "Needs capability (planned)",
-      "fix": "Planned",
-      "reason": "Needs a new kind of check, planned with the login and encryption work (2–8 Nov).",
+      "status_id": "fixable",
+      "status": "Live: fixable",
+      "fix": "Yes",
+      "reason": "DBGuard checks this setting and can prove the CIS fix on a throwaway test copy.",
       "has_spec": true,
-      "tier": "needs_capability",
-      "check_kind": null,
+      "tier": "automated",
+      "check_kind": "catalog",
       "setting_name": null,
-      "fix_value_from": null,
+      "fix_value_from": "reviewed_policy",
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "6.11",
@@ -1200,17 +1205,17 @@
       "cis_assessment": "Manual",
       "family": "F5",
       "family_name": "Extensions",
-      "status_id": "not_started",
-      "status": "Not started",
-      "fix": "Planned",
-      "reason": "Not built yet; planned with the database add-ons work (2–8 Nov).",
-      "has_spec": false,
-      "tier": null,
-      "check_kind": null,
+      "status_id": "human_checklist",
+      "status": "Live: human checklist",
+      "fix": "—",
+      "reason": "A person decides whether data needs encryption; DBGuard shows whether the pgcrypto add-on is available and installed.",
+      "has_spec": true,
+      "tier": "manual_checklist",
+      "check_kind": "catalog",
       "setting_name": null,
       "fix_value_from": null,
       "per_object_fixes": false,
-      "planned_week": "2–8 Nov"
+      "planned_week": null
     },
     {
       "recommendation": "7.1",

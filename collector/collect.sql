@@ -704,6 +704,18 @@ SELECT jsonb_pretty(jsonb_build_object(
     LEFT JOIN pg_namespace n ON n.oid = e.extnamespace
 ),
 
+-- Extensions whose control files are installed on the server (pg_available_extensions),
+-- installed or not. Name and versions only. Used by 4.8 (set_user), 6.11 (pgcrypto)
+-- and the bundle runner's "library installed" guard for preload fixes.
+'available_extensions', (
+    SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'name',              x.name,
+        'default_version',   x.default_version,
+        'installed_version', x.installed_version
+    ) ORDER BY x.name), '[]'::jsonb)
+    FROM pg_available_extensions x
+),
+
 'tablespaces', pg_temp.try_jsonb($q$
     SELECT coalesce(jsonb_agg(jsonb_build_object(
         'spcname',  t.spcname,
@@ -773,20 +785,43 @@ SELECT jsonb_pretty(jsonb_build_object(
 'connections', pg_temp.try_jsonb($q$
     SELECT coalesce(jsonb_agg(to_jsonb(g)), '[]'::jsonb)
     FROM (
-        SELECT coalesce(nullif(application_name,''),'(none)') AS application_name,
-               usename,
-               datname,
+        -- Visibility is read from the server, not re-derived from roles. For a
+        -- session this role may not see, pg_stat_activity returns backend_type,
+        -- client_addr and client_port as NULL and pg_stat_ssl has no row. Hidden
+        -- sessions are kept as 'not_visible' with NULL TLS fields, so an
+        -- unreadable list never looks empty or encrypted. Unix sockets report
+        -- ssl=false by design; only TCP classes say anything about encryption.
+        -- Client certificate identity (client_dn, serial, issuer) is never selected.
+        -- Replication connections (walsender) are kept with their type: CIS 6.8
+        -- and 6.10 cover every established connection, not only client backends.
+        SELECT coalesce(nullif(a.application_name,''),'(none)') AS application_name,
+               a.backend_type,
+               a.usename,
+               a.datname,
+               (a.backend_type IS NOT NULL AND a.client_port IS NOT NULL) AS visible,
                CASE
-                 WHEN client_addr IS NULL                  THEN 'unix_socket'
-                 WHEN client_addr << inet '127.0.0.0/8'    THEN 'loopback'
-                 WHEN client_addr << inet '10.0.0.0/8'
-                   OR client_addr << inet '172.16.0.0/12'
-                   OR client_addr << inet '192.168.0.0/16' THEN 'private'
+                 WHEN a.backend_type IS NULL OR a.client_port IS NULL THEN 'not_visible'
+                 WHEN a.client_addr IS NULL                THEN 'unix_socket'
+                 WHEN a.client_addr << inet '127.0.0.0/8'  THEN 'loopback'
+                 WHEN a.client_addr << inet '10.0.0.0/8'
+                   OR a.client_addr << inet '172.16.0.0/12'
+                   OR a.client_addr << inet '192.168.0.0/16' THEN 'private'
                  ELSE 'public' END                          AS client_addr_class,
+               CASE WHEN a.backend_type IS NOT NULL AND a.client_port IS NOT NULL
+                    THEN s.ssl END                          AS ssl,
+               CASE WHEN a.backend_type IS NOT NULL AND a.client_port IS NOT NULL
+                    THEN s.version END                      AS tls_version,
+               CASE WHEN a.backend_type IS NOT NULL AND a.client_port IS NOT NULL
+                    THEN s.cipher END                       AS tls_cipher,
                count(*)                                     AS connection_count
-        FROM pg_stat_activity
-        WHERE backend_type = 'client backend'
-        GROUP BY 1,2,3,4
+        FROM pg_stat_activity a
+        LEFT JOIN pg_stat_ssl s ON s.pid = a.pid
+        -- A role that sees every session can only get a NULL type from a worker
+        -- exiting mid-snapshot; keep NULL rows only when sessions may be hidden.
+        WHERE a.backend_type IN ('client backend', 'walsender')
+           OR (a.backend_type IS NULL
+               AND NOT pg_has_role(current_user,'pg_read_all_stats','USAGE'))
+        GROUP BY 1,2,3,4,5,6,7,8,9
     ) g $q$),
 
 'uptime', jsonb_build_object(
@@ -854,11 +889,20 @@ SELECT jsonb_pretty(jsonb_build_object(
                    'remediation','archive_mode, archive_library, archive_command or pg_stat_archiver could not be read. Null here does NOT mean archiving is off.'
                )
         WHERE pg_temp.try_reason(pg_temp.sql_archiving()) IS NOT NULL
+        UNION ALL
+        SELECT jsonb_build_object(
+                   'section','connections.tls',
+                   'reason','insufficient_privilege',
+                   'remediation','GRANT pg_read_all_stats (or pg_monitor) with INHERIT -- without it other roles'' sessions hide their address and TLS state. Null here does NOT mean unencrypted.'
+               )
+        WHERE NOT pg_has_role(current_user,'pg_read_all_stats','USAGE')
     ) q
 ),
 
 -- ---- what was deliberately withheld -------------------------------------
 'redactions', jsonb_build_array(
+    jsonb_build_object('field','pg_stat_ssl.client_dn, client_serial and issuer_dn','class','S0',
+        'note','Client certificate identity is never selected; only ssl, TLS version and cipher per connection group.'),
     jsonb_build_object('field','pg_authid.rolpassword','class','S0',
         'note','Password verifiers are never selected. Only the derived type is returned.'),
     jsonb_build_object('field','pg_settings.archive_command','class','S0',

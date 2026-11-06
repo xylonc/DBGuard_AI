@@ -11,16 +11,248 @@
         "last_archived_wal": null,
         "last_failed_time": null,
         "last_failed_wal": null,
-        "stats_reset": "2026-11-03T09:06:45.946624+00:00"
+        "stats_reset": "2026-11-04T17:43:44.57406+00:00"
       }
     },
+    "available_extensions": [
+      {
+        "default_version": "1.4",
+        "installed_version": null,
+        "name": "amcheck"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "autoinc"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "bloom"
+      },
+      {
+        "default_version": "1.3",
+        "installed_version": null,
+        "name": "btree_gin"
+      },
+      {
+        "default_version": "1.7",
+        "installed_version": null,
+        "name": "btree_gist"
+      },
+      {
+        "default_version": "1.6",
+        "installed_version": null,
+        "name": "citext"
+      },
+      {
+        "default_version": "1.5",
+        "installed_version": null,
+        "name": "cube"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "dblink"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "dict_int"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "dict_xsyn"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "earthdistance"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "file_fdw"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "fuzzystrmatch"
+      },
+      {
+        "default_version": "1.8",
+        "installed_version": null,
+        "name": "hstore"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "insert_username"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "intagg"
+      },
+      {
+        "default_version": "1.5",
+        "installed_version": null,
+        "name": "intarray"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "isn"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "lo"
+      },
+      {
+        "default_version": "1.3",
+        "installed_version": null,
+        "name": "ltree"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "moddatetime"
+      },
+      {
+        "default_version": "1.12",
+        "installed_version": null,
+        "name": "pageinspect"
+      },
+      {
+        "default_version": "1.5",
+        "installed_version": null,
+        "name": "pg_buffercache"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "pg_freespacemap"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "pg_prewarm"
+      },
+      {
+        "default_version": "1.11",
+        "installed_version": null,
+        "name": "pg_stat_statements"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "pg_surgery"
+      },
+      {
+        "default_version": "1.6",
+        "installed_version": null,
+        "name": "pg_trgm"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "pg_visibility"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "pg_walinspect"
+      },
+      {
+        "default_version": "1.3",
+        "installed_version": null,
+        "name": "pgcrypto"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "pgrowlocks"
+      },
+      {
+        "default_version": "1.5",
+        "installed_version": null,
+        "name": "pgstattuple"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": "1.0",
+        "name": "plpgsql"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "postgres_fdw"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "refint"
+      },
+      {
+        "default_version": "1.4",
+        "installed_version": null,
+        "name": "seg"
+      },
+      {
+        "default_version": "1.2",
+        "installed_version": null,
+        "name": "sslinfo"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "tablefunc"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "tcn"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "tsm_system_rows"
+      },
+      {
+        "default_version": "1.0",
+        "installed_version": null,
+        "name": "tsm_system_time"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "unaccent"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "uuid-ossp"
+      },
+      {
+        "default_version": "1.1",
+        "installed_version": null,
+        "name": "xml2"
+      }
+    ],
     "connections": [
       {
         "application_name": "psql",
+        "backend_type": "client backend",
         "client_addr_class": "unix_socket",
         "connection_count": 1,
         "datname": "dbguard_sandbox",
-        "usename": "dbguard_poc"
+        "ssl": false,
+        "tls_cipher": null,
+        "tls_version": null,
+        "usename": "dbguard_poc",
+        "visible": true
       }
     ],
     "databases": [
@@ -334,7 +566,7 @@
       "lc_ctype": "en_US.utf8",
       "server_encoding": "UTF8",
       "server_version_num": 170011,
-      "system_identifier": "7703869120277131290",
+      "system_identifier": "7704373429524484122",
       "version_full": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
       "wal_segment_size": "16MB"
     },
@@ -347,6 +579,11 @@
       }
     ],
     "redactions": [
+      {
+        "class": "S0",
+        "field": "pg_stat_ssl.client_dn, client_serial and issuer_dn",
+        "note": "Client certificate identity is never selected; only ssl, TLS version and cipher per connection group."
+      },
       {
         "class": "S0",
         "field": "pg_authid.rolpassword",
@@ -2207,7 +2444,7 @@
       }
     ],
     "uptime": {
-      "postmaster_start_time": "2026-11-03T09:06:46.390474+00:00",
+      "postmaster_start_time": "2026-11-04T17:43:45.009047+00:00",
       "uptime_seconds": 1
     }
   },
@@ -2389,9 +2626,9 @@
   },
   "envelope": {
     "can_read_pg_authid": true,
-    "collected_at": "2026-11-03T09:06:47Z",
+    "collected_at": "2026-11-04T17:43:45Z",
     "collected_by": "dbguard_poc",
-    "collector_sha256": "8608edf8ce70dc9ecb7ec210afc8f88f51335333a6b40605be9013753b82a46a",
+    "collector_sha256": "c9da2dc11d525d10f8ae379f166c9216d05d614160c6f148eb0c8ccdcf3005bf",
     "collector_version": "2.0.0-sql",
     "database": "dbguard_sandbox",
     "deployment_type": "self-managed",
@@ -2406,6 +2643,6 @@
       "sha256": "8d11cbcbc8f58c49f5d546ef5518dd1f66beae54cc3961c14ae3def4daa76ae0"
     },
     "schema_version": "0.3.0",
-    "target_id": "dbguard-poc-ec0ace467117483f989056e00b0dc226"
+    "target_id": "dbguard-poc-ba2f64dec2424290808685a673a15c06"
   }
 }

@@ -34,7 +34,7 @@
       "properties": {
         "registry_name": {
           "default": "set_config_parameter",
-          "pattern": "^(?:set_config_parameter(?:__[a-z0-9_]+)?|role_connection_limit|role_drop_attribute|role_nologin|function_security_invoker|function_revoke_public_execute|table_revoke_dml)$",
+          "pattern": "^(?:set_config_parameter(?:__[a-z0-9_]+)?|role_connection_limit|role_drop_attribute|role_nologin|function_security_invoker|function_revoke_public_execute|table_revoke_dml|set_config_list)$",
           "title": "Registry Name",
           "type": "string"
         },
@@ -166,6 +166,17 @@
       ],
       "default": null,
       "title": "Object Fix Id"
+    },
+    "list_template_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TemplateReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

@@ -13,7 +13,11 @@ SETTING_TEMPLATE_PATTERN = r"set_config_parameter(?:__[a-z0-9_]+)?"
 OBJECT_TEMPLATE_NAMES = ("role_connection_limit", "role_drop_attribute", "role_nologin",
                          "function_security_invoker", "function_revoke_public_execute",
                          "table_revoke_dml")
-TEMPLATE_NAME_PATTERN = r"^(?:" + SETTING_TEMPLATE_PATTERN + "|" + "|".join(OBJECT_TEMPLATE_NAMES) + r")$"
+# W2B gate 1 (rulings round 3): the list template for shared_preload_libraries, pinned
+# only as a handoff's list_template_ref for a reviewed catalog fix (3.2, 5.6).
+LIST_TEMPLATE_NAME = "set_config_list"
+TEMPLATE_NAME_PATTERN = (r"^(?:" + SETTING_TEMPLATE_PATTERN + "|" + "|".join(OBJECT_TEMPLATE_NAMES)
+                         + "|" + LIST_TEMPLATE_NAME + r")$")
 # fix-<CIS recommendation>-<fix type>-<first 10 hex of sha256(canonical target JSON)>;
 # derived and re-derived server-side by object_fixes, never chosen by a client.
 OBJECT_FIX_ID_PATTERN = (r"^fix-[0-9]+(?:\.[0-9]+)*-(?:" + "|".join(OBJECT_TEMPLATE_NAMES)
@@ -63,9 +67,19 @@ class SandboxHandoff(StrictModel):
     # Wave 2a: a per-object fix chosen from the fix plan. Only the id is carried; the
     # sandbox re-derives the proposal from this snapshot (object_fixes.resolve).
     object_fix_id: str | None = Field(default=None, max_length=96, pattern=OBJECT_FIX_ID_PATTERN)
+    # W2B: the approved set_config_list template for the shared_preload_libraries part of a
+    # catalog fix (3.2, 5.6). Only its pin travels; the list is re-derived from evidence.
+    list_template_ref: TemplateReference | None = None
 
     @model_validator(mode='after')
     def candidate_scope(self):
+        if self.list_template_ref is not None:
+            if self.list_template_ref.registry_name != LIST_TEMPLATE_NAME:
+                raise ValueError('The list template reference must be the set_config_list template')
+            if self.object_fix_id is not None or self.retry_template_refs or self.retry_mode != 'repeat':
+                raise ValueError('A list template is only used by a catalog fix without alternatives')
+            if self.list_template_ref.environment != self.template_ref.environment:
+                raise ValueError('All candidate approvals must apply to the same environment')
         if self.object_fix_id is None:
             if not re.fullmatch(SETTING_TEMPLATE_PATTERN, self.template_ref.registry_name):
                 raise ValueError('Per-object fix templates need an object_fix_id')

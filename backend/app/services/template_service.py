@@ -21,6 +21,7 @@ from app.models import (
     RoleConnectionLimitTemplateParams,
     RoleDropAttributeTemplateParams,
     RoleNologinTemplateParams,
+    SetConfigListTemplateParams,
     SetConfigTemplateParams,
     TableRevokeDmlTemplateParams,
 )
@@ -110,7 +111,15 @@ TEMPLATE_PARAM_SCHEMAS: Dict[str, Type] = {
     "function_security_invoker": FunctionSecurityInvokerTemplateParams,
     "function_revoke_public_execute": FunctionRevokePublicExecuteTemplateParams,
     "table_revoke_dml": TableRevokeDmlTemplateParams,
+    # W2B gate 1 (rulings round 3): list-valued shared_preload_libraries for the CIS
+    # 3.2/5.6 catalog fixes; values computed server-side from evidence.
+    "set_config_list": SetConfigListTemplateParams,
 }
+
+# Templates rendered only from values the server derives from evidence (the sandbox
+# catalog fixes); the HERMES/MCP validate-and-render path refuses them like the
+# per-object templates. W2B gate 1, rulings round 3.
+SERVER_ONLY_TEMPLATES = frozenset({"set_config_list"})
 
 # Per-object fix templates: rendered only from evidence-bound proposals
 # (object_fixes.resolve/render), never from parameters a client or model supplies.

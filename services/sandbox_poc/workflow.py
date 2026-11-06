@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from .provenance import reconstruct, reconstruction_plan, setting_rows, signature
 from app.services.fix_unit_render import derive_rollback, render_action_script
 from app.services.setting_values import SettingValueError, check_setting_value
-from .runtime import DisposablePostgres
+from .runtime import DisposablePostgres, SandboxStartError
 from .shared import ContractError, SpecEngine, blocking_gaps, digest, is_regression, validate_contract
 from .templates import ApprovedTemplate
 from .adaptive import RevisionDecision, feedback_for
@@ -19,8 +19,10 @@ CONTROL = "cis-pg17-v1.1.0:3.1.20"
 
 
 def template_action(sql: str, name="log_connections") -> dict:
-    from .planning import POLICIES
-    if name not in POLICIES:
+    from .planning import COMPUTED, POLICIES
+    # COMPUTED settings (shared_preload_libraries) are written only by the set_config_list
+    # template (list_template_action), never by set_config_parameter (W2B security review B1).
+    if name not in POLICIES or POLICIES[name][0] == COMPUTED:
         raise ContractError("Unsupported setting action")
     body = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
     # The literal may hold any character except a quote or line break; the value is
@@ -34,6 +36,59 @@ def template_action(sql: str, name="log_connections") -> dict:
     except SettingValueError as exc:
         raise ContractError(f"Approved template value is outside the reviewed rule: {exc}") from None
     return {"action": "set_config", "param": name, "value": value}
+
+
+ROLLBACK_SKIPPED = ("PostgreSQL did not start after the change, so no rollback SQL was run on a stopped "
+                    "server; the disposable sandbox is removed instead.")
+
+
+def _setting_rollback(engine, runtime, fix, plan, record, before_report) -> None:
+    """Roll back one setting fix and verify the exact prior provenance and findings."""
+    runtime.sql(render_action_script(fix["rollback"]))
+    runtime.activate(plan["expected"])
+    restored = engine.collect(runtime)
+    restored_report = engine.assess(restored)
+    record.update(rollback=restored, rollback_assessment=restored_report,
+                  health_after_rollback=runtime.health())
+    record["rollback_verified"] = (
+        signature(restored, plan["names"]) == plan["signature"]
+        and restored_report["findings"] == before_report["findings"]
+        and not blocking_gaps(restored)
+        and record["health_after_rollback"])
+    if not record["rollback_verified"]:
+        raise RuntimeError("Exact rollback verification failed")
+
+
+def setting_catalog_regressions(engine, before_report, after_report, name, control) -> list[str]:
+    """Catalog checks whose evaluator reads the changed setting and went from PASS to not PASS."""
+    from .catalog_fixes import catalog_regressions
+    if "upstream_report" not in before_report or "upstream_report" not in after_report:
+        return []
+    return catalog_regressions(engine, before_report, after_report, [name], control)
+
+
+_LIST_ITEM = r"'(?:[^'\n\r]|'')*'"
+_LIST_STATEMENT = re.compile(r"\s*ALTER\s+SYSTEM\s+SET\s+\"shared_preload_libraries\"\s*=\s*(" + _LIST_ITEM
+                             + r"(?:\s*,\s*" + _LIST_ITEM + r")*)\s*;\s*SELECT\s+pg_reload_conf\s*\(\s*\)\s*;\s*",
+                             re.I)
+
+
+def list_template_action(sql: str) -> dict:
+    """The typed action of a rendered set_config_list statement (W2B rulings round 3).
+
+    Exactly one ALTER SYSTEM SET of shared_preload_libraries to one or more literals, then
+    pg_reload_conf(); every item must pass the reviewed list schema."""
+    from app.models import SetConfigListTemplateParams
+    body = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
+    match = _LIST_STATEMENT.fullmatch(body)
+    if not match:
+        raise ContractError("Approved list template is outside the supported setting action")
+    values = [item[1:-1].replace("''", "'") for item in re.findall(_LIST_ITEM, match[1])]
+    try:
+        SetConfigListTemplateParams(param_name="shared_preload_libraries", param_values=values)
+    except ValueError as exc:
+        raise ContractError(f"Approved list template value is outside the reviewed rule: {exc}") from None
+    return {"action": "set_config_list", "param": "shared_preload_libraries", "values": values}
 
 
 class LoopState(TypedDict):
@@ -137,6 +192,7 @@ class RemediationLoop:
             used_sql.add(sql_identity(current_template.render(name, value)))
             record['rendered_apply_sql'] = current_template.render(name, value)
             terminal = False
+            start_error = None
             try:
                 runtime.start()
                 record["image_id"] = runtime.image_id
@@ -167,6 +223,8 @@ class RemediationLoop:
                                    if sid != control and (
                                        is_regression(finding["status"], after_report["findings"][sid]["status"])
                                        or sid in self.engine.gapped_settings(after_report["findings"]))]
+                    # W2B: catalog checks that read this setting (planning.CATALOG_INPUT_AFFECTS).
+                    regressions += setting_catalog_regressions(self.engine, before_report, after_report, name, control)
                     record["regressions"] = regressions
                     if blocking_gaps(after):
                         raise RuntimeError("Post-apply collection has gaps")
@@ -176,27 +234,29 @@ class RemediationLoop:
                     # A reload request alone is not proof that the setting applied.
                     if setting_rows(after)[name].get("pending_restart") is not False:
                         raise RuntimeError("Fix left a pending restart")
+                except SandboxStartError as exc:
+                    start_error = exc
+                    record["apply_or_assessment_error"] = f"SandboxStartError: {exc}"
+                    raise
                 except Exception as exc:
                     record["apply_or_assessment_error"] = f"{type(exc).__name__}: {exc}"
                     raise
                 finally:
                     # Also test rollback after a partially executed/failed apply.
                     record["phase_before_rollback"] = record["phase"]
-                    record["phase"] = "rollback"
-                    runtime.sql(render_action_script(fix["rollback"]))
-                    runtime.activate(plan["expected"])
-                    restored = self.engine.collect(runtime)
-                    restored_report = self.engine.assess(restored)
-                    record.update(rollback=restored, rollback_assessment=restored_report,
-                                  health_after_rollback=runtime.health())
-                    record["rollback_verified"] = (
-                        signature(restored, plan["names"]) == plan["signature"]
-                        and restored_report["findings"] == before_report["findings"]
-                        and not blocking_gaps(restored)
-                        and record["health_after_rollback"])
-                    if not record["rollback_verified"]:
-                        raise RuntimeError("Exact rollback verification failed")
+                    if start_error is not None:
+                        # PostgreSQL is down after the restart: running rollback SQL would only
+                        # add a confusing psql error. The sandbox is removed in cleanup instead.
+                        record["phase"] = "start_failed"
+                        record["rollback_skipped"] = ROLLBACK_SKIPPED
+                    else:
+                        record["phase"] = "rollback"
+                        _setting_rollback(self.engine, runtime, fix, plan, record, before_report)
                 record.update(status="VERIFIED", phase="complete")
+            except SandboxStartError as exc:
+                # Deterministic (e.g. a preload library missing from the image): no retry.
+                terminal = True
+                record["error"] = f"SandboxStartError: {exc}"
             except ContractError as exc:
                 terminal = True
                 record["error"] = str(exc)

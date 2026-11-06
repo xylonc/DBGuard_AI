@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -102,6 +103,118 @@ def object_fingerprint(cur, config):
                 "prosecdef": secdef, "acl": sorted(acl), "search_path": search_path,
                 "config_names": list(config_names)}
     raise RuntimeError("Unsupported object kind in this bundle")
+
+
+# W2B gate 1, ruling 3: before a fix ADDS a library to shared_preload_libraries, prove the
+# library loads on this target. A missing preloaded library stops PostgreSQL starting, and a
+# control file is not proof that the shared object exists. Each LOAD statement is a fixed
+# literal chosen by key from this reviewed allowlist; a library name from fix.json or any
+# collected data is never interpolated into SQL. The accepted error is pgaudit's own refusal
+# to initialise outside shared_preload_libraries, which it raises only after the server found
+# and loaded its shared object. Anything else ("could not access file", permission) refuses.
+PRELOAD_LOAD_TESTS = {
+    "pgaudit": ("LOAD 'pgaudit'", "pgaudit must be loaded via shared_preload_libraries"),
+    "passwordcheck": ("LOAD 'passwordcheck'", None),
+}
+PRELOAD_REFUSAL = ("Library {} cannot be loaded on the target: install the package first; "
+                   "no SQL executed")
+
+
+# The one accepted shape of a statement that changes shared_preload_libraries: the reviewed
+# set_config_list rendering, one quoted literal per item, each a plain library name or one
+# of the exact CIS forms (W2B rulings round 3). Any other shape is refused.
+_PRELOAD_ITEM = r"(?:[a-z_][a-z0-9_]{0,62}|\$libdir/pgaudit|pgaudit\.so|\$libdir/pgaudit\.so|\$libdir/passwordcheck)"
+PRELOAD_STATEMENT = re.compile(r"""ALTER SYSTEM SET "shared_preload_libraries" = ('""" + _PRELOAD_ITEM
+                               + r"""'(?:, '""" + _PRELOAD_ITEM + r"""')*);?""")
+
+
+# Every statement a setting bundle may run, as fix_unit_render renders it: ALTER SYSTEM SET
+# of one lower-case setting to one literal, ALTER SYSTEM RESET, pg_reload_conf(), or the
+# preload list (PRELOAD_STATEMENT). Anything else is refused before any SQL (W2B review N1).
+SETTING_STATEMENTS = (
+    re.compile(r"""ALTER SYSTEM SET "[a-z_][a-z0-9_.]*" = '(?:[^'\n\r]|'')*';?"""),
+    re.compile(r"""ALTER SYSTEM RESET "[a-z_][a-z0-9_.]*";?"""),
+    re.compile(r"SELECT pg_reload_conf\(\);?"),
+)
+
+
+def check_setting_statements(config):
+    """Refuse a setting bundle whose apply or rollback statements are not the reviewed shapes.
+
+    shared_preload_libraries (matched case-insensitively, as PostgreSQL matches setting
+    names) is accepted only in the list shape, never as a single-literal SET."""
+    for key in ("apply_statements", "rollback_statements"):
+        for statement in config.get(key) or []:
+            text = statement.strip()
+            if "shared_preload_libraries" in text.lower():
+                if (PRELOAD_STATEMENT.fullmatch(text) is None
+                        and not re.fullmatch(r"""ALTER SYSTEM RESET "shared_preload_libraries";?""", text)):
+                    raise RuntimeError("Unsupported shared_preload_libraries statement; no SQL executed")
+            elif not any(shape.fullmatch(text) for shape in SETTING_STATEMENTS):
+                raise RuntimeError("Unsupported statement in this bundle; no SQL executed")
+
+
+def _current_preload(value):
+    """Items of the target's current list (quotes removed), for "already loaded" only."""
+    return {item.strip().strip('"') for item in value.split(",") if item.strip()}
+
+
+def preload_additions(conn, config):
+    """Libraries an apply would ADD to shared_preload_libraries on this target.
+
+    Read from the bundle's own apply statements and the target's current list, not only
+    from fix.json's preload_added, so an edited fix.json cannot skip the guard. A statement
+    that changes shared_preload_libraries in any other form is refused, and so is a repeated
+    item. The current list only decides what is already loaded (the drift check has already
+    compared it with the reviewed prior state).
+    """
+    check_setting_statements({"apply_statements": config.get("apply_statements") or []})
+    wanted = []
+    for statement in config.get("apply_statements") or []:
+        if "shared_preload_libraries" not in statement.lower():
+            continue
+        match = PRELOAD_STATEMENT.fullmatch(statement.strip())
+        if match is None:
+            raise RuntimeError("Unsupported shared_preload_libraries statement; no SQL executed")
+        items = [item.strip()[1:-1] for item in match.group(1).split(",")]
+        if len(set(items)) != len(items):
+            raise RuntimeError("Unsupported shared_preload_libraries statement; no SQL executed")
+        wanted += items
+    if not wanted and not config.get("preload_added"):
+        return []
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_catalog.current_setting('shared_preload_libraries')")
+        current = _current_preload(cur.fetchone()[0])
+    return sorted({lib for lib in wanted + list(config.get("preload_added") or []) if lib not in current})
+
+
+def preload_guard(dsn, libraries, connect=None):
+    """Refuse unless every library being added loads in a throwaway session (rolled back, closed)."""
+    import psycopg2
+
+    connect = connect or psycopg2.connect
+    for library in libraries:
+        test = PRELOAD_LOAD_TESTS.get(library)
+        if test is None:
+            raise RuntimeError("A library outside the reviewed preload allowlist; no SQL executed")
+        statement, accepted_error = test
+        loaded = False
+        with closing(connect(dsn, connect_timeout=10)) as conn:
+            conn.autocommit = False
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SET LOCAL statement_timeout='10s'")
+                    try:
+                        cur.execute(statement)
+                        loaded = True
+                    except psycopg2.Error as exc:
+                        diag = getattr(exc, "diag", None)
+                        message = getattr(diag, "message_primary", None)
+                        loaded = accepted_error is not None and message == accepted_error
+            finally:
+                conn.rollback()
+        if not loaded:
+            raise RuntimeError(PRELOAD_REFUSAL.format(library))
 
 
 def _guard(cur, config):
@@ -244,6 +357,12 @@ def execute(config, action, dsn, allow_demo=False):
             raise RuntimeError(
                 "Configuration drift detected; no SQL executed. Recollect and reassess."
             )
+        if action in ("apply", "rollback"):
+            check_setting_statements(config)
+        if action == "apply":
+            added = preload_additions(conn, config)
+            if added:
+                preload_guard(dsn, added)
         # Each statement has its own autocommit command; ALTER SYSTEM cannot be in a transaction.
         with conn.cursor() as cur:
             for statement in config[action + "_statements"]:
@@ -337,20 +456,31 @@ def verification_queries(config, dsn, action):
             )
             from psycopg2 import sql
 
-            setting_query = sql.SQL("SHOW {}").format(sql.Identifier(config["setting"]))
-            cur.execute(setting_query)
-            value = cur.fetchone()[0]
-            wanted_setting = config[
-                "prior" if action in ("rollback", "verify-rollback") else "applied"
-            ]["settings"][config["setting"]]["setting"]
-            queries.append(
-                {
-                    "title": "Effective setting in a fresh connection",
-                    "query": setting_query.as_string(conn),
-                    "output": value,
-                    "passed": value == wanted_setting,
-                }
-            )
+            wanted_state = config["prior" if action in ("rollback", "verify-rollback") else "applied"]
+            if config.get("kind") == "catalog_setting":
+                # Several settings; one may be undefined (pgaudit.log without pgaudit loaded),
+                # so current_setting(name, true) gives NULL instead of an error.
+                for name in config["settings"]:
+                    cur.execute("SELECT pg_catalog.current_setting(%s, true)", (name,))
+                    value = cur.fetchone()[0]
+                    wanted_setting = wanted_state["settings"].get(name, {}).get("setting")
+                    queries.append({"title": "Effective setting in a fresh connection",
+                                    "query": "SELECT pg_catalog.current_setting(%s, true)",
+                                    "parameters": [name], "output": value,
+                                    "passed": value == wanted_setting})
+            else:
+                setting_query = sql.SQL("SHOW {}").format(sql.Identifier(config["setting"]))
+                cur.execute(setting_query)
+                value = cur.fetchone()[0]
+                wanted_setting = wanted_state["settings"][config["setting"]]["setting"]
+                queries.append(
+                    {
+                        "title": "Effective setting in a fresh connection",
+                        "query": setting_query.as_string(conn),
+                        "output": value,
+                        "passed": value == wanted_setting,
+                    }
+                )
             for title, query in checks:
                 cur.execute(query)
                 rows = cur.fetchall()

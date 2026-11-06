@@ -16,7 +16,7 @@ from app.config import settings
 from .adaptive import LLMReviser
 from .router import get_snapshot_store
 from .shared import ContractError
-from .handoff import OBJECT_TEMPLATE_NAMES
+from .handoff import LIST_TEMPLATE_NAME, OBJECT_TEMPLATE_NAMES
 
 import psycopg2
 from fastapi import FastAPI, HTTPException
@@ -97,7 +97,8 @@ class DemoResources:
                             (sql, template_hash))
                 # Per-object fix templates (Wave 2a). Demo-only approval, the same label as
                 # set_config_parameter; real use needs a named human approval (Melvin, 30 Oct).
-                for name in OBJECT_TEMPLATE_NAMES:
+                # W2B list template (rulings round 3): the same demo-only approval.
+                for name in (*OBJECT_TEMPLATE_NAMES, LIST_TEMPLATE_NAME):
                     object_sql = (ROOT / f"backend/app/templates/{name}.sql.j2").read_text()
                     cur.execute("""INSERT INTO templates
                         (template_name,version,sql_template,template_hash,pg_version,status,approved_by,approved_at)

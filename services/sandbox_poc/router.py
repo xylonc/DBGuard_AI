@@ -4,7 +4,7 @@ import logging
 import psycopg2
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal
 from . import history
 from fastapi.responses import Response
@@ -184,12 +184,25 @@ def fix_plan(snapshot_id: str, benchmark_id: str = Query(default='cis-pg17-v1.1.
         # Catalog checks (F6) are outside the sandbox findings map; list them from
         # the full report so the DBA still sees them as not fixable.
         statuses={'FAIL':'FAIL','MANUAL':'MANUAL_REVIEW','NEEDS_CAPABILITY':'MANUAL_REVIEW'}
+        from .catalog_fixes import catalog_risk_review, is_catalog_fix
         for row in (assessment.get('upstream_report') or {}).get('results', []):
             if row['spec_id'] not in assessment['findings'] and row['result']!='PASS':
-                manual.append({'spec_id':row['spec_id'],'title':row.get('title') or row['spec_id'],'tier':row.get('tier'),
-                               'status':statuses.get(row['result'],'GAPPED'),'kind':'catalog',
-                               'reason':'Assessment-only catalog check',
-                               **({'explanation':row['explanation']} if row.get('explanation') else {})})
+                item={'spec_id':row['spec_id'],'title':row.get('title') or row['spec_id'],'tier':row.get('tier'),
+                      'status':statuses.get(row['result'],'GAPPED'),'kind':'catalog',
+                      'reason':'Assessment-only catalog check',
+                      **({'explanation':row['explanation']} if row.get('explanation') else {})}
+                if row['result']=='FAIL' and is_catalog_fix(engine,row['spec_id']):
+                    # W2B: a reviewed catalog-linked setting fix (3.2, 5.6, 6.10), derived from this
+                    # snapshot and the approved profile; otherwise a plain reason code for the UI.
+                    try:
+                        review=catalog_risk_review(engine,snapshot,row['spec_id'],service.risk_reviewer if review_with_llm else None)
+                        fixes.append(review)
+                        continue
+                    except ContractError as exc:
+                        spec=next((s for s in engine.specs if s['spec_id']==row['spec_id']),{})
+                        item.update(reason=str(exc),reason_code=getattr(exc,'code',None),
+                                    manual_fix=manual_fix_reference(engine,spec))
+                manual.append(item)
         if not review_with_llm:
             for fix in fixes: fix['llm']={'status':'NOT_REQUESTED'}
         # Wave 2a: per-object fixes for the F6 catalog checks, derived only from this
@@ -206,8 +219,16 @@ def fix_plan(snapshot_id: str, benchmark_id: str = Query(default='cis-pg17-v1.1.
             try: versions=approved_object_template_versions(service.registry_url)
             except (psycopg2.Error,ContractError): versions={}
         object_template_versions={t:versions.get(t) for t in fix_types}
+        # W2B: display hint for catalog fixes that change shared_preload_libraries; prepare
+        # still pins the exact version and hash (PrepareRequest.list_template_version).
+        list_template_version=None
+        if any(f.get('kind')=='catalog_setting' and 'shared_preload_libraries' in f.get('settings',[]) for f in fixes):
+            from .templates import approved_list_template_version
+            try: list_template_version=approved_list_template_version(service.registry_url)
+            except (psycopg2.Error,ContractError): list_template_version=None
         return {'snapshot_id':snapshot_id,'spec_set_hash':engine.spec_set_hash,'policy_profile':getattr(engine,'policy_pin',None),'recommended_order':recommend_order(fixes),'manual_review':manual,'not_applicable':not_applicable,
                 'object_proposals':object_proposals,'object_template_versions':object_template_versions,
+                'list_template_version':list_template_version,
                 'ordering_basis':'Dependencies first, then lower operational risk; DBA decides security urgency and final order.'}
     except SnapshotNotFoundError: raise HTTPException(404,'Snapshot not found') from None
     except ContractError as exc: raise HTTPException(422,str(exc)) from exc
@@ -433,7 +454,20 @@ class PolicyProfileDraft(BaseModel):
     values: dict = Field(default_factory=dict, max_length=MAX_PROFILE_ENTRIES)
     fixes: dict | None = Field(default=None, max_length=MAX_PROFILE_ENTRIES)
     connection_limits: dict | None = None
+    # CIS 3.2 (Gate W2B ruling 2). Typed loosely so the reviewed engine validator
+    # (catalog_checks.pgaudit_policy_classes_error) is the one rule: no coercion here.
+    pgaudit_log_classes: list | None = None
     based_on: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+
+    @field_validator('pgaudit_log_classes')
+    @classmethod
+    def _pgaudit_classes(cls, value):
+        from app.services.spec_engine.catalog_checks import pgaudit_policy_classes_error
+        if value is not None:
+            problem = pgaudit_policy_classes_error(value)
+            if problem is not None:
+                raise ValueError(problem)
+        return value
 
     @model_validator(mode='after')
     def _cap_roles(self):
@@ -525,6 +559,8 @@ def validate_policy_profile_draft(benchmark_id: str, request: PolicyProfileDraft
         doc['fixes'] = request.fixes
     if request.connection_limits is not None:
         doc['connection_limits'] = request.connection_limits
+    if request.pgaudit_log_classes is not None:
+        doc['pgaudit_log_classes'] = request.pgaudit_log_classes
     errors: list[str] = []
     if request.based_on is not None:
         try:

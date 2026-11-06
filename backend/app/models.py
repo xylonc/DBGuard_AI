@@ -436,6 +436,13 @@ class SetConfigTemplateParams(BaseModel):
             "syslog_ident",
             "log_timezone",
             "listen_addresses",
+            # W2B gate 1 (3.2, 6.10): pgaudit.log and ssl_ciphers, reached only through the
+            # reviewed catalog fix links (services/sandbox_poc/planning.py CATALOG_FIX_LINKS);
+            # values checked by the per-setting rules in app.services.setting_values.
+            # shared_preload_libraries is deliberately absent: it is a list and is written only
+            # by the server-only set_config_list template (SetConfigListTemplateParams).
+            "pgaudit.log",
+            "ssl_ciphers",
             "password_encryption",
             "max_connections",
             "shared_buffers",
@@ -478,6 +485,50 @@ class SetConfigTemplateParams(BaseModel):
         if "'" not in v and ";" not in v and "--" not in v and "/*" not in v:
             return self
         raise ValueError(f"Invalid parameter value: {v}")
+
+
+# W2B gate 1, rulings round 3: items the set_config_list template may write into
+# shared_preload_libraries. A plain library name (rendered as a quoted literal, which
+# PostgreSQL keeps unquoted), or one of the exact CIS 3.2/5.6 path forms. Nothing else:
+# no commas, quotes, spaces or other paths, so every item stays one list element.
+PRELOAD_LIBRARY_RE = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+PRELOAD_LIBRARY_CIS_FORMS = frozenset({"$libdir/pgaudit", "pgaudit.so", "$libdir/pgaudit.so",
+                                       "$libdir/passwordcheck"})
+
+
+def preload_library_error(value: Any) -> str | None:
+    """Why value cannot be a shared_preload_libraries list item, or None."""
+    if not isinstance(value, str):
+        return "library names must be strings"
+    if PRELOAD_LIBRARY_RE.fullmatch(value) or value in PRELOAD_LIBRARY_CIS_FORMS:
+        return None
+    return (f"library name {value!r} is not a plain name ([a-z_][a-z0-9_]{{0,62}}) "
+            f"or one of {sorted(PRELOAD_LIBRARY_CIS_FORMS)}")
+
+
+class SetConfigListTemplateParams(BaseModel):
+    """Validated parameters for SET_CONFIG_LIST rendering (W2B gate 1, rulings round 3).
+
+    Only shared_preload_libraries, as a non-empty list of unique library names. The
+    values are computed server-side from evidence (services/sandbox_poc/catalog_fixes.py);
+    the HERMES/MCP render path refuses this template (template_service.SERVER_ONLY_TEMPLATES).
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    param_name: Literal["shared_preload_libraries"]
+    param_values: list[str] = Field(min_length=1, max_length=32)
+
+    @field_validator("param_values")
+    @classmethod
+    def validate_values(cls, values: list[str]) -> list[str]:
+        for value in values:
+            problem = preload_library_error(value)
+            if problem is not None:
+                raise ValueError(problem)
+        if len(set(values)) != len(values):
+            raise ValueError("library names must not repeat")
+        return values
 
 
 class RevokePrivilegeTemplateParams(BaseModel):

@@ -128,8 +128,12 @@ def compare(run_id, fresh, engine):
     controls = [
         f["spec_id"]
         for f in units
-        if f.get("spec_id") and f.get("schema_version") != "fix-unit-v2"
+        if f.get("spec_id") and f.get("schema_version") not in ("fix-unit-v2", "catalog-setting-fix-v1")
     ]
+    # W2B: a catalog-linked setting fix is confirmed by its catalog check in the full report.
+    catalog_controls = [f["spec_id"] for f in units
+                        if f.get("spec_id") and f.get("schema_version") == "catalog-setting-fix-v1"]
+    upstream = {r.get("spec_id"): r.get("result") for r in (after.get("upstream_report") or {}).get("results", [])}
     object_checks = _object_checks(result, objects, old, fresh, engine) if objects else []
     regressions = [
         k
@@ -138,10 +142,11 @@ def compare(run_id, fresh, engine):
     ]
     gaps = engine.gapped_settings(after["findings"])
     verified = (
-        bool(controls or object_checks)
+        bool(controls or object_checks or catalog_controls)
         and all(
             after["findings"].get(sid, {}).get("status") == "PASS" for sid in controls
         )
+        and all(upstream.get(sid) == "PASS" for sid in catalog_controls)
         and all(check["verified"] for check in object_checks)
         and not regressions
         and not gaps

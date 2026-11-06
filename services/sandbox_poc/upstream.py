@@ -35,6 +35,10 @@ class PrepareRequest(StrictModel):
     # Wave 2a: a per-object fix id from the fix plan's object_proposals. Only the id is
     # accepted; the server re-derives target and parameters (object_fixes.resolve).
     object_fix_id: str | None = Field(default=None, max_length=96, pattern=OBJECT_FIX_ID_PATTERN)
+    # W2B: the approved set_config_list version for a catalog fix that changes
+    # shared_preload_libraries (fix plan hint: list_template_version). Explicit, like
+    # template_version; the server pins its exact hash.
+    list_template_version: int | None = Field(default=None, ge=1)
 
 
 def load_engine(benchmark_id, policy_profile=None):
@@ -75,6 +79,15 @@ def prepare_uploaded(store, service, request):
         raise ContractError('Use named alternatives or legacy versions, not both')
     handoff.retry_template_refs += [export_reference(service.registry_url, alternative.version,
         request.evidence_ids,request.environment,registry_name=alternative.registry_name)[0] for alternative in request.alternative_templates]
+    from .catalog_fixes import is_catalog_fix, needs_list_template
+    if is_catalog_fix(engine, request.control_id) and needs_list_template(engine, snapshot, request.control_id, assessment):
+        if request.list_template_version is None:
+            raise ContractError('This fix changes shared_preload_libraries: send list_template_version '
+                                '(the approved set_config_list version shown in the fix plan)')
+        handoff.list_template_ref = export_reference(service.registry_url, request.list_template_version,
+            request.evidence_ids, request.environment, registry_name='set_config_list')[0]
+    elif request.list_template_version is not None:
+        raise ContractError('list_template_version is only for catalog fixes that change shared_preload_libraries')
     handoff = SandboxHandoff.model_validate(handoff.model_dump())
     service.validate_handoff(handoff)
     return handoff
@@ -83,8 +96,8 @@ def prepare_uploaded(store, service, request):
 def _prepare_object(service, engine, snapshot, assessment, request):
     """Pin the approved template for one per-object fix chosen by its id."""
     from .object_fixes import FIX_TYPES, resolve
-    if request.alternative_templates or request.retry_template_versions:
-        raise ContractError('Object fixes have no alternative templates')
+    if request.alternative_templates or request.retry_template_versions or request.list_template_version is not None:
+        raise ContractError('Object fixes have no alternative or list templates')
     if 'retry_mode' in request.model_fields_set and request.retry_mode != 'repeat':
         raise ContractError('Object fixes have no adaptive retries')
     proposal = resolve(engine, snapshot, engine.policy_pin, request.object_fix_id)
@@ -109,6 +122,11 @@ def result_summary(result):
         return assessment.get('findings', {}).get(spec_id, {}).get('status', 'UNKNOWN')
     before = control_status(latest.get('before_assessment', {}))
     after = control_status(latest.get('after_assessment', {}))
+    if result.get('kind') == 'catalog_setting':
+        # W2B: a catalog check is outside the sandbox findings map; its evaluator result is the proof.
+        proof = latest.get('catalog_proof') or {}
+        before = (proof.get('before') or {}).get('result', 'UNKNOWN')
+        after = (proof.get('after') or {}).get('result', 'UNKNOWN')
     demo = result.get('demo_evidence', {})
     source_status = control_status(demo.get('assessment', {}))
     fixture = is_fixture(result) or result.get('demo_fixture_approval', False)
@@ -134,7 +152,11 @@ def result_summary(result):
                 'source_control_status': source_status} if demo else None,
             'attempts': [{key: attempt.get(key) for key in ('attempt', 'candidate_id', 'status',
                          'phase', 'rollback_verified', 'health_after_apply', 'health_after_rollback',
-                         'regressions', 'cleanup')} for attempt in attempts]}
+                         'regressions', 'cleanup')}
+                         # W2B: why an attempt stopped (e.g. a failed start) and the catalog proof.
+                         | {key: attempt[key] for key in ('error', 'rollback_skipped', 'catalog_proof')
+                            if key in attempt}
+                         for attempt in attempts]}
 
 
 class HandoffStore:

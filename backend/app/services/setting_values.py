@@ -33,6 +33,13 @@ LEGACY_RE = re.compile(r"[a-zA-Z0-9_.]+")
 _HOST = r"[A-Za-z0-9:](?:[A-Za-z0-9.:-]*[A-Za-z0-9])?"
 _PATH_PART = r"[A-Za-z0-9_.-]+"
 
+# W2B (6.10): the one reviewed ssl_ciphers fix value, the four CIS 6.10 ciphers in the
+# order CIS lists them (CIS PostgreSQL 17 v1.1.0, recommendation 6.10; the same tuple as
+# spec_engine.catalog_checks.CIS_TLS12_CIPHERS, which a unit test pins).
+CIS_TLS12_CIPHERS = ("ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384",
+                     "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-GCM-SHA256")
+CIS_SSL_CIPHERS = ":".join(CIS_TLS12_CIPHERS)
+
 # Reviewed per setting. Each pattern must match the WHOLE value (fullmatch).
 SETTING_VALUE_RULES: dict[str, re.Pattern] = {
     # 3.1.24: '%' escapes, space and []:=,-@. plus letters/digits
@@ -58,6 +65,13 @@ SETTING_VALUE_RULES: dict[str, re.Pattern] = {
     # 3.1.13: syslog program name; letters, digits, '_', '.', '-', 1-63 characters
     # (no space, '/', ':' or '<', so the FROM_PROFILE marker can never pass)
     "syslog_ident": re.compile(r"[A-Za-z0-9_.-]{1,63}"),
+    # W2B (3.2): pgaudit class names joined by ',' (no spaces, no '-' exclusions, no
+    # 'all'/'none'). pgaudit.log is GUC_LIST_INPUT without GUC_LIST_QUOTE, so the
+    # literal is stored as written. The classes come from the approved policy profile.
+    "pgaudit.log": re.compile(r"(?:read|write|function|role|ddl|misc_set|misc)"
+                              r"(?:,(?:read|write|function|role|ddl|misc_set|misc))*"),
+    # W2B (6.10): only the exact CIS cipher list may be rendered as a fix value.
+    "ssl_ciphers": re.compile(re.escape(CIS_SSL_CIPHERS)),
 }
 
 

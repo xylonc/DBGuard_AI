@@ -139,12 +139,20 @@ def validate_and_render_proposal(request: RemediationProposalRequest):
     # Per-object fix templates (Wave 2a, F6) are rendered only from evidence-bound
     # proposals that the server derives (fix plan -> object_fix_id); a model or
     # client never supplies their parameters, so this path refuses them outright.
-    from app.services.template_service import OBJECT_FIX_TEMPLATES
+    from app.services.template_service import OBJECT_FIX_TEMPLATES, SERVER_ONLY_TEMPLATES
     if request.proposal.template_id in OBJECT_FIX_TEMPLATES:
         raise HTTPException(
             status_code=422,
             detail="Per-object fix templates are not available on this path; they are "
                    "rendered only from server-side evidence in the fix plan.",
+        )
+    # W2B: the shared_preload_libraries list template is rendered only from values the
+    # sandbox derives from evidence (catalog fixes 3.2/5.6), never from model parameters.
+    if request.proposal.template_id in SERVER_ONLY_TEMPLATES:
+        raise HTTPException(
+            status_code=422,
+            detail="This template is not available on this path; it is rendered only from "
+                   "server-side evidence for a reviewed catalog fix.",
         )
 
     try:

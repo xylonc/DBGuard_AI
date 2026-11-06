@@ -1,0 +1,6 @@
+-- Purpose: Set shared_preload_libraries to an exact list of libraries.
+-- Hardening Action: Preload an audit or password-check library (CIS 3.2, 5.6) while keeping existing entries.
+-- Each library is its own quoted literal, so PostgreSQL stores a list, not one quoted name.
+-- Applied with ALTER SYSTEM (written to postgresql.auto.conf); a server restart is required.
+ALTER SYSTEM SET {{ param_name | ident }} = {% for value in param_values %}'{{ value | literal }}'{% if not loop.last %}, {% endif %}{% endfor %};
+SELECT pg_reload_conf();

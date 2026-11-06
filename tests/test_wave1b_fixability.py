@@ -24,6 +24,7 @@ from app.services.policy_profile_store import (
     validate_approver_name,
 )
 from app.services.setting_values import (
+    CIS_SSL_CIPHERS,
     GLOBAL_FORBIDDEN,
     SETTING_VALUE_RULES,
     SettingValueError,
@@ -396,6 +397,8 @@ GOOD = {
     "log_rotation_age": ["1d", "1h", "60min", "0"],
     "log_rotation_size": ["1GB", "0", "10MB", "512kB"],
     "syslog_ident": ["postgres", "pg-prod_1", "postgres.main", "a" * 63],
+    "pgaudit.log": ["ddl,role,write", "write", "read,write,function,role,ddl,misc,misc_set", "misc_set,misc"],
+    "ssl_ciphers": [CIS_SSL_CIPHERS],
 }
 INJECTIONS = ["x'; SELECT pg_reload_conf(); --", "x\"", "x\\", "x;y", "x\ny", "x\x00", "x--y",
               "x/*y", "$$x$$", "x\r"]
@@ -411,6 +414,11 @@ BAD = {
     "log_rotation_age": ["1 d", "1w", "-1", "1.5h"],
     "log_rotation_size": ["1gb", "1 GB", "-1", "1PB"],
     "syslog_ident": ["<from approved policy profile>", "post gres", "pg/prod", "pg:prod", "a" * 64],
+    "pgaudit.log": ["all", "none", "ddl, role", "-read", "DDL", "ddl,,role", "ddl,foo", "ddl,",
+                    ",ddl", "<from approved policy profile>"],
+    "ssl_ciphers": ["HIGH:MEDIUM:+3DES:!aNULL", CIS_SSL_CIPHERS.replace(":", ","),
+                    CIS_SSL_CIPHERS + ":HIGH", "ECDHE-RSA-AES256-GCM-SHA384",
+                    ":".join(reversed(CIS_SSL_CIPHERS.split(":"))), CIS_SSL_CIPHERS + ":"],
 }
 
 
@@ -455,9 +463,17 @@ class TestSettingValueRules:
 
     def test_every_reviewed_fixed_value_passes_its_rule(self):
         for name, (value, *_rest) in POLICIES.items():
-            if value != FROM_PROFILE:
+            if value not in (FROM_PROFILE, planning.COMPUTED):
                 check_setting_value(name, value)
                 SetConfigTemplateParams(param_name=name, param_value=value)
+
+    def test_computed_marker_never_passes_a_value_rule(self):
+        """W2B: like FROM_PROFILE, the COMPUTED marker can never be rendered by mistake."""
+        computed = [name for name, (value, *_r) in POLICIES.items() if value == planning.COMPUTED]
+        assert computed == ["shared_preload_libraries"]
+        for name in POLICIES:
+            with pytest.raises(SettingValueError):
+                check_setting_value(name, planning.COMPUTED)
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +482,8 @@ class TestSettingValueRules:
 
 class TestRestartAndGrounding:
     def test_reviewed_restart_set(self):
-        assert RESTART_SETTINGS == {"logging_collector", "listen_addresses"}
+        # shared_preload_libraries joined by W2B gate 1, ruling 3.
+        assert RESTART_SETTINGS == {"logging_collector", "listen_addresses", "shared_preload_libraries"}
 
     def test_reconstruction_accepts_only_reviewed_postmaster_settings(self, engine, snapshot):
         snap = copy.deepcopy(snapshot)

@@ -355,7 +355,8 @@ def test_activate_refuses_restart_for_other_settings(monkeypatch, pending):
 def test_restart_allowlist_is_shared_with_provenance():
     from services.sandbox_poc import provenance
     assert provenance.RESTART_SETTINGS is RESTART_SETTINGS
-    assert RESTART_SETTINGS == frozenset({"logging_collector", "listen_addresses"})
+    # shared_preload_libraries joined by W2B gate 1, ruling 3.
+    assert RESTART_SETTINGS == frozenset({"logging_collector", "listen_addresses", "shared_preload_libraries"})
 
 
 def _fake_target(monkeypatch, pending):

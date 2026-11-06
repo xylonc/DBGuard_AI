@@ -17,6 +17,9 @@ from services.sandbox_poc.service import SandboxService
 from test_review_bundle import recorded, collector  # shared fixtures
 from test_sandbox_poc import engine, snapshot
 
+# The F6 catalog checks this file pins. Wave 2b catalog checks (3.2, 4.8, 5.3, 5.4, 5.6,
+# 6.8, 6.10, 6.11) are catalog too (engine.catalog_ids); their fix-plan entries are
+# covered with the Wave 2b fix work.
 CATALOG = {f"cis-pg17-v1.1.0:{r}" for r in ("4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4")}
 STATUS = {"PASS": "PASS", "FAIL": "FAIL", "MANUAL": "MANUAL_REVIEW", "NOT_COLLECTED": "GAPPED"}
 
@@ -69,7 +72,9 @@ def test_non_pass_catalog_rows_listed_once_with_kind_and_status(client, recorded
     assert plan["recommended_order"]  # the setting fixes are still offered
     assert not CATALOG & {f["spec_id"] for f in plan["recommended_order"]}
     # Non-catalog manual entries carry no catalog kind.
-    assert all(m.get("kind") != "catalog" for m in plan["manual_review"] if m["spec_id"] not in CATALOG)
+    all_catalog = {r["spec_id"] for r in assessment["upstream_report"]["results"] if "evidence_paths" in r}
+    assert CATALOG < all_catalog
+    assert all(m.get("kind") != "catalog" for m in plan["manual_review"] if m["spec_id"] not in all_catalog)
 
 
 def test_gapped_catalog_row_maps_to_gapped(client, recorded):

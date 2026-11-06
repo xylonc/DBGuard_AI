@@ -134,7 +134,9 @@ def test_new_controls_are_exactly_these(engine):
         assert tiers[sid(rec)] == "automated", rec
     for rec in POLICY:
         assert tiers[sid(rec)] == "parameterised", rec
-    assert tiers[sid("6.10")] == "needs_capability"
+    # 6.10 left needs_capability in Wave 2b: an automated catalog check (Gate W2B).
+    assert tiers[sid("6.10")] == "automated"
+    assert spec_of(engine, "6.10")["check"]["kind"] == "catalog"
 
 
 @pytest.mark.parametrize("rec", FIXED_IDS)

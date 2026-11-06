@@ -5,7 +5,7 @@ import json
 import re
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
-from app.services.setting_values import SettingValueError, check_setting_value
+from app.services.setting_values import CIS_SSL_CIPHERS, SettingValueError, check_setting_value
 from app.services.spec_engine.operators import evaluate
 from app.services.spec_engine.policy import policy_entry, site_fix
 from app.services.spec_engine.redaction import is_redacted
@@ -19,6 +19,11 @@ from .shared import ContractError
 # be rendered as SQL by mistake.
 FROM_PROFILE = "<from approved policy profile>"
 SITE_FIX_MISSING = "site-specific fix value not supplied in an approved policy profile"
+# Fix value marker (W2B gate 1): the value is re-derived server-side from the collected
+# evidence for one reviewed catalog fix (catalog_fixes.py, e.g. the current preload list
+# plus one library). Like FROM_PROFILE it can never pass a value rule, and fix_scope
+# refuses it: only a CATALOG_FIX_LINKS entry can reach these settings.
+COMPUTED = "<computed from evidence by a reviewed catalog fix>"
 
 # DRAFT (Gate 1 ruling on 5.2, pending db-security-reviewer and Melvin). What the
 # sandbox cannot prove for a listen_addresses fix. Shown in the risk review and in
@@ -236,6 +241,105 @@ POLICIES = {
          "After the restart, confirm application clients can reach a listed address",
          "Local or console access in case remote access is lost"],
     ),
+    # ---- Wave 2b (W2B gate 1, rulings 2, 3, 4, 9): catalog-linked settings ----
+    # No setting spec checks these: they are reached only through CATALOG_FIX_LINKS
+    # below, whose entry carries the per-fix risk and impact (shared_preload_libraries
+    # serves 3.2 and 5.6 with different risks). The risk here is the highest of them.
+    "shared_preload_libraries": (
+        COMPUTED,
+        "high",
+        "Requires a PostgreSQL restart. A library that is not installed stops the server "
+        "starting; the bundle runner refuses unless every added library loads on the target.",
+        ["Maintenance window", "Install the library's package on the server first"],
+    ),
+    "pgaudit.log": (
+        FROM_PROFILE,
+        "high",
+        "Sets the pgaudit session audit classes; pgaudit can produce an enormous volume of logging.",
+        ["Log storage capacity", "Rotation and retention"],
+    ),
+    "ssl_ciphers": (
+        CIS_SSL_CIPHERS,
+        "medium",
+        "Only the four CIS TLS 1.2 ciphers remain; TLS 1.3 is unaffected.",
+        ["Inventory client TLS support"],
+    ),
+}
+
+# Settings that several catalog-linked fixes may change in one batch, each re-derived from
+# the state the previous fix left (W2B rulings round 3: the preload list template).
+CHAINABLE_SETTINGS = frozenset({"shared_preload_libraries"})
+
+# Reviewed "affects" declarations (W2B gate 1): a fixable setting that is an input of a
+# catalog evaluator OTHER than the one its own catalog link serves. Changing the setting
+# can change which TLS sessions exist, so these checks read it. Consequence, enforced in
+# code: every fix that changes the setting (the plain setting loop, catalog-linked fixes
+# and batch steps) re-checks these catalog controls in the sandbox and fails on a
+# regression (catalog_fixes.catalog_regressions). tests/test_catalog_checks.py requires
+# the fixable catalog inputs to be EXACTLY the linked settings plus these pairs.
+CATALOG_INPUT_AFFECTS = {
+    # The existing 6.9 fix: the minimum protocol decides whether TLS 1.2 sessions exist.
+    "ssl_min_protocol_version": ("tls_cipher_suites", "tls_enabled_and_enforced"),
+    # The 6.10 fix: a client with sslmode=prefer whose handshake fails falls back to no TLS.
+    "ssl_ciphers": ("tls_enabled_and_enforced",),
+}
+
+# Reviewed links from a catalog check to the setting fix that makes it PASS (W2B gate 1:
+# Melvin's rulings 2, 3, 4 and 9, 5 Nov 2026). Keyed by catalog evaluator name. Each
+# setting listed here is a POLICIES key and one of the evaluator's setting_inputs; the
+# safeguard tests in tests/test_catalog_checks.py allow a fixable setting as a catalog
+# input ONLY for the evaluators listed here, and only for these settings. Values are
+# derived in catalog_fixes.py; the proof is the evaluator itself returning PASS on the
+# post-fix sandbox collection (with the approved policy profile), FAIL before and after
+# rollback. Risk and impact texts are the gate's table E (DRAFT until db-security-reviewer).
+CATALOG_FIX_LINKS = {
+    "pgaudit_enabled": {
+        "recommendation": "3.2",
+        "fix_id": "fix-pgaudit",
+        "settings": ("shared_preload_libraries", "pgaudit.log"),
+        "library": "pgaudit",
+        "risk": "high",
+        "impact": (
+            "Requires a PostgreSQL restart. pgaudit must be installed on the server first: if the "
+            "library is missing PostgreSQL does not start (the bundle runner refuses unless it "
+            "loads). pgaudit.log is set to exactly the classes in the approved company policy, "
+            "replacing its current value. Audit logging can produce an enormous volume of logging "
+            "(CIS 3.2)."
+        ),
+        "prerequisites": ["Install the pgaudit package (postgresql-17-pgaudit) on the server",
+                          "Maintenance window for the restart", "Log storage capacity",
+                          "Rotation, retention and log shipping for audit records"],
+    },
+    "password_complexity_module": {
+        "recommendation": "5.6",
+        "fix_id": "fix-passwordcheck",
+        "settings": ("shared_preload_libraries",),
+        "library": "passwordcheck",
+        "risk": "medium",
+        "impact": (
+            "Requires a PostgreSQL restart. After it, new passwords that are too weak are refused, "
+            "so account-creation scripts may fail. Existing and pre-hashed passwords are not "
+            "checked (CIS 5.6). passwordcheck ships with PostgreSQL; the bundle runner still "
+            "refuses unless it loads on the target."
+        ),
+        "prerequisites": ["Maintenance window for the restart",
+                          "Check account-creation and password-change scripts"],
+    },
+    "tls_cipher_suites": {
+        "recommendation": "6.10",
+        "fix_id": "fix-ssl_ciphers",
+        "settings": ("ssl_ciphers",),
+        "library": None,
+        "risk": "medium",
+        "impact": (
+            "A reload applies it to new connections. Old clients that only support other ciphers "
+            "lose TLS 1.2 connections; TLS 1.3 is unaffected. Existing sessions keep their cipher "
+            "until they reconnect, so CIS 6.10 can still FAIL until they do. This fix does not "
+            "switch ssl on (CIS 6.8 is a guided DBA step)."
+        ),
+        "prerequisites": ["Inventory client TLS support",
+                          "Test application connections using TLS 1.2 and TLS 1.3"],
+    },
 }
 
 # Reviewed fix ordering: these fixes only take effect with the logging collector on,
@@ -298,6 +402,15 @@ GROUNDING = {
                                 "text.", "runtime-config-logging.html#GUC-LOG-MIN-ERROR-STATEMENT"),
     "log_line_prefix": ("Changes the printf-style prefix of every log line.",
                         "runtime-config-logging.html#GUC-LOG-LINE-PREFIX"),
+    "shared_preload_libraries": ("shared_preload_libraries requires a server restart. Every listed "
+                                 "library is loaded at server start; if one cannot be loaded the server "
+                                 "does not start.",
+                                 "runtime-config-client.html#GUC-SHARED-PRELOAD-LIBRARIES"),
+    "pgaudit.log": ("pgaudit.log is defined only once pgaudit is loaded through shared_preload_libraries. "
+                    "A reload applies a changed value.", "runtime-config-client.html#GUC-SHARED-PRELOAD-LIBRARIES"),
+    "ssl_ciphers": ("ssl_ciphers lists the TLS 1.2 and lower ciphers the server allows; TLS 1.3 cipher "
+                    "suites are not controlled by it. A reload applies it to new connections.",
+                    "runtime-config-connection.html#GUC-SSL-CIPHERS"),
 }
 
 
@@ -344,6 +457,9 @@ def fix_scope(engine, control):
     ):
         raise ContractError("Control has no supported, reviewed configuration policy")
     value = POLICIES[name][0]
+    if value == COMPUTED:
+        # Only a reviewed catalog link derives this value (catalog_fixes.catalog_fix_scope).
+        raise ContractError("Control has no supported, reviewed configuration policy")
     expected = None
     policy = getattr(engine, "policy", None)
     if uses_policy(spec):
@@ -492,6 +608,13 @@ def risk_review(engine, snapshot, control, reviewer=None, template_risk=None):
         ),
         "reference_urls": grounding(name)[1],
     }
+    return review_floor_and_llm(result, name, reviewer, template_risk)
+
+
+def review_floor_and_llm(result, name, reviewer=None, template_risk=None):
+    """Raise the risk to the approved template's level and the restart floor, then add
+    the optional model advice (which may only raise the risk). Shared by setting and
+    catalog-linked fixes (catalog_fixes.catalog_risk_review)."""
     if template_risk:
         result["approved_template_risk"] = template_risk
         ranks = {"low": 0, "medium": 1, "high": 2, "not_assessed": 3}
@@ -574,7 +697,14 @@ def recommend_order(fixes):
     by_id = {f["fix_id"]: f for f in fixes}
     if len(by_id) != len(fixes):
         raise ContractError("Duplicate or conflicting fixes")
-    settings = [f["setting"] for f in fixes if f.get("setting") is not None]
+    # A catalog-linked fix may change several settings (W2B: 3.2 changes the preload
+    # list and pgaudit.log); 3.2 and 5.6 both change shared_preload_libraries.
+    # W2B rulings round 3: catalog fixes may share a CHAINABLE setting (3.2 and 5.6 both
+    # append to shared_preload_libraries); in a batch each later one is re-derived from the
+    # combined sandbox state, so its prior is the earlier fix's result (batch._catalog_step).
+    settings = [s for f in fixes if f.get("setting") is not None
+                for s in (f.get("settings") or [f["setting"]])
+                if not (s in CHAINABLE_SETTINGS and f.get("kind") == "catalog_setting")]
     if len(set(settings)) != len(settings):
         raise ContractError("Multiple fixes change the same setting")
     # Per-object fixes carry setting None plus fix_type and target; the same change

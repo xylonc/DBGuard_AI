@@ -1,9 +1,9 @@
 """Sandbox scope for catalog checks (Melvin: "Skip now, skeleton next week").
 
 Default, shared.SANDBOX_COMPARES_CATALOG = False: the sandbox findings map holds
-the 29 non-catalog specs only, so the no-GAPPED guards, regressions and
+the 28 non-catalog specs only, so the no-GAPPED guards, regressions and
 reproduction/rollback equality in service, workflow, review_bundle, batch and
-history ignore the 10 catalog specs. upstream_report keeps all 39 rows.
+history ignore the 18 catalog specs. upstream_report keeps all 46 rows.
 
 Switch True (monkeypatched in TestCatalogCompared): catalog findings stay in the
 map; the no-GAPPED guards still skip them (gapped_settings), the PASS clause and
@@ -35,9 +35,11 @@ S410 = "cis-pg17-v1.1.0:4.10"
 S49 = "cis-pg17-v1.1.0:4.9"
 S3125 = "cis-pg17-v1.1.0:3.1.25"   # FAIL in the fixture (log_statement none)
 S3121 = "cis-pg17-v1.1.0:3.1.21"   # PASS in the fixture
-CATALOG_IDS = {f"cis-pg17-v1.1.0:{r}" for r in ("4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4")}
+CATALOG_IDS = {f"cis-pg17-v1.1.0:{r}" for r in ("4.3", "4.4", "4.5", "4.6", "4.7", "4.9", "4.10", "5.5", "7.1", "7.4",
+                                                # Wave 2b catalog checks (Gate W2B)
+                                                "3.2", "4.8", "5.3", "5.4", "5.6", "6.8", "6.10", "6.11")}
 # Specs without a check (manual_checklist / needs_capability): not catalog, so always kept.
-NON_CHECK_IDS = {f"cis-pg17-v1.1.0:{r}" for r in ("3.1.12", "6.10", "7.2")}  # no check: manual_checklist, needs_capability
+NON_CHECK_IDS = {f"cis-pg17-v1.1.0:{r}" for r in ("3.1.12", "7.2")}  # no check: manual_checklist
 
 
 # ---------------------------------------------------------------------------
@@ -248,28 +250,28 @@ def recorded_history(engine, snapshot, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 class TestDefaultScope:
-    def test_default_is_false_and_findings_are_the_29_non_catalog_specs(self, engine, snapshot):
+    def test_default_is_false_and_findings_are_the_28_non_catalog_specs(self, engine, snapshot):
         assert shared.SANDBOX_COMPARES_CATALOG is False
         assessment = engine.assess(snapshot)
         all_ids = {s["spec_id"] for s in engine.specs}
         assert set(assessment["findings"]) == all_ids - CATALOG_IDS
-        assert len(assessment["findings"]) == 29
+        assert len(assessment["findings"]) == 28
         for sid in NON_CHECK_IDS:
             assert assessment["findings"][sid]["status"] == "MANUAL_REVIEW"
         assert not CATALOG_IDS & set(assessment["findings"])
 
-    def test_upstream_report_keeps_all_39_rows_with_catalog_evidence(self, engine, snapshot):
+    def test_upstream_report_keeps_all_46_rows_with_catalog_evidence(self, engine, snapshot):
         report = engine.assess(snapshot)["upstream_report"]
         rows = {r["spec_id"]: r for r in report["results"]}
-        assert len(rows) == 39 and CATALOG_IDS <= set(rows)
+        assert len(rows) == 46 and CATALOG_IDS <= set(rows)
         assert rows["cis-pg17-v1.1.0:5.5"]["result"] == "FAIL"
         assert rows["cis-pg17-v1.1.0:5.5"]["evidence"][0]["rolname"] == "dbguard_poc"
         assert rows[S74]["result"] == "FAIL"
-        assert sum(report["summary"].values()) == 39
+        assert sum(report["summary"].values()) == 46
 
     def test_catalog_ids_are_exactly_the_catalog_specs(self, engine):
         ids = {s["spec_id"] for s in engine.specs if s.get("check", {}).get("kind") == "catalog"}
-        assert engine.catalog_ids == ids == CATALOG_IDS and len(ids) == 10
+        assert engine.catalog_ids == ids == CATALOG_IDS and len(ids) == 18
         assert not engine.catalog_ids & NON_CHECK_IDS
         assert not hasattr(engine, "setting_ids")
 
@@ -329,14 +331,14 @@ class TestDefaultCatalogNeverBlocks:
         mutate(snapshot)
         handoff, result = recorded_run(engine, snapshot)
         report = report_html(engine, handoff, result)
-        assert report.count("<tr><td>cis-") == 29
+        assert report.count("<tr><td>cis-") == 28
         assert "reproduction or rollback findings differ" not in report
 
     def test_bundle_catalog_difference_between_source_and_sandbox(self, engine, snapshot):
         handoff, result = recorded_run(engine, snapshot)
         tamper_before(engine, result, add_source_only_catalog)
         tamper_after(engine, result, add_source_only_catalog)
-        assert report_html(engine, handoff, result).count("<tr><td>cis-") == 29
+        assert report_html(engine, handoff, result).count("<tr><td>cis-") == 28
 
     @pytest.mark.parametrize("mutate", [catalog_gap_unrecorded, add_source_only_catalog])
     def test_batch_combined_reproduction(self, engine, snapshot, tmp_path, monkeypatch, mutate):
@@ -480,9 +482,9 @@ class TestCatalogCompared:
     def _catalog_compared(self, monkeypatch):
         monkeypatch.setattr(shared, "SANDBOX_COMPARES_CATALOG", True)
 
-    def test_findings_keep_all_39(self, engine, snapshot):
+    def test_findings_keep_all_46(self, engine, snapshot):
         findings = engine.assess(snapshot)["findings"]
-        assert set(findings) == {s["spec_id"] for s in engine.specs} and len(findings) == 39
+        assert set(findings) == {s["spec_id"] for s in engine.specs} and len(findings) == 46
         assert CATALOG_IDS <= set(findings)
 
     def test_catalog_gap_is_gapped_in_findings_but_not_a_guarded_gap(self, engine, snapshot):
@@ -584,9 +586,9 @@ class TestCatalogCompared:
         with pytest.raises(ContractError, match="reproduction or rollback findings differ"):
             build_review_bundle(handoff, result, engine)
 
-    def test_untampered_bundle_has_all_39_rows(self, engine, snapshot):
+    def test_untampered_bundle_has_all_46_rows(self, engine, snapshot):
         handoff, result = recorded_run(engine, snapshot)
-        assert report_html(engine, handoff, result).count("<tr><td>cis-") == 39
+        assert report_html(engine, handoff, result).count("<tr><td>cis-") == 46
 
     def test_batch_combined_catalog_difference_is_refused(self, engine, snapshot, tmp_path, monkeypatch):
         sandbox = copy.deepcopy(snapshot)

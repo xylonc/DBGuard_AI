@@ -16,10 +16,12 @@ import {
   explainRow,
   isPolicyMissing,
   policyMissingRows,
+  settingEvidence,
   statusKind,
   statusLabel,
 } from "./explanations"
 import { CatalogEvidence } from "./Evidence"
+import { snapshotSummary } from "./snapshotSummary"
 import { useEffect, useState, type ReactNode } from "react"
 import { activeObjectFix, assessmentPath, useLive } from "@/store/liveStore"
 import { useWorkflow } from "@/store/workflowStore"
@@ -133,6 +135,81 @@ export function Feedback() {
     </>
   )
 }
+// "Found / CIS expects" for a setting rule, from the authoritative report row.
+function SettingEvidenceLine({
+  row,
+  original,
+}: {
+  row: any
+  original?: boolean
+}) {
+  const ev = settingEvidence(row)
+  if (!ev) return null
+  return (
+    <dl className="mt-1 text-xs text-slate-600 bg-slate-50 rounded px-2 py-1 space-y-0.5 break-words">
+      <div>
+        <dt className="inline font-semibold">
+          {original ? "Found (original snapshot): " : "Found: "}
+        </dt>
+        <dd className="inline">{ev.found}</dd>
+      </div>
+      {ev.expects && (
+        <div>
+          <dt className="inline font-semibold">{ev.source} expects: </dt>
+          <dd className="inline">{ev.expects}</dd>
+        </div>
+      )}
+    </dl>
+  )
+}
+
+// Step 3: what the loaded snapshot contains, before the raw data.
+function SnapshotSummaryCard({ snapshot }: { snapshot: any }) {
+  const summary = snapshotSummary(snapshot)
+  if (!summary) return null
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+      <p className="text-sm font-semibold">What this snapshot contains</p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        {summary.lines.map((l) => (
+          <div key={l.label} className="contents">
+            <dt className="text-slate-500">{l.label}</dt>
+            <dd className="break-all">{l.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {(summary.gaps.length > 0 ||
+        summary.unavailable.length > 0 ||
+        summary.malformedGaps > 0) && (
+        <div className="rounded bg-amber-50 p-2 text-xs text-amber-900 space-y-1">
+          <p className="font-semibold">
+            Not collected: rules that need this evidence can't say PASS.
+          </p>
+          <ul className="list-disc pl-4">
+            {summary.unavailable.map((s) => (
+              <li key={`u-${s}`}>{s}</li>
+            ))}
+            {summary.gaps.map((g, i) => (
+              <li key={`g-${i}`}>
+                {g.section}: {g.reason}
+              </li>
+            ))}
+            {summary.malformedGaps > 0 && (
+              <li>
+                {summary.malformedGaps} gap record(s) could not be read; treat
+                that evidence as not collected.
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+      <p className="text-xs text-slate-500">
+        The assessment in step 4 reads this evidence rule by rule.
+      </p>
+    </div>
+  )
+}
+
 export function Results({
   assessment,
   after,
@@ -180,6 +257,7 @@ export function Results({
                       )}
                     </div>
                   )}
+                  <SettingEvidenceLine row={r} original={!!after} />
                   <CatalogEvidence row={r} />
                 </td>
                 <td className="p-2">
@@ -438,6 +516,7 @@ export function LiveWorkflow() {
             </div>
             {s.snapshot && (
               <>
+                <SnapshotSummaryCard snapshot={s.snapshot} />
                 <Raw value={s.snapshot} />
                 <button className={button} onClick={() => setWorkflowStep(4)}>
                   Continue to assessment

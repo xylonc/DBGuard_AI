@@ -554,3 +554,45 @@ export function compareRecommendation(a: any, b: any): number {
 export function policyMissingRows(rows: any[]): any[] {
   return (rows ?? []).filter(isPolicyMissing).sort(compareRecommendation)
 }
+
+// ---- setting evidence (PASS and FAIL setting rows) --------------------------------
+// What the collector found for a setting rule and what the rule needs, from the
+// authoritative report row (assess.py: setting_name, observed, operator, expected,
+// direction, expected_from). Catalog rows show their own evidence list instead.
+// Only PASS and FAIL: the backend also sends `observed` on rows it refused to judge
+// (session overrides, stale spec hash, redacted secrets, policy missing), and a
+// value shown there next to the expectation would read as evidence it is met.
+
+// The collector's marker for a secret setting (redaction.py); never shown as a value.
+const REDACTED_MARKER = "***REDACTED***"
+
+export type SettingEvidence = {
+  found: string
+  expects: string | null
+  source: "CIS" | "Your company policy"
+}
+
+export function settingEvidence(row: any): SettingEvidence | null {
+  if (!row || typeof row !== "object" || isCatalogRow(row)) return null
+  const kind = statusKind(row.status)
+  if (kind !== "pass" && kind !== "fail") return null
+  if (typeof row.setting_name !== "string" || !row.setting_name) return null
+  if (typeof row.observed !== "string") return null
+  if (row.observed.startsWith(REDACTED_MARKER)) return null
+  const hasExpected =
+    row.expected !== undefined &&
+    row.expected !== null &&
+    typeof row.operator === "string"
+  return {
+    found: `${name(row.setting_name)} is ${quoteValue(row.observed)}`,
+    expects: hasExpected
+      ? conditionPhrase({
+          setting_name: row.setting_name,
+          operator: row.operator,
+          expected: row.expected,
+          direction: row.direction,
+        })
+      : null,
+    source: row.expected_from === "policy" ? "Your company policy" : "CIS",
+  }
+}

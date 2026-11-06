@@ -935,3 +935,162 @@ test("5.3 / 5.4 highlight codes map to fixed sentences; unknown codes never echo
   ])
     assert.deepEqual(highlightSentences(item), [])
 })
+
+// ---- setting evidence (found vs expected on PASS/FAIL setting rows) -------------
+
+import { settingEvidence } from "../src/live/explanations.ts"
+
+test("setting evidence: FAIL row shows what was found and what CIS expects", () => {
+  const ev = settingEvidence({
+    spec_id: "cis-pg17-v1.1.0:3.1.20",
+    status: "FAIL",
+    setting_name: "log_connections",
+    operator: "equals",
+    expected: "on",
+    observed: "off",
+  })
+  assert.deepEqual(ev, {
+    found: "log_connections is 'off'",
+    expects: "log_connections is 'on'",
+    source: "CIS",
+  })
+})
+
+test("setting evidence: PASS rows show it too, and list operators read naturally", () => {
+  const ev = settingEvidence({
+    status: "PASS",
+    setting_name: "log_line_prefix",
+    operator: "contains_escapes",
+    expected: ["%m", "%p"],
+    observed: "%m [%p] ",
+  })
+  assert.equal(ev.found, "log_line_prefix is '%m [%p] '")
+  assert.equal(ev.expects, "log_line_prefix uses '%m' and '%p'")
+})
+
+test("setting evidence: severity keeps its direction", () => {
+  const ev = settingEvidence({
+    status: "FAIL",
+    setting_name: "log_min_messages",
+    operator: "severity",
+    direction: "at_or_more_verbose",
+    expected: "warning",
+    observed: "panic",
+  })
+  assert.equal(ev.expects, "log_min_messages is 'warning' or more verbose")
+})
+
+test("setting evidence: policy rows name the company policy; policy-missing rows show nothing", () => {
+  const withValue = settingEvidence({
+    status: "FAIL",
+    setting_name: "log_directory",
+    operator: "equals",
+    expected: "/var/log/pg",
+    expected_from: "policy",
+    observed: "log",
+  })
+  assert.equal(withValue.source, "Your company policy")
+  assert.equal(withValue.expects, "log_directory is '/var/log/pg'")
+  const noValue = settingEvidence({
+    status: "MANUAL",
+    setting_name: "log_directory",
+    operator: "equals",
+    expected_from: "policy",
+    observed: "log",
+  })
+  // MANUAL (policy_missing) is decided before the evidence is checked, so its
+  // observed value may be stale or redacted: no Found line (security review).
+  assert.equal(noValue, null)
+})
+
+test("setting evidence: rows the engine refused to judge never show their value", () => {
+  // The backend sends observed whenever the entry was collected, even when it
+  // then refused to judge it (assess.py). Shown next to the expectation, the value
+  // would read as evidence the rule is met.
+  const base = {
+    setting_name: "log_connections",
+    operator: "equals",
+    expected: "on",
+    observed: "on",
+  }
+  for (const [status, reason_code] of [
+    ["NOT_COLLECTED", "session_override"],
+    ["STALE", "hash_mismatch"],
+    ["ERROR", "operator_error"],
+    ["GAPPED", "session_override"],
+    ["NOT_APPLICABLE", "condition_false"],
+    ["MANUAL_REVIEW", "policy_missing"],
+    ["SOMETHING_NEW", "x"],
+    [undefined, "x"],
+  ])
+    assert.equal(
+      settingEvidence({ ...base, status, reason_code }),
+      null,
+      status,
+    )
+})
+
+test("setting evidence: a redaction marker is never shown as a found value", () => {
+  for (const status of ["PASS", "FAIL", "NOT_COLLECTED"])
+    assert.equal(
+      settingEvidence({
+        status,
+        setting_name: "some_secret",
+        operator: "not_equals",
+        expected: "",
+        observed: "***REDACTED*** (set, 12 characters)",
+      }),
+      null,
+      status,
+    )
+})
+
+test("setting evidence: nothing is invented when the value was not collected", () => {
+  // GAPPED rows have no observed value; they keep their own Unknown explanation.
+  assert.equal(
+    settingEvidence({
+      status: "NOT_COLLECTED",
+      setting_name: "log_connections",
+      operator: "equals",
+      expected: "on",
+    }),
+    null,
+  )
+  assert.equal(
+    settingEvidence({ status: "FAIL", setting_name: "x", observed: 3 }),
+    null,
+  )
+  assert.equal(settingEvidence(null), null)
+  assert.equal(settingEvidence({ status: "FAIL", observed: "off" }), null)
+})
+
+test("setting evidence: catalog rows are left to their own evidence list", () => {
+  assert.equal(
+    settingEvidence({
+      status: "FAIL",
+      evidence_paths: ["roles"],
+      setting_name: "ssl",
+      observed: "off",
+    }),
+    null,
+  )
+})
+
+test("setting evidence: an empty value is shown as empty and long values are clipped", () => {
+  const empty = settingEvidence({
+    status: "FAIL",
+    setting_name: "shared_preload_libraries",
+    operator: "contains_items",
+    expected: ["pgaudit"],
+    observed: "",
+  })
+  assert.equal(empty.found, "shared_preload_libraries is '' (empty)")
+  const long = settingEvidence({
+    status: "FAIL",
+    setting_name: "ssl_ciphers",
+    operator: "equals",
+    expected: "x",
+    observed: "A".repeat(5000),
+  })
+  assert.ok(long.found.length < 400)
+})

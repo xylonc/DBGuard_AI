@@ -1,5 +1,7 @@
+import { FileButton } from "./FileButton"
 import { BenchmarkImport } from "./BenchmarkImport"
 import {
+  CombinedResult,
   CombinedReview,
   FixPlan,
   RunHistory,
@@ -22,6 +24,21 @@ import {
 } from "./explanations"
 import { CatalogEvidence } from "./Evidence"
 import { snapshotSummary } from "./snapshotSummary"
+import {
+  anyBundleReady,
+  bundleState,
+  combinedResultTitle,
+  singleFixName,
+  singleResultTitle,
+  titlesBySpec,
+} from "./resultLabels"
+import {
+  changeDirection,
+  runAfter,
+  runRegressions,
+  statusChanges,
+  type Direction,
+} from "./sandboxChanges"
 import { useEffect, useState, type ReactNode } from "react"
 import { activeObjectFix, assessmentPath, useLive } from "@/store/liveStore"
 import { useWorkflow } from "@/store/workflowStore"
@@ -41,15 +58,80 @@ const input =
 export function Card({
   children,
   title,
+  subtitle,
+  // One line saying what this card is for.
 }: {
   children: ReactNode
   title?: string
+  subtitle?: string
 }) {
   return (
     <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
-      {title && <h2 className="font-semibold text-slate-800">{title}</h2>}
+      {title && (
+        <div className="space-y-1">
+          <h2 className="font-semibold text-slate-800">{title}</h2>
+          {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+        </div>
+      )}
       {children}
     </section>
+  )
+}
+
+function DemoTag() {
+  return (
+    <span className="rounded bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs text-amber-900">
+      Demo approval only (DEMO_FIXTURE_ONLY)
+    </span>
+  )
+}
+
+// A collapsible group with a clear title, an optional count and a one-line hint.
+export function Fold({
+  title,
+  count,
+  hint,
+  open = false,
+  tone = "slate",
+  children,
+}: {
+  title: string
+  count?: number
+  hint?: string
+  open?: boolean
+  tone?: "slate" | "amber" | "sky" | "teal"
+  children: ReactNode
+}) {
+  const border = {
+    slate: "border-slate-200",
+    amber: "border-amber-300",
+    sky: "border-sky-200",
+    teal: "border-teal-200",
+  }[tone]
+  return (
+    <details className={`rounded-lg border ${border}`} open={open}>
+      <summary className="cursor-pointer list-none px-4 py-3 flex items-start gap-2 [&::-webkit-details-marker]:hidden">
+        {/* Rotates only when its own <details> is open, not a parent's. */}
+        <span
+          aria-hidden="true"
+          className="mt-0.5 text-slate-400 transition-transform [[open]>summary>&]:rotate-90"
+        >
+          ▶
+        </span>
+        <span className="flex-1">
+          <span className="font-medium">
+            {title}
+            {typeof count === "number" && (
+              <span className="ml-2 rounded-full bg-slate-100 px-2 text-xs text-slate-600">
+                {count}
+              </span>
+            )}
+          </span>
+          {hint && <span className="block text-xs text-slate-500">{hint}</span>}
+        </span>
+      </summary>
+      <div className="px-4 pb-4 space-y-3">{children}</div>
+    </details>
   )
 }
 export function Raw({
@@ -210,18 +292,141 @@ function SnapshotSummaryCard({ snapshot }: { snapshot: any }) {
   )
 }
 
+const CHANGE_ROW: Record<Direction, string> = {
+  better: "bg-green-50/60",
+  worse: "bg-red-50/70",
+  changed: "bg-amber-50/60",
+}
+const CHANGE_TAG: Record<Direction, [string, string]> = {
+  better: ["▲ Improved", "text-green-800"],
+  worse: ["▼ Got worse", "text-red-800"],
+  changed: ["● Changed", "text-amber-900"],
+}
+function ChangeTag({ direction }: { direction: Direction }) {
+  const [label, color] = CHANGE_TAG[direction]
+  return (
+    <span className={`block mt-1 text-xs font-semibold ${color}`}>{label}</span>
+  )
+}
+
+// After a sandbox run: the checks whose status changed, then every check in a
+// collapsed list. `after` maps spec id to the sandbox status after the fix.
+// `regressions`: ids the sandbox recorded as regressions (always shown as worse).
+// `notice`: shown first in red, e.g. when the test did not verify.
+export function SandboxChanges({
+  assessment,
+  after,
+  regressions = [],
+  notice,
+  afterLabel = "After sandbox fix",
+}: {
+  assessment: any
+  after: Record<string, any>
+  regressions?: string[]
+  notice?: string
+  afterLabel?: string
+}) {
+  const rows = findings(assessment)
+  const { changes, unchanged, notRechecked } = statusChanges(
+    rows,
+    after,
+    regressions,
+  )
+  const better = changes.filter((c) => c.direction === "better").length
+  const worse = changes.filter((c) => c.direction === "worse").length
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+        <p className="font-semibold text-sm">What changed in the sandbox</p>
+        {notice && (
+          <p className="rounded bg-red-50 border border-red-200 px-2 py-1 text-sm text-red-900">
+            {notice}
+          </p>
+        )}
+        <p className="text-sm">
+          {changes.length === 0
+            ? "No check changed status."
+            : `${changes.length} check${
+                changes.length === 1 ? "" : "s"
+              } changed: ${better} improved, ${worse} got worse.`}{" "}
+          {unchanged} unchanged.
+          {notRechecked > 0 &&
+            ` ${notRechecked} not re-checked in the sandbox: the throwaway copy doesn't hold your real accounts, permissions and connections, so those rules are only judged on the real database.`}
+        </p>
+        {changes.length > 0 && (
+          <ul className="space-y-1">
+            {changes.map((c) => (
+              <li
+                key={c.id}
+                className={`flex flex-wrap items-center gap-2 rounded px-2 py-1 text-sm border-l-4 ${
+                  c.direction === "better"
+                    ? "border-green-500 bg-green-50"
+                    : c.direction === "worse"
+                      ? "border-red-500 bg-red-50"
+                      : "border-amber-500 bg-amber-50"
+                }`}
+              >
+                <span className="flex-1 min-w-[12rem]">
+                  {c.title}
+                  <small className="block text-slate-500">{c.id}</small>
+                </span>
+                <FindingBadge value={c.before} />
+                <span aria-hidden="true">→</span>
+                <span className="sr-only">changed to</span>
+                {c.after === null ? (
+                  <span className="text-xs font-semibold text-red-800">
+                    Got worse (recorded by the sandbox)
+                  </span>
+                ) : (
+                  <FindingBadge value={c.after} />
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <details className="rounded-lg border border-slate-200">
+        <summary className="cursor-pointer px-3 py-2 text-sm text-teal-700">
+          Show all {rows.length} checks, before and after (changes highlighted)
+        </summary>
+        <div className="px-1 pb-2">
+          <Results
+            assessment={assessment}
+            after={after}
+            regressions={regressions}
+            afterLabel={afterLabel}
+          />
+        </div>
+      </details>
+    </div>
+  )
+}
+
 export function Results({
   assessment,
   after,
+  regressions = [],
   label = "Original assessment",
   afterLabel = "After sandbox fix",
 }: {
   assessment: any
   after?: any
+  regressions?: string[]
   label?: string
   afterLabel?: string
 }) {
   const rows = findings(assessment)
+  const has = (id: string) =>
+    !!after && Object.prototype.hasOwnProperty.call(after, id)
+  const directionOf = (r: any): Direction | null => {
+    if (regressions.includes(r.id)) return "worse"
+    if (!has(r.id)) return null
+    const now = after[r.id]
+    const nowStatus = now && typeof now === "object" ? now.status : now
+    return statusKind(r.status) === statusKind(nowStatus)
+      ? null
+      : changeDirection(r.status, nowStatus)
+  }
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -235,8 +440,14 @@ export function Results({
         <tbody>
           {rows.map((r) => {
             const why = explainRow(r)
+            const moved = directionOf(r)
             return (
-              <tr key={r.id} className="border-t border-slate-100 align-top">
+              <tr
+                key={r.id}
+                className={`border-t border-slate-100 align-top ${
+                  moved ? CHANGE_ROW[moved] : ""
+                }`}
+              >
                 <td className="p-2">
                   {r.title || r.id}
                   <small className="block text-slate-500">{r.id}</small>
@@ -266,7 +477,20 @@ export function Results({
                 </td>
                 {after && (
                   <td className="p-2">
-                    <FindingBadge value={after[r.id]} />
+                    {has(r.id) ? (
+                      <>
+                        <FindingBadge value={after[r.id]} />
+                        {moved && <ChangeTag direction={moved} />}
+                      </>
+                    ) : regressions.includes(r.id) ? (
+                      <span className="text-xs font-semibold text-red-800">
+                        ▼ Got worse (recorded by the sandbox)
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-500">
+                        Not re-checked here
+                      </span>
+                    )}
                   </td>
                 )}
               </tr>
@@ -353,6 +577,7 @@ export function LiveWorkflow() {
   ]
   const busy = !!s.busy || !!s.chatJob
   const objectFix = activeObjectFix(s)
+  const specTitles = titlesBySpec(findings(s.assessment))
   const done = [
     !!s.assessment,
     false,
@@ -482,20 +707,19 @@ export function LiveWorkflow() {
               </>
             ) : (
               <>
-                <label className="block">
-                  Snapshot JSON
-                  <input
+                <div className="space-y-1">
+                  <p className="text-sm">Snapshot JSON from the collector</p>
+                  <FileButton
+                    label="Choose snapshot file (.json)"
                     aria-label="Import snapshot JSON"
-                    type="file"
                     accept=".json"
                     disabled={busy}
-                    className="block mt-2"
                     onChange={(e) => {
                       if (e.target.files?.[0])
                         void live.upload(e.target.files[0])
                     }}
                   />
-                </label>
+                </div>
               </>
             )}
             <div className="flex gap-2">
@@ -575,131 +799,179 @@ export function LiveWorkflow() {
                 setPolicyOpen(true)
                 setWorkflowStep(4)
               }}
+              singleTest={
+                <>
+                  <p className="text-sm">
+                    Chosen fix:{" "}
+                    <strong>
+                      {objectFix
+                        ? objectFix.title
+                        : (specTitles.get(s.controlId) ?? s.controlId)}
+                    </strong>
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    To pick another, use “Test this fix on its own” in section
+                    1.
+                    {objectFix &&
+                      " Account and permission fixes run once with their approved template, with no retries."}
+                  </p>
+                  <div className="flex flex-wrap gap-3 items-center">
+                    <button
+                      className={button}
+                      disabled={busy || !s.assessment || !s.evidenceIds.trim()}
+                      onClick={live.run}
+                    >
+                      {s.handoffId ? "Get this test's result" : "Run the test"}
+                    </button>
+                    <button
+                      className="text-sm text-teal-700"
+                      disabled={!!s.busy}
+                      onClick={() =>
+                        live.action("Refreshing recorded result", live.sync)
+                      }
+                    >
+                      Refresh result
+                    </button>
+                  </div>
+                  {!s.evidenceIds.trim() && (
+                    <p className="text-xs text-amber-800">
+                      Add the evidence document IDs under Advanced test settings
+                      before running the test.
+                    </p>
+                  )}
+                  <Fold
+                    open={!s.evidenceIds.trim()}
+                    title="Advanced test settings"
+                    hint="Template versions, evidence references and retry rules. The defaults suit most tests."
+                  >
+                    <label className="block text-sm">
+                      Environment
+                      <input
+                        className={input}
+                        value={s.environment}
+                        disabled={busy || s.service === "demo"}
+                        onChange={(e) =>
+                          live.configure({ environment: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      set_config_parameter template version
+                      <input
+                        type="number"
+                        min="1"
+                        className={input}
+                        value={s.templateVersion}
+                        disabled={busy || s.service === "demo"}
+                        onChange={(e) =>
+                          live.configure({
+                            templateVersion: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      Per-object fix template version (used only when the server
+                      reports no approved version)
+                      <input
+                        type="number"
+                        min="1"
+                        className={input}
+                        value={s.objectTemplateVersion}
+                        disabled={busy || s.service === "demo"}
+                        onChange={(e) =>
+                          live.configure({
+                            objectTemplateVersion: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      Evidence document IDs (comma separated)
+                      <input
+                        className={input}
+                        value={s.evidenceIds}
+                        disabled={busy || s.service === "demo"}
+                        onChange={(e) =>
+                          live.configure({ evidenceIds: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      Retry policy
+                      <select
+                        className={input}
+                        disabled={busy || !!s.handoffId || !!objectFix}
+                        value={s.retryMode}
+                        onChange={(e) => patch({ retryMode: e.target.value })}
+                      >
+                        <option value="adaptive">
+                          LLM review after failure
+                        </option>
+                        <option value="repeat">
+                          Repeat approved candidate
+                        </option>
+                      </select>
+                    </label>
+                    <label className="block text-sm">
+                      Approved alternative templates (optional: name:version,
+                      comma separated)
+                      <input
+                        className={input}
+                        value={s.alternativeTemplates}
+                        disabled={
+                          busy ||
+                          !!s.handoffId ||
+                          s.retryMode !== "adaptive" ||
+                          !!objectFix
+                        }
+                        placeholder="set_config_parameter__alternative:1"
+                        onChange={(e) =>
+                          live.configure({
+                            alternativeTemplates: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <p className="text-xs text-slate-500">
+                      Up to three attempts, each on a fresh copy. Retries only
+                      use approved alternatives; a fix that works first time is
+                      not sent to the AI reviewer.
+                    </p>
+                    {s.handoffId && (
+                      <p className="text-xs break-all">
+                        Test reference: {s.handoffId}
+                      </p>
+                    )}
+                  </Fold>
+                </>
+              }
             />
-            <Card title="Reviewed fix references">
-              {objectFix ? (
-                <p>
-                  Selected fix: <strong>{objectFix.title}</strong> (per-object
-                  fix for {objectFix.spec_id}; only its fix id is sent)
-                </p>
-              ) : (
-                <p>Selected control: {s.controlId}</p>
+            <Card
+              title="3. Results"
+              subtitle="What each test changed on the throwaway copy. Changes are listed first; open the full list to see every rule before and after."
+            >
+              {!s.result && !currentBatch(s) && (
+                <p className="text-sm text-slate-500">No test has run yet.</p>
               )}
-              <label className="block text-sm">
-                Environment
-                <input
-                  className={input}
-                  value={s.environment}
-                  disabled={busy || s.service === "demo"}
-                  onChange={(e) =>
-                    live.configure({ environment: e.target.value })
-                  }
-                />
-              </label>
-              <label className="block text-sm">
-                set_config_parameter template version
-                <input
-                  type="number"
-                  min="1"
-                  className={input}
-                  value={s.templateVersion}
-                  disabled={busy || s.service === "demo"}
-                  onChange={(e) =>
-                    live.configure({ templateVersion: Number(e.target.value) })
-                  }
-                />
-              </label>
-              <label className="block text-sm">
-                Per-object fix template version (used only when the server
-                reports no approved version)
-                <input
-                  type="number"
-                  min="1"
-                  className={input}
-                  value={s.objectTemplateVersion}
-                  disabled={busy || s.service === "demo"}
-                  onChange={(e) =>
-                    live.configure({
-                      objectTemplateVersion: Number(e.target.value),
-                    })
-                  }
-                />
-              </label>
-              <label className="block text-sm">
-                Evidence document IDs (comma separated)
-                <input
-                  className={input}
-                  value={s.evidenceIds}
-                  disabled={busy || s.service === "demo"}
-                  onChange={(e) =>
-                    live.configure({ evidenceIds: e.target.value })
-                  }
-                />
-              </label>
-              <label className="block text-sm">
-                Retry policy
-                <select
-                  className={input}
-                  disabled={busy || !!s.handoffId || !!objectFix}
-                  value={s.retryMode}
-                  onChange={(e) => patch({ retryMode: e.target.value })}
-                >
-                  <option value="adaptive">LLM review after failure</option>
-                  <option value="repeat">Repeat approved candidate</option>
-                </select>
-              </label>
-              <label className="block text-sm">
-                Approved alternative templates (optional: name:version, comma
-                separated)
-                <input
-                  className={input}
-                  value={s.alternativeTemplates}
-                  disabled={
-                    busy ||
-                    !!s.handoffId ||
-                    s.retryMode !== "adaptive" ||
-                    !!objectFix
-                  }
-                  placeholder="set_config_parameter__alternative:1"
-                  onChange={(e) =>
-                    live.configure({ alternativeTemplates: e.target.value })
-                  }
-                />
-              </label>
-              {objectFix && (
-                <p className="text-xs text-slate-500">
-                  A per-object fix is tested once with its approved template: no
-                  retries or alternative templates.
-                </p>
-              )}
-              <p className="text-xs text-slate-500">
-                Maximum three attempts. Each test uses a fresh baseline.
-                Adaptive execution is limited to approved candidates; a
-                first-attempt success does not invoke the failure reviewer.
-              </p>
-              <button
-                className={button}
-                disabled={busy || !s.assessment || !s.evidenceIds.trim()}
-                onClick={live.run}
-              >
-                {s.handoffId
-                  ? "Retrieve / resume same handoff"
-                  : "Run sandbox test"}
-              </button>
-              <button
-                className="ml-3 text-teal-700"
-                disabled={!!s.busy}
-                onClick={() =>
-                  live.action("Refreshing recorded result", live.sync)
-                }
-              >
-                Refresh result
-              </button>
-              {s.handoffId && (
-                <p className="text-xs break-all">Handoff: {s.handoffId}</p>
-              )}
+              <CombinedResult />
+              {s.result && <RunResult framed={false} />}
             </Card>
-            {s.result && <RunResult />}
+            {(s.result || currentBatch(s)) && (
+              <Card title="4. Next: DBA review">
+                <p className="text-sm">
+                  {anyBundleReady(s.result, currentBatch(s))
+                    ? "A test passed and its bundle is ready. Next, review the change, its risk and its undo, and download the bundle for the DBA."
+                    : s.result?.status === "VERIFIED" ||
+                        currentBatch(s)?.status === "VERIFIED"
+                      ? "A test passed, but no bundle could be made for it yet; step 6 shows why. You can still review what happened."
+                      : "No test has passed yet, so there is nothing to hand over. You can still review what happened."}
+                </p>
+                <button className={button} onClick={() => setWorkflowStep(6)}>
+                  Continue to DBA review →
+                </button>
+              </Card>
+            )}
           </>
         )}
         {step === 6 &&
@@ -707,36 +979,68 @@ export function LiveWorkflow() {
             <>
               <CombinedReview />
               {s.result && <RunResult />}
-              <Card title="DBA handoff">
-                <p>
-                  The DBA reviews and runs harden.sh separately. Downloading the
-                  bundle does not apply anything.
-                </p>
-                {s.result && bundlePath(s.service, s.result) ? (
-                  <a
-                    className={`${button} inline-block`}
-                    href={bundlePath(s.service, s.result)}
-                    download
-                  >
-                    Download DBA review bundle
-                  </a>
-                ) : s.result ? (
-                  <p>No bundle is available for this result.</p>
-                ) : (
-                  <p>
-                    Use the combined bundle above for the fixes tested together.
-                  </p>
-                )}
+              <Card
+                title="Hand over to the DBA"
+                subtitle="Download what the DBA needs. Downloading changes nothing: the DBA reviews the bundle and runs it separately."
+              >
+                <ul className="space-y-3">
+                  {currentBatch(s) && (
+                    <li className="flex flex-wrap items-center gap-3">
+                      {currentBatch(s).review_bundle?.status === "READY" ? (
+                        <a
+                          className={`${button} inline-block`}
+                          href={`/bridge/${s.service}/api/v1/sandbox/runs/${encodeURIComponent(currentBatch(s).run_id)}/bundle`}
+                          download
+                        >
+                          Download combined bundle
+                        </a>
+                      ) : (
+                        <span className="text-sm text-amber-800">
+                          {bundleState(currentBatch(s), true).message}
+                        </span>
+                      )}
+                      {bundleState(currentBatch(s), true).demo && <DemoTag />}
+                      <span className="text-sm text-slate-600">
+                        {combinedResultTitle(currentBatch(s), specTitles)}
+                      </span>
+                    </li>
+                  )}
+                  {s.result && (
+                    <li className="flex flex-wrap items-center gap-3">
+                      {bundlePath(s.service, s.result) ? (
+                        <a
+                          className={`${
+                            currentBatch(s)
+                              ? "rounded border border-teal-700 text-teal-700 px-4 py-2 text-sm"
+                              : button
+                          } inline-block`}
+                          href={bundlePath(s.service, s.result)}
+                          download
+                        >
+                          Download single-fix bundle
+                        </a>
+                      ) : (
+                        <span className="text-sm text-amber-800">
+                          {bundleState(s.result).message}
+                        </span>
+                      )}
+                      {bundleState(s.result).demo && <DemoTag />}
+                      <span className="text-sm text-slate-600">
+                        {singleFixName(s.result, specTitles)}
+                      </span>
+                    </li>
+                  )}
+                </ul>
                 <button
-                  className="ml-3 text-teal-700"
+                  className="mt-2 block rounded border border-teal-700 text-teal-700 px-4 py-2 text-sm"
                   onClick={() => setWorkflowStep(7)}
                 >
-                  Continue to target verification →
+                  Continue to step 7: check the real database →
                 </button>
               </Card>
             </>
           ) : (
-            <Card title="No recorded result">
+            <Card title="Nothing to review yet">
               <p>Run a sandbox test in step 5 first.</p>
             </Card>
           ))}
@@ -750,100 +1054,124 @@ export function LiveWorkflow() {
     </div>
   )
 }
-export function RunResult() {
+// One recorded single-fix test. `framed`: its own card (step 6) or a panel
+// inside the step 5 results card.
+export function RunResult({ framed = true }: { framed?: boolean }) {
   const { state: s } = useLive()
   const r = s.result
-  return (
-    <Card title="Recorded sandbox result">
-      <div className="flex gap-3 items-center">
+  const titles = titlesBySpec(findings(s.assessment))
+  const title = singleResultTitle(r, titles)
+  const body = (
+    <>
+      <div className="flex flex-wrap gap-3 items-center">
         <Badge value={r.status} />
-        <span className="text-xs break-all">Run: {r.run_id}</span>
+        <span className="text-xs text-slate-500 break-all">Run {r.run_id}</span>
       </div>
       {r.kind === "object" && (
         <p className="text-sm">
-          Per-object fix:{" "}
-          <strong>{r.proposal?.title ?? r.fix_unit?.fix_id}</strong> ·{" "}
-          {r.fix_unit?.verify?.predicate}
+          Checked on the object itself: {r.fix_unit?.verify?.predicate}
         </p>
       )}
       {s.assessment && (
-        <Results
+        <SandboxChanges
           assessment={s.assessment}
-          after={
-            r.sandbox_after_findings ??
-            Object.fromEntries(
-              findings(r.attempts?.at(-1)?.after_assessment).map((f) => [
-                f.id,
-                f.status,
-              ]),
-            )
+          after={runAfter(r)}
+          regressions={runRegressions(r)}
+          notice={
+            r.status === "VERIFIED"
+              ? undefined
+              : `This test did not verify (${jsonText(r.status)}). The statuses below are from its last attempt; see the test details.`
           }
         />
       )}
-      <p className="text-xs">
-        A verified fix does not mean every control passes. Rollback checks the
-        prior value and configuration source inside the disposable sandbox.
-      </p>
-      {(r.attempts ?? []).map((a: any) => (
-        <div className="rounded border p-3 space-y-2" key={a.attempt}>
-          <p>
-            Attempt {a.attempt} · <Badge value={a.status} />
-          </p>
-          <div className="flex gap-3 text-xs flex-wrap">
-            <span>
-              Rollback: <Badge value={a.rollback_verified} />
-            </span>
-            <span>
-              Health after fix: <Badge value={a.health_after_apply} />
-            </span>
-            <span>
-              Health after rollback: <Badge value={a.health_after_rollback} />
-            </span>
-            <span>
-              Cleanup:{" "}
-              <Badge
-                value={a.cleanup?.verified ?? a.cleanup?.status ?? a.cleanup}
-              />
-            </span>
-          </div>
-          {a.functional_checks?.screenshot?.status === "CAPTURED" && (
-            <img
-              alt="Actual sandbox database query results after fix"
-              className="w-full border rounded"
-              src={
-                "data:image/png;base64," +
-                a.functional_checks.screenshot.png_base64
-              }
-            />
-          )}
-          <Raw value={a} />
-        </div>
-      ))}
-      {r.demo_evidence && (
-        <p className="text-sm">
-          Source unchanged: <Badge value={r.demo_evidence.source_unchanged} />{" "}
-          Registry unchanged:{" "}
-          <Badge value={r.demo_evidence.registry_unchanged} />
+      <Fold
+        title="Test details"
+        hint="Each attempt, its undo and clean-up, the screenshot, and the raw evidence."
+      >
+        <p className="text-xs text-slate-500">
+          A verified fix does not mean every rule passes. The undo is checked
+          too: the setting and where it came from must be back exactly as
+          before.
         </p>
-      )}
-      <p className="text-xs text-slate-500">
-        LLM review records: {(r.revisions ?? []).length}. The reviewer is
-        invoked after a failed attempt; first-attempt success needs no revision.
-      </p>
-      {r.risk_review && (
+        {(r.attempts ?? []).map((a: any) => (
+          <div className="rounded border p-3 space-y-2" key={a.attempt}>
+            <p>
+              Attempt {a.attempt} · <Badge value={a.status} />
+            </p>
+            <div className="flex gap-3 text-xs flex-wrap">
+              <span>
+                Rollback: <Badge value={a.rollback_verified} />
+              </span>
+              <span>
+                Health after fix: <Badge value={a.health_after_apply} />
+              </span>
+              <span>
+                Health after rollback: <Badge value={a.health_after_rollback} />
+              </span>
+              <span>
+                Cleanup:{" "}
+                <Badge
+                  value={a.cleanup?.verified ?? a.cleanup?.status ?? a.cleanup}
+                />
+              </span>
+            </div>
+            {a.functional_checks?.screenshot?.status === "CAPTURED" && (
+              <img
+                alt="Actual sandbox database query results after fix"
+                className="w-full border rounded"
+                src={
+                  "data:image/png;base64," +
+                  a.functional_checks.screenshot.png_base64
+                }
+              />
+            )}
+            <Raw value={a} />
+          </div>
+        ))}
+        {r.demo_evidence && (
+          <p className="text-sm">
+            Source unchanged: <Badge value={r.demo_evidence.source_unchanged} />{" "}
+            Registry unchanged:{" "}
+            <Badge value={r.demo_evidence.registry_unchanged} />
+          </p>
+        )}
+        <p className="text-xs text-slate-500">
+          LLM review records: {(r.revisions ?? []).length}. The reviewer is
+          invoked after a failed attempt; first-attempt success needs no
+          revision.
+        </p>
+        {r.risk_review && (
+          <Raw
+            value={r.risk_review}
+            label="Risk, prerequisites and functional test plan"
+          />
+        )}
         <Raw
-          value={r.risk_review}
-          label="Risk, prerequisites and functional test plan"
+          value={r.revisions ?? []}
+          label="LLM retry decisions (empty means no retry review)"
         />
-      )}
-      <Raw
-        value={r.revisions ?? []}
-        label="LLM retry decisions (empty means no retry review)"
-      />
-      <Raw value={r} label="Complete returned run evidence" />
+        <Raw value={r} label="Complete returned run evidence" />
+      </Fold>
+    </>
+  )
+  return framed ? (
+    <Card
+      title={title}
+      subtitle="This fix was tried on its own, on a throwaway copy of your database."
+    >
+      {body}
     </Card>
+  ) : (
+    <section className="rounded-lg border border-slate-200 p-4 space-y-3">
+      <h3 className="font-semibold">{title}</h3>
+      <p className="text-sm text-slate-500">
+        This fix was tried on its own, on a throwaway copy of your database.
+      </p>
+      {body}
+    </section>
   )
 }
+
 function Verification() {
   const live = useLive()
   const s = live.state
@@ -859,6 +1187,7 @@ function Verification() {
       ].filter(Boolean),
     ),
   ]
+  const testedTitles = titlesBySpec(findings(s.assessment))
   const matching =
     sameTarget(s.snapshot, snapshot) &&
     isFreshSnapshot(s.snapshot, snapshot) &&
@@ -866,11 +1195,10 @@ function Verification() {
     s.assessment.assessment.spec_set_hash ===
       assessment?.assessment?.spec_set_hash
   return (
-    <Card title="Verify the actual target">
-      <p>
-        After the DBA applies the reviewed fix, collect a fresh snapshot and
-        assess it. The application never applies changes to the source.
-      </p>
+    <Card
+      title="Check the real database after the DBA's change"
+      subtitle="DBGuard never changes your database itself. Once the DBA has run the bundle, collect fresh evidence and check it here: the fixed rules should now pass."
+    >
       {s.service === "demo" ? (
         <>
           <button
@@ -882,27 +1210,39 @@ function Verification() {
               )
             }
           >
-            Recollect unchanged demo source
+            Check the demo database again
           </button>
           {source && (
             <>
               <p>
-                Source unchanged: <Badge value={source.source_unchanged} />
+                Demo database unchanged by DBGuard:{" "}
+                <Badge value={source.source_unchanged} />
               </p>
-              <Raw value={source} label="Fresh source assessment" />
+              <Raw value={source} label="Fresh check of the demo database" />
             </>
           )}
-          <p className="text-xs text-slate-500">
+          <p className="text-sm text-slate-600">
+            This is a demo, so no DBA has applied anything.{" "}
             {tested.length
-              ? `The source is expected to still fail ${tested.join(", ")} because fixes were tested only in the sandbox.`
-              : "The source stays unchanged because fixes are tested only in the sandbox."}{" "}
-            Use Main API for a separate post-DBA snapshot.
+              ? `The demo database will still fail ${tested
+                  .map((id) => testedTitles.get(id) ?? id)
+                  .join(
+                    "; ",
+                  )}. That's expected: the fixes were only tried on a throwaway copy.`
+              : "It stays exactly as it was, because fixes are only tried on a throwaway copy."}
+          </p>
+          <p className="text-xs text-slate-500">
+            To check a real database after the DBA's change, switch to Main API
+            in Settings and upload the new snapshot there.
           </p>
         </>
       ) : (
         <>
-          <input
-            type="file"
+          <p className="text-sm">
+            1. Upload the snapshot collected after the DBA applied the fix.
+          </p>
+          <FileButton
+            label="Choose new snapshot (.json)"
             aria-label="Fresh target snapshot"
             accept=".json"
             disabled={!!s.busy}
@@ -957,14 +1297,14 @@ function Verification() {
               })
             }
           >
-            Assess fresh target
+            2. Check it against the CIS rules
           </button>
           {assessment && (
             <>
               <p>
                 {matching
-                  ? "Newer collection from the same target and exact spec set confirmed."
-                  : "Comparison not verified: target/spec identity must match and collection must be newer."}
+                  ? "Same database, newer evidence and the same rule set: the comparison below is valid."
+                  : "These results can't be compared with the original: the snapshot must come from the same database, be newer, and use the same rule set."}
               </p>
               {matching ? (
                 <Results
@@ -972,12 +1312,12 @@ function Verification() {
                   after={Object.fromEntries(
                     findings(assessment).map((f) => [f.id, f.status]),
                   )}
-                  afterLabel="Fresh target assessment"
+                  afterLabel="After the DBA's change"
                 />
               ) : (
                 <Results
                   assessment={assessment}
-                  label="Uploaded target assessment (unmatched)"
+                  label="Uploaded snapshot (not comparable)"
                 />
               )}
               <Raw value={{ snapshot, assessment }} />

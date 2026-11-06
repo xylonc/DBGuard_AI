@@ -1,3 +1,4 @@
+import { FileButton } from "./FileButton"
 import { useEffect, useState, useRef } from "react"
 import { api, request } from "@/adapters/live"
 import { Card, Raw } from "./LiveUI"
@@ -334,8 +335,8 @@ export function Library() {
             Upload an XLSX for knowledge ingestion. This does not generate
             executable benchmark specs.
           </p>
-          <input
-            type="file"
+          <FileButton
+            label="Choose evidence workbook (.xlsx)"
             accept=".xlsx"
             aria-label="Evidence workbook"
             disabled={busy}

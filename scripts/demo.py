@@ -95,6 +95,15 @@ def require_ports(base):
         for sock in sockets: sock.close()
 
 
+
+# Task 2 review N8: terminal screenshots open a short-lived local terminal (VHS starts ttyd on
+# 127.0.0.1) for each sandbox picture. Fine on a single-user machine; keep it off on shared ones.
+TERMINAL_SCREENSHOT_NOTICE = ("Screenshots: terminal mode is on. Each sandbox picture briefly opens a "
+                              "local-only terminal (ttyd on 127.0.0.1) on this computer. Use it on a "
+                              "single-user machine only; on a shared machine set "
+                              "DBGUARD_SCREENSHOT_MODE=rendered in .env.demo or the environment.")
+
+
 class Demo:
     def __init__(self, config):
         self.config = config
@@ -165,6 +174,9 @@ class Demo:
             stamp.write_text(fingerprint)
         self.run([str(python), '-m', 'playwright', 'install', 'chromium'], 'evidence-browser')
         self.env['DBGUARD_SCREENSHOTS'] = 'true'
+        # Task 2: before/after/rollback pictures of a real terminal (VHS), rendered as fallback.
+        # An explicit setting in the environment or .env.demo wins (e.g. rendered on a shared machine).
+        self.env.setdefault('DBGUARD_SCREENSHOT_MODE', 'terminal')
         self.env['DBGUARD_HISTORY_DIR'] = str(STATE/'history')
         self.run(['npm', 'ci', '--ignore-scripts'], 'npm-install', ROOT / 'frontend')
         self.run(['npm', 'run', 'typecheck'], 'ui-typecheck', ROOT / 'frontend')
@@ -207,6 +219,8 @@ class Demo:
         self.info.update(status='ready', snapshot_id=context['snapshot_id'], url=f'http://127.0.0.1:{self.base}')
         save(self.info)
         print(f"READY: {self.info['url']}\nOpen Home → Load live demo. Ctrl+C or python3 scripts/demo.py down stops this package.", flush=True)
+        if self.env.get('DBGUARD_SCREENSHOT_MODE') == 'terminal':
+            print(TERMINAL_SCREENSHOT_NOTICE, flush=True)
         while True: self.check_stop(); time.sleep(.5)
 
     def cleanup(self):

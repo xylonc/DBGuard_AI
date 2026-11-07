@@ -1,4 +1,5 @@
 import { FileButton } from "./FileButton"
+import { EvidenceShots } from "./EvidenceShots"
 import { BenchmarkImport } from "./BenchmarkImport"
 import {
   CombinedResult,
@@ -1084,6 +1085,7 @@ export function RunResult({ framed = true }: { framed?: boolean }) {
           }
         />
       )}
+      <EvidenceShots evidence={r.attempts?.at(-1)?.terminal_evidence} />
       <Fold
         title="Test details"
         hint="Each attempt, its undo and clean-up, the screenshot, and the raw evidence."

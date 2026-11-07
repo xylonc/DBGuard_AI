@@ -154,7 +154,9 @@ def result_summary(result):
                          'phase', 'rollback_verified', 'health_after_apply', 'health_after_rollback',
                          'regressions', 'cleanup')}
                          # W2B: why an attempt stopped (e.g. a failed start) and the catalog proof.
-                         | {key: attempt[key] for key in ('error', 'rollback_skipped', 'catalog_proof')
+                         # Task 2: before/after/rollback screenshots, when terminal mode recorded them.
+                         | {key: attempt[key] for key in ('error', 'rollback_skipped', 'catalog_proof',
+                                                          'terminal_evidence')
                             if key in attempt}
                          for attempt in attempts]}
 

@@ -7,6 +7,7 @@ import { Badge, Card, Fold, Raw, SandboxChanges } from "./LiveUI"
 import { combinedResultTitle, titlesBySpec } from "./resultLabels"
 import { batchAfter } from "./sandboxChanges"
 import { ObjectProposals } from "./ObjectProposals"
+import { EvidenceShots } from "./EvidenceShots"
 import {
   MAX_BATCH,
   batchFixes,
@@ -514,6 +515,7 @@ export function CombinedResult() {
           }
         />
       )}
+      <EvidenceShots evidence={batch.combined_test?.terminal_evidence} />
       <Fold
         title="Test details"
         hint="Each fix tested alone, the combined run, the undo and clean-up, as raw evidence."
@@ -696,6 +698,7 @@ export function CombinedReview() {
       <p className="text-xs text-slate-500">
         The download is in “Hand over to the DBA” below.
       </p>
+      <EvidenceShots evidence={batch.combined_test?.terminal_evidence} />
       <Fold
         title="Test details"
         hint="Each fix tested alone, the combined run, the undo and clean-up, as raw evidence."

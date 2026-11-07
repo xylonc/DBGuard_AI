@@ -1,5 +1,7 @@
 """Build a review ZIP only from a bound, verified server-produced sandbox result."""
 from collections import OrderedDict
+import binascii
+import copy
 import hashlib
 import base64
 from html import escape
@@ -40,6 +42,90 @@ def is_fixture(result):
     templates = [result['template']] + ([result['list_template']] if result.get('list_template') else [])
     approvers = [a for t in templates for a in [t.get('approved_by', '')] + [e.get('approved_by', '') for e in t.get('evidence', [])]]
     return bool(result.get('demo_fixture_approval')) or any(any(word in a.upper() for word in ('FIXTURE', 'TEST_ONLY', 'DEMO')) for a in approvers)
+
+
+# Task 2: sandbox stage screenshots (terminal_capture). Fixed member names; the DBA's
+# runner.py lists exactly these in its manifest allowlist.
+SCREENSHOT_STAGES = (('before', 'Before (problem reproduced on the sandbox copy)'),
+                     ('after', 'After fix'), ('rollback', 'After rollback'))
+SCREENSHOT_MEMBERS = tuple(f'screenshots/{s}.png' for s, _ in SCREENSHOT_STAGES)
+COMBINED_SCREENSHOT_MEMBERS = tuple(f'screenshots/combined-{s}.png' for s, _ in SCREENSHOT_STAGES)
+PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
+
+
+def stage_screenshots(evidence, prefix=''):
+    """({member: png}, report html, README text) for the recorded stage screenshots.
+
+    Only CAPTURED shots become files; each PNG must match its recorded sha256. The JSON
+    raw output (evidence.json) stays the authority; the picture is evidence, not proof."""
+    stages = evidence.get('stages') if isinstance(evidence, dict) else None
+    if not isinstance(stages, dict):
+        return {}, '', ''
+    files, rows, text = {}, [], ['', 'Sandbox screenshots (before / after fix / after rollback):']
+    for stage, label in SCREENSHOT_STAGES:
+        shot = stages.get(stage)
+        if not isinstance(shot, dict):
+            continue
+        kind = ('real terminal (VHS) running the typed command below' if shot.get('mode') == 'terminal'
+                else 'rendered evidence viewer of the same query output')
+        details = (f"Raw output sha256: {shot.get('raw_output_sha256', 'not recorded')}; "
+                   f"captured {shot.get('captured_at', 'not recorded')} UTC; target {shot.get('target_id', 'not recorded')}")
+        if shot.get('status') == 'CAPTURED':
+            try:
+                png = base64.b64decode(shot.get('png_base64') or '', validate=True)
+            except (binascii.Error, ValueError, TypeError):
+                raise ContractError('Review bundle: stage screenshot is not valid base64') from None
+            require(png.startswith(PNG_MAGIC) and hashlib.sha256(png).hexdigest() == shot.get('sha256'),
+                    'stage screenshot hash mismatch')
+            name = f'screenshots/{prefix}{stage}.png'
+            require(name in SCREENSHOT_MEMBERS + COMBINED_SCREENSHOT_MEMBERS, 'unexpected screenshot member')
+            files[name] = png
+            typed = f"<pre>{escape(shot['typed_command'])}</pre>" if shot.get('typed_command') else ''
+            note = f"<p class=\"notice\">{escape(shot['reason'])}</p>" if shot.get('reason') else ''
+            rows.append(f'<h3>{escape(label)}</h3><p>{escape(kind.capitalize())}. {escape(details)}. '
+                        f'PNG sha256 {escape(shot["sha256"])}.</p>{typed}{note}'
+                        f'<img style="max-width:100%" src="{escape(name)}" alt="{escape(label)}">')
+            text.append(f"- {name}: {label}, {kind}; {details}; PNG sha256 {shot['sha256']}"
+                        + (f"\n  typed: {shot['typed_command']}" if shot.get('typed_command') else '')
+                        + (f"\n  note: {shot['reason']}" if shot.get('reason') else ''))
+        else:
+            reason = shot.get('reason') or 'not recorded'
+            rows.append(f'<h3>{escape(label)}</h3><p class="notice">Screenshot UNAVAILABLE: {escape(reason)}</p>')
+            text.append(f'- {label}: screenshot UNAVAILABLE ({reason})')
+    if not rows:
+        return {}, '', ''
+    html = ('<h2>Sandbox screenshots</h2><p>Pictures of fresh read-only queries in the disposable sandbox at '
+            'each stage. evidence.json holds the raw output and is the authority; the manifest detects '
+            'accidental changes, not forgery. verify.sh --screenshots on the real target is separate '
+            '(rendered capture, never a terminal recording).</p>' + ''.join(rows))
+    return files, html, '\n'.join(text) + '\n'
+
+
+def strip_screenshot_data(evidence, prefix):
+    """Review N9: in a bundle the stage PNGs are members, so evidence JSON keeps each shot's
+    member name and sha256 instead of repeating the image as base64. prefix None: the shots
+    are not bundled (an earlier attempt), so only the sha256 is kept."""
+    stages = evidence.get('stages') if isinstance(evidence, dict) else None
+    if not isinstance(stages, dict):
+        return
+    for stage, shot in stages.items():
+        if isinstance(shot, dict) and 'png_base64' in shot:
+            del shot['png_base64']
+            member = f'screenshots/{prefix}{stage}.png' if prefix is not None else None
+            if shot.get('status') == 'CAPTURED' and member in SCREENSHOT_MEMBERS + COMBINED_SCREENSHOT_MEMBERS:
+                shot['png_member'] = member
+            else:
+                shot['png_omitted'] = 'Not included in this bundle; its sha256 is kept.'
+
+
+def bundled_result(result):
+    """The run result as written to evidence.json (see strip_screenshot_data)."""
+    out = copy.deepcopy(result)
+    attempts = out.get('attempts') if isinstance(out.get('attempts'), list) else []
+    for index, attempt in enumerate(attempts):
+        if isinstance(attempt, dict):
+            strip_screenshot_data(attempt.get('terminal_evidence'), '' if index == len(attempts) - 1 else None)
+    return out
 
 
 def build_review_bundle(handoff, result, engine):
@@ -121,8 +207,10 @@ def build_review_bundle(handoff, result, engine):
     # The profile pin, with the DEMO approval label next to any approver name.
     profile_line = approval_text(engine.policy_pin)
     report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}.table{{overflow:auto}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p>{limit_html}<p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>Before / after / rollback in the sandbox</h2><div class="table"><table><tr><th>Control</th><th>Title</th><th>Before</th><th>After fix</th><th>After rollback</th></tr>{rows}</table></div>{notice_html}<p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p>{risk_html}<h2>DBA verification</h2><p>Run verify.sh after each complete fix. It opens fresh connections, reads the catalogue, tests a transaction and checks all scoped settings. Run the listed application checks separately.</p><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed configuration policies. Restart settings require a DBA-controlled restart on the target. Regression coverage is limited to the supplied specs. Configuration provenance is restored semantically, not byte-for-byte file formatting.</p><p>The script requires an explicit target connection and refuses configuration drift. A database name and matching settings do not uniquely identify a server: the DBA must verify the target. Advisory locking coordinates DBGuard runs only; other administrators can still change configuration.</p><p>After applying, recollect and reassess the target using the same specs. Review README.txt and the bundled evidence before running harden.sh.</p></body></html>'''
+    shots_files, shots_html, shots_text = stage_screenshots(final.get('terminal_evidence'))
+    report = report.replace('</body>', shots_html + '</body>', 1)
     files = {'fix.json': json.dumps(config, indent=2).encode(),
-             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
+             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': bundled_result(result)}, indent=2).encode(),
              'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),
              'harden.sh': b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" "$@"\n'}
     files['risk-review.json'] = json.dumps(risk,indent=2).encode()
@@ -138,11 +226,12 @@ def build_review_bundle(handoff, result, engine):
         files['sandbox-queries.json'] = json.dumps(visual['query_evidence'],indent=2).encode()
         report = report.replace('</body>', '<h2>Actual sandbox database results</h2><p>Browser capture of the query evidence viewer, from fresh database queries after the fix.</p><img style="max-width:100%" src="sandbox-after.png" alt="Sandbox verification query results"></body>')
         files['report.html'] = report.encode()
+    files.update(shots_files)  # Task 2 stage screenshots, listed in the manifest
     manifest = {'schema_version' :'review-bundle-v1', 'run_id':result['run_id'], 'demo_fixture_approval':demo,
                 'requires_dba_review':True, 'snapshot_hash':result['snapshot_hash'], 'spec_set_hash':engine.spec_set_hash,
                 'files':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
     files['manifest.json'] = json.dumps(manifest, indent=2).encode()
-    files['README.txt'] = (f'''{scope}\n{profile_line}\n\n{limit_text}Review report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]} --screenshots\n\nVerification captures actual database query output, not model-generated content.\nScreenshot dependencies: pip install playwright; python3 -m playwright install chromium.\nImages show a browser evidence viewer populated with actual query results.\nReview and perform application-specific checks in risk-review.json separately.\nFor restart settings, apply/rollback stages the configuration; the DBA restarts\nPostgreSQL outside this tool, then runs verify (or verify-rollback).\nRecollect the target with the original collector and reassess via the application.\n\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe runner checks PostgreSQL version, database name and configuration provenance.\nIt checks all scoped settings for drift before apply or rollback, and uses fresh\nconnections to verify the resulting settings and source. It never applies automatically.\nIf SQL executes but verification fails, inspect the server before retrying.\nRollback refuses drift; it is not a disaster recovery tool. Recollect and reassess\nthe real target after applying. The manifest detects accidental changes, not forgery.\n''').encode()
+    files['README.txt'] = (f'''{scope}\n{profile_line}\n\n{limit_text}Review report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]} --screenshots\n\nVerification captures actual database query output, not model-generated content.\nScreenshot dependencies: pip install playwright; python3 -m playwright install chromium.\nImages show a browser evidence viewer populated with actual query results.\nReview and perform application-specific checks in risk-review.json separately.\nFor restart settings, apply/rollback stages the configuration; the DBA restarts\nPostgreSQL outside this tool, then runs verify (or verify-rollback).\nRecollect the target with the original collector and reassess via the application.\n\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe runner checks PostgreSQL version, database name and configuration provenance.\nIt checks all scoped settings for drift before apply or rollback, and uses fresh\nconnections to verify the resulting settings and source. It never applies automatically.\nIf SQL executes but verification fails, inspect the server before retrying.\nRollback refuses drift; it is not a disaster recovery tool. Recollect and reassess\nthe real target after applying. The manifest detects accidental changes, not forgery.\n''' + shots_text).encode()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():
@@ -292,18 +381,21 @@ def build_object_review_bundle(handoff, result, engine):
     states = ''.join(f'<tr><td>{escape(label)}</td><td><pre>{escape(json.dumps(object_fingerprint(proposal, final[k]), indent=2))}</pre></td></tr>'
                      for label, k in (('Before (stand-in, equals source evidence)', 'before'), ('After fix', 'after'), ('After rollback', 'rollback')))
     report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope)}</p><p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>{escape(title)}</h2><p>{escape(str(proposal.get('explanation') or ''))}</p><p><strong>Proof checked after the fix:</strong> {escape(predicate)}</p><p class="notice"><strong>What was rehearsed:</strong> the fix on a stand-in copy of this object (same name, owner, attributes and permissions) in a disposable sandbox. No real data, no function bodies and no real passwords were copied. <strong>What was not rehearsed:</strong> how your applications use this object.</p><h2>Object state in the sandbox</h2><table><tr><th>Phase</th><th>Object</th></tr>{states}</table><p>{len(attempts)} attempt(s). All attempt resources removed. Every other recreated object and every scoped setting was unchanged; exact rollback verified.</p><h2>Risk</h2><pre>{escape(json.dumps(risk, indent=2))}</pre><h2>Reviewed apply SQL (one transaction)</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL (one transaction)</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17. The runner checks the PostgreSQL version, database, cluster identity and this object's exact state before and inside the transaction, and refuses if anything differs. After applying, recollect and reassess the target using the same specs.</p></body></html>'''
+    shots_files, shots_html, shots_text = stage_screenshots(final.get('terminal_evidence'))
+    report = report.replace('</body>', shots_html + '</body>', 1)
     files = {'fix.json': json.dumps(config, indent=2).encode(),
-             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
+             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': bundled_result(result)}, indent=2).encode(),
              'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),
              'harden.sh': b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" "$@"\n'}
     files['risk-review.json'] = json.dumps(risk, indent=2).encode()
     files['visual_evidence.py'] = (ASSETS/'visual_evidence.py').read_bytes()
     files['verify.sh'] = b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" verify "$@"\n'
+    files.update(shots_files)  # Task 2 stage screenshots, listed in the manifest
     manifest = {'schema_version': 'review-bundle-v1', 'run_id': result['run_id'], 'demo_fixture_approval': demo,
                 'requires_dba_review': True, 'snapshot_hash': result['snapshot_hash'], 'spec_set_hash': engine.spec_set_hash,
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files['manifest.json'] = json.dumps(manifest, indent=2).encode()
-    files['README.txt'] = (f'''{scope}\n{profile_line}\n\nFix: {title}\nProof checked after the fix: {predicate}\n{OBJECT_REHEARSAL_TEXT}\nReview report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and that this one\nobject is still exactly as it was in the evidence. It applies (and rolls back) inside one\ntransaction, re-reads the object before COMMIT and rolls the transaction back if the\nresult is not exactly the tested state. It never applies automatically.\nRecollect the target with the original collector and reassess via the application.\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe manifest detects accidental changes, not forgery.\n''').encode()
+    files['README.txt'] = (f'''{scope}\n{profile_line}\n\nFix: {title}\nProof checked after the fix: {predicate}\n{OBJECT_REHEARSAL_TEXT}\nReview report.html, evidence.json and both SQL commands before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and that this one\nobject is still exactly as it was in the evidence. It applies (and rolls back) inside one\ntransaction, re-reads the object before COMMIT and rolls the transaction back if the\nresult is not exactly the tested state. It never applies automatically.\nRecollect the target with the original collector and reassess via the application.\nDemo bundles require --allow-demo and must only be used with disposable databases.\nThe manifest detects accidental changes, not forgery.\n''' + shots_text).encode()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():
@@ -437,18 +529,21 @@ def build_catalog_review_bundle(handoff, result, engine):
     notice_html = ''.join(f'<p class="notice">{escape(n["text"])}</p>' for n in notices_for(link['recommendation']))
     extra_readme = (PRELOAD_README.format(libs=', '.join(fix['preload_added'])) if fix['preload_added'] else '') + (TLS_README if scope['tls'] else '')
     report = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DBGuardAI review report</title><style>body{{font:15px/1.5 system-ui;margin:32px;color:#21343b;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border:1px solid #cbd5db;text-align:left;overflow-wrap:anywhere}}th{{background:#eaf4f1}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f6;padding:16px}}.notice{{padding:16px;background:#fff3d9}}</style></head><body><h1>DBGuardAI · DBA review</h1><p class="notice">{escape(scope_line)}</p><p>Sandbox status: VERIFIED. Target application and real-target reassessment: NOT PERFORMED.</p><p>Run: {escape(result['run_id'])}<br>Source: {escape(handoff.snapshot['envelope']['target_id'])}<br>Spec set: {escape(engine.spec_set_hash)}<br>{escape(profile_line)}</p><h2>CIS {escape(link['recommendation'])}: {escape(title)}</h2><table><tr><th>Setting</th><th>Before</th><th>Fix value</th></tr>{changes_html}</table><p class="notice">{escape(extra_readme.strip())}</p><h2>Proof: the CIS check in the sandbox</h2><table><tr><th>Phase</th><th>Result</th><th>Reason</th></tr>{proof_rows}</table>{notice_html}{tls_html}<p>{len(attempts)} attempt(s). All attempt resources removed. Exact rollback and database health verified.</p><h2>Risk and prerequisites</h2><pre>{escape(json.dumps(risk, indent=2))}</pre><h2>Reviewed apply SQL</h2><pre>{escape(result['rendered_apply_sql'])}</pre><h2>Rollback SQL</h2><pre>{escape(result['rendered_rollback_sql'])}</pre><h2>Limits</h2><p>PostgreSQL 17; reviewed catalog-linked configuration fix. The runner checks the PostgreSQL version, database, cluster identity and every scoped setting before apply or rollback, and refuses drift. After applying, recollect and reassess the target using the same specs.</p></body></html>'''
+    shots_files, shots_html, shots_text = stage_screenshots(final.get('terminal_evidence'))
+    report = report.replace('</body>', shots_html + '</body>', 1)
     files = {'fix.json': json.dumps(config, indent=2).encode(),
-             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': result}, indent=2).encode(),
+             'evidence.json': json.dumps({'handoff': handoff.model_dump(), 'result': bundled_result(result)}, indent=2).encode(),
              'report.html': report.encode(), 'runner.py': (ASSETS/'runner.py').read_bytes(),
              'harden.sh': b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" "$@"\n'}
     files['risk-review.json'] = json.dumps(risk, indent=2).encode()
     files['visual_evidence.py'] = (ASSETS/'visual_evidence.py').read_bytes()
     files['verify.sh'] = b'#!/bin/sh\nset -eu\nBUNDLE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec python3 "$BUNDLE_DIR/runner.py" verify "$@"\n'
+    files.update(shots_files)  # Task 2 stage screenshots, listed in the manifest
     manifest = {'schema_version': 'review-bundle-v1', 'run_id': result['run_id'], 'demo_fixture_approval': demo,
                 'requires_dba_review': True, 'snapshot_hash': result['snapshot_hash'], 'spec_set_hash': engine.spec_set_hash,
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     files['manifest.json'] = json.dumps(manifest, indent=2).encode()
-    files['README.txt'] = (f'''{scope_line}\n{profile_line}\n\nFix: CIS {link['recommendation']} {title}\nProof: the CIS check gave FAIL, then PASS after the fix and FAIL again after rollback, in a disposable sandbox.\n{extra_readme}\nReview report.html, evidence.json and the SQL before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and every scoped\nsetting and its configuration source for drift before apply or rollback. It never applies\nautomatically. Recollect the target with the original collector and reassess via the\napplication. Demo bundles require --allow-demo and must only be used with disposable\ndatabases. The manifest detects accidental changes, not forgery.\n''').encode()
+    files['README.txt'] = (f'''{scope_line}\n{profile_line}\n\nFix: CIS {link['recommendation']} {title}\nProof: the CIS check gave FAIL, then PASS after the fix and FAIL again after rollback, in a disposable sandbox.\n{extra_readme}\nReview report.html, evidence.json and the SQL before any execution.\nRequires Python 3 and psycopg2 (requirements-sandbox.txt includes psycopg2-binary).\nSet DBGUARD_DSN to the DBA-verified target using your normal credential handling.\nNo credentials are included. Verify server identity separately.\n\nsh harden.sh status {fix["fix_id"]}\nsh harden.sh apply {fix["fix_id"]} --ack-prerequisites\nsh harden.sh rollback {fix["fix_id"]}\n\nsh verify.sh {fix["fix_id"]}\n\nThe runner checks PostgreSQL version, database name, cluster identity and every scoped\nsetting and its configuration source for drift before apply or rollback. It never applies\nautomatically. Recollect the target with the original collector and reassess via the\napplication. Demo bundles require --allow-demo and must only be used with disposable\ndatabases. The manifest detects accidental changes, not forgery.\n''' + shots_text).encode()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in files.items():

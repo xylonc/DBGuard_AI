@@ -13,6 +13,7 @@ from app.services.setting_values import SettingValueError, check_setting_value
 from .runtime import DisposablePostgres, SandboxStartError
 from .shared import ContractError, SpecEngine, blocking_gaps, digest, is_regression, validate_contract
 from .templates import ApprovedTemplate
+from . import terminal_capture
 from .adaptive import RevisionDecision, feedback_for
 
 CONTROL = "cis-pg17-v1.1.0:3.1.20"
@@ -191,6 +192,9 @@ class RemediationLoop:
                       "fix_unit_hash": digest(fix)}
             used_sql.add(sql_identity(current_template.render(name, value)))
             record['rendered_apply_sql'] = current_template.render(name, value)
+            # Task 2: terminal screenshots (no-op unless DBGUARD_SCREENSHOT_MODE=terminal).
+            terminal_capture.begin(record)
+            shots = terminal_capture.setting_targets([name])
             terminal = False
             start_error = None
             try:
@@ -205,6 +209,7 @@ class RemediationLoop:
                     raise ContractError("Reconstruction did not preserve configuration provenance")
                 if before_report["findings"] != actual["findings"]:
                     raise ContractError("Reconstruction did not reproduce all scoped findings")
+                terminal_capture.stage(record, runtime, "before", shots)
                 record["phase"] = "apply"
                 try:
                     runtime.sql(current_template.render(name, value))
@@ -234,6 +239,7 @@ class RemediationLoop:
                     # A reload request alone is not proof that the setting applied.
                     if setting_rows(after)[name].get("pending_restart") is not False:
                         raise RuntimeError("Fix left a pending restart")
+                    terminal_capture.stage(record, runtime, "after", shots)
                 except SandboxStartError as exc:
                     start_error = exc
                     record["apply_or_assessment_error"] = f"SandboxStartError: {exc}"
@@ -252,6 +258,7 @@ class RemediationLoop:
                     else:
                         record["phase"] = "rollback"
                         _setting_rollback(self.engine, runtime, fix, plan, record, before_report)
+                        terminal_capture.stage(record, runtime, "rollback", shots)
                 record.update(status="VERIFIED", phase="complete")
             except SandboxStartError as exc:
                 # Deterministic (e.g. a preload library missing from the image): no retry.
@@ -263,6 +270,7 @@ class RemediationLoop:
             except Exception as exc:
                 record["error"] = f"{type(exc).__name__}: {exc}"
             finally:
+                terminal_capture.finish(record)
                 try:
                     record["cleanup"] = runtime.close()
                     if record["cleanup"].get("verified") is not True:
@@ -488,6 +496,9 @@ class ObjectRemediationLoop:
                       "status": "FAILED", "phase": "create", "rollback_verified": False,
                       "template": self.template.identity(), "fix_unit_hash": digest(fix),
                       "rendered_apply_sql": "\n".join(apply)}
+            # Task 2: terminal screenshots (no-op unless DBGUARD_SCREENSHOT_MODE=terminal).
+            terminal_capture.begin(record)
+            shots = terminal_capture.object_targets([proposal])
             terminal = False
             try:
                 runtime.start()
@@ -506,6 +517,7 @@ class ObjectRemediationLoop:
                         or fixes.object_signature(proposal, before) != source_signature):
                     raise ContractError("The stand-in copy does not reproduce the source object")
                 baseline = catalog_skeleton.fingerprints(before, record["skeleton"])
+                terminal_capture.stage(record, runtime, "before", shots)
                 record["phase"] = "apply"
                 try:
                     runtime.sql(in_transaction(apply))
@@ -529,6 +541,7 @@ class ObjectRemediationLoop:
                     if (not record["predicate_after_apply"] or regressions or record["other_objects_changed"]
                             or not record["health_after_apply"] or not record["functional_checks"]["passed"]):
                         raise RuntimeError("Fix failed acceptance: predicate/other objects/regression/health")
+                    terminal_capture.stage(record, runtime, "after", shots)
                 except Exception as exc:
                     record["apply_or_assessment_error"] = f"{type(exc).__name__}: {exc}"
                     raise
@@ -553,6 +566,7 @@ class ObjectRemediationLoop:
                         and record["health_after_rollback"])
                     if not record["rollback_verified"]:
                         raise RuntimeError("Exact rollback verification failed")
+                    terminal_capture.stage(record, runtime, "rollback", shots)
                 record.update(status="VERIFIED", phase="complete")
             except ContractError as exc:
                 terminal = True
@@ -560,6 +574,7 @@ class ObjectRemediationLoop:
             except Exception as exc:
                 record["error"] = f"{type(exc).__name__}: {exc}"
             finally:
+                terminal_capture.finish(record)
                 try:
                     record["cleanup"] = runtime.close()
                     if record["cleanup"].get("verified") is not True:

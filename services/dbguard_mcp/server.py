@@ -108,6 +108,29 @@ def prepare_sandbox_handoff(snapshot_id: str, template_version: int,
 
 
 
+IMAGE_OMITTED = '(screenshot omitted for the assistant; view it in the DBGuard UI or the review bundle)'
+# Task 2 review N6: a screenshot's raw query output, its SQL file and the typed host command
+# are evidence for people, not model input (names, host paths). Hashes, status, mode and
+# reason stay so the assistant can still report what was captured.
+EVIDENCE_OMITTED = '(screenshot evidence omitted for the assistant; see the DBGuard UI or the review bundle)'
+OMITTED_KEYS = {'png_base64': IMAGE_OMITTED, 'raw_output': EVIDENCE_OMITTED, 'sql': EVIDENCE_OMITTED,
+                'typed_command': EVIDENCE_OMITTED}
+
+
+def _without_images(value):
+    """Task 2: never pass screenshot image data or its raw evidence text to the model.
+
+    Only removes data; every other field, including each picture's sha256, status,
+    mode and reason, is returned unchanged.
+    """
+    if isinstance(value, dict):
+        return {k: (OMITTED_KEYS[k] if k in OMITTED_KEYS and v else _without_images(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_without_images(v) for v in value]
+    return value
+
+
 @mcp.tool()
 def run_sandbox_handoff(handoff_id: str, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Run up to three isolated attempts with LLM failure review and exact rollback.
@@ -116,15 +139,15 @@ def run_sandbox_handoff(handoff_id: str, backend: Literal["default", "demo", "ma
     On a timeout, inspect this handle's status before taking another action.
     Returned bundle URLs are relative to the user-facing DBGuard API host.
     """
-    return _request_for(backend, 'POST', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}/run',
-                         timeout=SANDBOX_TIMEOUT_SECONDS)
+    return _without_images(_request_for(backend, 'POST', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}/run',
+                                         timeout=SANDBOX_TIMEOUT_SECONDS))
 
 
 
 @mcp.tool()
 def get_sandbox_handoff_status(handoff_id: str, backend: Literal["default", "demo", "main"] = "default") -> dict[str, Any]:
     """Retrieve pending/completed testing status and the bundle link, if available."""
-    return _request_for(backend, 'GET', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}')
+    return _without_images(_request_for(backend, 'GET', f'/api/v1/sandbox/handoffs/{quote(handoff_id, safe="")}'))
 
 
 

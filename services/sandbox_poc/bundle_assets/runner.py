@@ -555,6 +555,10 @@ def main():
             "visual_evidence.py",
             "sandbox-after.png",
             "sandbox-queries.json",
+            # Sandbox stage screenshots (Task 2); never produced or replaced by verify.
+            "screenshots/before.png",
+            "screenshots/after.png",
+            "screenshots/rollback.png",
         }:
             raise RuntimeError("Unexpected bundle member")
         if hashlib.sha256((base / name).read_bytes()).hexdigest() != expected:

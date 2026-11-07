@@ -54,6 +54,16 @@ EXPECTED_FATALS = ("the database system is starting up", "the database system is
 PRELOAD_FAILURE = re.compile(r'FATAL:\s+could not (?:access file|load library) "([A-Za-z0-9_$./-]{1,128})"')
 
 
+# Task 2 terminal screenshots: the only files written for evidence, one per fixed stage.
+# Constant argv (tee to a fixed path, its echo discarded); no shell, no caller value.
+EVIDENCE_SQL_PREFIX = "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;\n"
+EVIDENCE_SQL_COMMANDS = {
+    "before": ("tee", "/var/run/postgresql/dbguard-before.sql"),
+    "after": ("tee", "/var/run/postgresql/dbguard-after.sql"),
+    "rollback": ("tee", "/var/run/postgresql/dbguard-rollback.sql"),
+}
+
+
 class SandboxStartError(RuntimeError):
     """PostgreSQL did not come back after a controlled restart of the sandbox."""
 
@@ -156,6 +166,23 @@ class DisposablePostgres:
         # Constant shell command; data only travels on stdin, never interpolation.
         command = "cat >> /var/lib/postgresql/data/postgresql.conf" if filename == "postgresql.conf" else "cat > /var/lib/postgresql/data/postgresql.auto.conf"
         docker("exec", "-i", self.name, "sh", "-c", command, stdin=content)
+
+    def write_evidence_sql(self, stage: str, content: str) -> None:
+        """Write one stage's read-only evidence SQL into this owned container (Task 2 Gate 1,
+        decision 4). The destination comes from a fixed dict; the command is a constant argv
+        (no shell at all); the content travels only on stdin. /var/run/postgresql is the
+        container's writable tmpfs, removed with it. The content must be the reviewed file:
+        read-only prefix, bounded, and free of backslashes (no psql meta-commands) and
+        control characters."""
+        self._assert_owned()
+        command = EVIDENCE_SQL_COMMANDS.get(stage) if isinstance(stage, str) else None
+        if command is None:
+            raise ContractError("Unsupported evidence stage")
+        if (not isinstance(content, str) or not content.startswith(EVIDENCE_SQL_PREFIX)
+                or len(content.encode("utf-8")) > 64 * 1024
+                or re.search(r"[\\\x00-\x09\x0b-\x1f\x7f]", content)):
+            raise ContractError("Evidence SQL is outside the reviewed template")
+        docker("exec", "-i", self.name, *command, stdin=content)
 
     def activate(self, expected: dict[str, str]) -> None:
         if self.sql("SELECT pg_reload_conf();") != "t":

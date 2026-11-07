@@ -51,6 +51,20 @@ Open <http://127.0.0.1:8010> after startup completes. API documentation is at
 and wait for shutdown to complete; this removes the demo source and registry.
 Each sandbox attempt removes its own resources before returning.
 
+### Sandbox screenshots (terminal mode)
+
+`python3 scripts/demo.py up` turns on terminal screenshots: before, after-fix and
+after-rollback pictures of a real terminal (VHS) for each sandbox test, with the
+rendered picture as the fallback. For each picture VHS briefly starts a terminal
+server (ttyd) on `127.0.0.1` on this computer. That is fine on a single-user machine;
+on a shared machine keep terminal mode off (`DBGUARD_SCREENSHOT_MODE=rendered`, the
+default outside the demo). VHS needs its Chromium once (`~/.cache/rod/browser`, set
+up by running `vhs` on any small tape while online); DBGuard never lets it download
+one during a capture and falls back to the rendered picture instead. If a VHS upgrade
+needs a browser revision that is not already cached, go-rod may contact its download
+mirrors during a capture, but nothing is stored or run and that picture falls back to
+rendered; the one-time setup is to run VHS once while online.
+
 The launcher creates a new disposable source and a separate temporary pgvector
 registry. It never uses `DATABASE_URL` to connect to an existing database.
 The registry has only demo template/evidence records, explicitly marked

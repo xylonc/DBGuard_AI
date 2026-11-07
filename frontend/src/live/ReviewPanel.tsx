@@ -5,7 +5,7 @@ import { activeObjectFix, useLive } from "@/store/liveStore"
 import type { ReactNode } from "react"
 import { Badge, Card, Fold, Raw, SandboxChanges } from "./LiveUI"
 import { combinedResultTitle, titlesBySpec } from "./resultLabels"
-import { batchAfter } from "./sandboxChanges"
+import { batchAfter, sameAssessment } from "./sandboxChanges"
 import { ObjectProposals } from "./ObjectProposals"
 import { EvidenceShots } from "./EvidenceShots"
 import {
@@ -484,6 +484,7 @@ export function CombinedResult() {
   const batch = currentBatch(s)
   if (!batch) return null
   const titles = titlesBySpec(findings(s.assessment))
+  const match = sameAssessment(batch, s.assessment)
   return (
     <section className="rounded-lg border border-slate-200 p-4 space-y-3">
       <h3 className="font-semibold">{combinedResultTitle(batch, titles)}</h3>
@@ -499,7 +500,14 @@ export function CombinedResult() {
           </span>
         )}
       </div>
-      {s.assessment && (
+      {s.assessment && !match.same && (
+        <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Before-and-after comparison not shown: {match.reason}, so comparing it
+          with the assessment on screen would show changes the fixes didn't
+          cause. Run the combined test again to compare.
+        </p>
+      )}
+      {s.assessment && match.same && (
         <SandboxChanges
           assessment={s.assessment}
           after={batchAfter(batch)}

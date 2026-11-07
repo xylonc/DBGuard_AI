@@ -140,7 +140,10 @@ def result_summary(result):
                    "The source assessment is not the sandbox after-fix assessment.")
     if fixture:
         report += " Approval: DEMO_FIXTURE_ONLY; no human approval or approved RAG validation."
+    # snapshot_hash / spec_set_hash / policy_profile: which assessment this run was
+    # tested against, so the UI only compares it with the same assessment.
     return {**{key: result.get(key) for key in ('run_id', 'status', 'retry_mode', 'revisions',
+                 'snapshot_hash', 'spec_set_hash', 'policy_profile',
                  'review_bundle', 'requires_dba_review', 'limitations', 'risk_review', 'fix_unit', 'rendered_apply_sql', 'rendered_rollback_sql')},
             'demo_fixture_approval': bool(fixture),
             'verification_report': report,

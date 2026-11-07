@@ -37,6 +37,7 @@ import {
   changeDirection,
   runAfter,
   runRegressions,
+  sameAssessment,
   statusChanges,
   type Direction,
 } from "./sandboxChanges"
@@ -1062,6 +1063,7 @@ export function RunResult({ framed = true }: { framed?: boolean }) {
   const r = s.result
   const titles = titlesBySpec(findings(s.assessment))
   const title = singleResultTitle(r, titles)
+  const match = sameAssessment(r, s.assessment)
   const body = (
     <>
       <div className="flex flex-wrap gap-3 items-center">
@@ -1073,7 +1075,20 @@ export function RunResult({ framed = true }: { framed?: boolean }) {
           Checked on the object itself: {r.fix_unit?.verify?.predicate}
         </p>
       )}
-      {s.assessment && (
+      {s.resultRestored && (
+        <p className="text-xs text-slate-500">
+          Not run from this screen: restored from the recorded test history. Run
+          the test again for a fresh result.
+        </p>
+      )}
+      {s.assessment && !match.same && (
+        <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Before-and-after comparison not shown: {match.reason}, so comparing it
+          with the assessment on screen would show changes the fix didn't cause.
+          Run the test again to compare with the current assessment.
+        </p>
+      )}
+      {s.assessment && match.same && (
         <SandboxChanges
           assessment={s.assessment}
           after={runAfter(r)}

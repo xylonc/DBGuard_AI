@@ -185,3 +185,59 @@ export function batchAfter(batch: any): Record<string, string> {
   }
   return out
 }
+
+// Whether a recorded test (a run or a combined test) was made against the same
+// assessment that is on screen: same evidence (snapshot hash), same rule set
+// (spec-set hash) and same company policy (profile sha256, or none on both).
+// A comparison across different assessments would show changes the fix did not
+// cause (e.g. policy rules "PASS -> Manual review" when the profile differs), so
+// the UI compares only when this says same. Unknown identity is never "same".
+export type AssessmentMatch = {
+  same: boolean
+  reason: string | null
+}
+
+function policySha(pin: unknown): string | null | undefined {
+  if (pin === null) return null
+  if (pin === undefined) return undefined
+  const sha = (pin as any)?.sha256
+  return typeof sha === "string" && sha ? sha : undefined
+}
+
+export function sameAssessment(item: any, envelope: any): AssessmentMatch {
+  const current = envelope?.assessment ?? envelope
+  const itemSnap = item?.snapshot_hash
+  const itemSpecs = item?.spec_set_hash
+  if (typeof itemSnap !== "string" || typeof itemSpecs !== "string")
+    return {
+      same: false,
+      reason:
+        "this recorded test doesn't say which assessment it was run against",
+    }
+  if (itemSnap !== current?.snapshot_hash)
+    return { same: false, reason: "it was run on different evidence" }
+  if (itemSpecs !== current?.spec_set_hash)
+    return { same: false, reason: "it was run with a different rule set" }
+  const itemPolicy = policySha(item?.policy_profile)
+  const currentPolicy = policySha(
+    envelope?.policy_profile !== undefined
+      ? envelope.policy_profile
+      : (current?.upstream_report?.inputs?.policy_profile ?? null),
+  )
+  if (itemPolicy === undefined || currentPolicy === undefined)
+    return {
+      same: false,
+      reason: "its company policy can't be matched to the current one",
+    }
+  if (itemPolicy !== currentPolicy)
+    return {
+      same: false,
+      reason:
+        itemPolicy === null
+          ? "it was run before a company policy was chosen"
+          : currentPolicy === null
+            ? "it was run with a company policy that isn't selected now"
+            : "it was run with a different company policy",
+    }
+  return { same: true, reason: null }
+}

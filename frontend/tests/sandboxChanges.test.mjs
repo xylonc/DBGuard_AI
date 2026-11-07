@@ -198,3 +198,93 @@ test("not applicable is a neutral change, neither improved nor worse", () => {
   assert.equal(changeDirection("NOT_APPLICABLE", "PASS"), "changed")
   assert.equal(changeDirection("PASS", "NOT_APPLICABLE"), "changed")
 })
+
+import { sameAssessment } from "../src/live/sandboxChanges.ts"
+
+const profile = { profile_id: "ref", sha256: "e7f7" }
+const env = (pin) => ({
+  policy_profile: pin,
+  assessment: { snapshot_hash: "snap1", spec_set_hash: "specs1" },
+})
+
+test("same assessment: matching evidence, rules and policy compare", () => {
+  const run = {
+    snapshot_hash: "snap1",
+    spec_set_hash: "specs1",
+    policy_profile: profile,
+  }
+  assert.deepEqual(sameAssessment(run, env(profile)), {
+    same: true,
+    reason: null,
+  })
+  assert.equal(
+    sameAssessment(
+      { snapshot_hash: "snap1", spec_set_hash: "specs1", policy_profile: null },
+      env(null),
+    ).same,
+    true,
+  )
+})
+
+test("same assessment: a test run before a policy was chosen is not compared (the 4 'got worse' bug)", () => {
+  const m = sameAssessment(
+    { snapshot_hash: "snap1", spec_set_hash: "specs1", policy_profile: null },
+    env(profile),
+  )
+  assert.equal(m.same, false)
+  assert.equal(m.reason, "it was run before a company policy was chosen")
+})
+
+test("same assessment: different evidence, rules, policy or unknown identity are never compared", () => {
+  const base = {
+    snapshot_hash: "snap1",
+    spec_set_hash: "specs1",
+    policy_profile: profile,
+  }
+  assert.equal(
+    sameAssessment({ ...base, snapshot_hash: "snap2" }, env(profile)).same,
+    false,
+  )
+  assert.equal(
+    sameAssessment({ ...base, spec_set_hash: "specs2" }, env(profile)).same,
+    false,
+  )
+  assert.equal(
+    sameAssessment(
+      { ...base, policy_profile: { sha256: "other" } },
+      env(profile),
+    ).reason,
+    "it was run with a different company policy",
+  )
+  assert.equal(sameAssessment(base, env(null)).same, false)
+  // A summary without its identity (an older backend) is never treated as same.
+  assert.equal(sameAssessment({ run_id: "x" }, env(profile)).same, false)
+  assert.equal(
+    sameAssessment(
+      { snapshot_hash: "snap1", spec_set_hash: "specs1" },
+      env(profile),
+    ).same,
+    false,
+  )
+})
+
+test("same assessment: falls back to the report's policy pin when the envelope has none", () => {
+  const envelope = {
+    assessment: {
+      snapshot_hash: "snap1",
+      spec_set_hash: "specs1",
+      upstream_report: { inputs: { policy_profile: profile } },
+    },
+  }
+  assert.equal(
+    sameAssessment(
+      {
+        snapshot_hash: "snap1",
+        spec_set_hash: "specs1",
+        policy_profile: profile,
+      },
+      envelope,
+    ).same,
+    true,
+  )
+})

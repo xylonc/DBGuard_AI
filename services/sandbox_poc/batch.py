@@ -1,5 +1,6 @@
 """Test each fix, then prove their ordered combination in one disposable sandbox."""
 
+import copy
 import io
 import json
 import hashlib
@@ -12,10 +13,11 @@ from .planning import SANDBOX_LIMITS, recommend_order, fix_scope
 from .provenance import reconstruct, reconstruction_plan, signature
 from .shared import ContractError, blocking_gaps, digest, is_regression
 from .review_bundle import (OBJECT_REHEARSAL_TEXT, PRELOAD_README, TLS_README, build_review_bundle,
-                            is_fixture, object_fingerprint)
+                            is_fixture, object_fingerprint, stage_screenshots, strip_screenshot_data)
 from .workflow import in_transaction, health_queries, _normalised
 from . import catalog_skeleton
 from . import history
+from . import terminal_capture
 
 
 def _object_fixes():
@@ -197,6 +199,19 @@ def _object_rollback(engine, runtime, fixes, plan, skeleton, result, expected_sn
         and runtime.health())
 
 
+def _combined_targets(results):
+    """Every changed setting and object of the batch, from the server-side fix units and
+    evidence-derived proposals; None (no terminal picture) if anything is malformed."""
+    try:
+        return terminal_capture.merge_targets(
+            terminal_capture.setting_targets(
+                [r["fix_unit"]["apply"]["param"] for r in results if not is_object(r) and not is_catalog(r)]
+                + [c["param"] for r in results if is_catalog(r) for c in r["fix_unit"]["changes"]]),
+            terminal_capture.object_targets([r["proposal"] for r in results if is_object(r)]))
+    except Exception:
+        return None
+
+
 def run_batch(requests, service, requested_order=None):
     if not 2 <= len(requests) <= 6:
         raise ContractError("Select between two and six distinct fixes")
@@ -257,6 +272,9 @@ def run_batch(requests, service, requested_order=None):
     plan = (reconstruction_plan(first.snapshot, engine.specs, list(dict.fromkeys(extra))) if extra
             else reconstruction_plan(first.snapshot, engine.specs))
     record = {"status": "FAILED", "steps": [], "rollback": [], "run_id": runtime.run_id}
+    # Task 2: three terminal screenshots for the whole combined test (no-op unless terminal mode).
+    terminal_capture.begin(record)
+    shots = _combined_targets(results) if "terminal_evidence" in record else None
     applied = []
     objects = [r for r in results if is_object(r)]
     fixes = _object_fixes() if objects else None
@@ -291,6 +309,7 @@ def run_batch(requests, service, requested_order=None):
             if (not fixes.prior_holds(proposal, before) or fixes.predicate(proposal, before)
                     or fixes.object_signature(proposal, before) != result["source_object_signature"]):
                 raise ContractError("Combined stand-in does not reproduce " + proposal["fix_id"])
+        terminal_capture.stage(record, runtime, "before", shots, "combined")
         previous = before
         for result in results:
             # Mark before SQL so a partial apply is also rolled back.
@@ -358,6 +377,7 @@ def run_batch(requests, service, requested_order=None):
                 }
             )
             previous = after
+        terminal_capture.stage(record, runtime, "after", shots, "combined")
         record["status"] = "VERIFIED"
     except Exception as exc:
         record["reason"] = str(exc)
@@ -413,9 +433,12 @@ def run_batch(requests, service, requested_order=None):
                 )
                 if not ok:
                     raise ContractError("Combined exact rollback failed")
+            if applied:
+                terminal_capture.stage(record, runtime, "rollback", shots, "combined")
         except Exception as exc:
             record.update(status="FAILED", rollback_error=str(exc))
         finally:
+            terminal_capture.finish(record)
             try:
                 record["cleanup"] = runtime.close()
             except Exception:
@@ -501,7 +524,10 @@ def run_batch(requests, service, requested_order=None):
         members["manifest.json"] = json.dumps(manifest, indent=2).encode()
         prefix = result["fix_unit"]["fix_id"] + "/"
         files.update({prefix + k: v for k, v in members.items()})
-    files["combined-evidence.json"] = json.dumps(output, indent=2).encode()
+    # Review N9: the combined stage PNGs are bundle members; keep names and hashes, not base64.
+    bundled_output = copy.deepcopy(output)
+    strip_screenshot_data(bundled_output["combined_test"].get("terminal_evidence"), "combined-")
+    files["combined-evidence.json"] = json.dumps(bundled_output, indent=2).encode()
     # The per-fix files carry the scope line; repeat it on the combined front page.
     scope = ("DEMO FIXTURE APPROVAL — not human approval\n" if output.get("demo_fixture_approval")
              else "")
@@ -535,6 +561,19 @@ def run_batch(requests, service, requested_order=None):
         )
         + "</ol><p>Apply one fix at a time; verify each. Rollback must follow reverse order. Review combined-evidence.json for combined test evidence.</p></body></html>"
     ).encode()
+    # Task 2: the combined test's three stage screenshots, checked against their sha256 and,
+    # when present, listed in a top-level manifest beside the combined evidence.
+    shot_files, shot_html, shot_text = stage_screenshots(record.get("terminal_evidence"), "combined-")
+    if shot_files:
+        files["README.txt"] += shot_text.encode()
+        files["report.html"] = files["report.html"].decode().replace("</body>", shot_html + "</body>", 1).encode()
+        files.update(shot_files)
+        files["manifest.json"] = json.dumps({
+            "schema_version": "review-bundle-v1", "run_id": output["run_id"],
+            "demo_fixture_approval": output["demo_fixture_approval"], "requires_dba_review": True,
+            "snapshot_hash": output["snapshot_hash"], "spec_set_hash": engine.spec_set_hash,
+            "files": {name: hashlib.sha256(files[name]).hexdigest()
+                      for name in ("combined-evidence.json", "report.html", *shot_files)}}, indent=2).encode()
     data = io.BytesIO()
     with zipfile.ZipFile(data, "w", zipfile.ZIP_DEFLATED) as z:
         for name, content in files.items():

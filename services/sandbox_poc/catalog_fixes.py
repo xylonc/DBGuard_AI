@@ -636,6 +636,10 @@ class CatalogFixLoop:
             record = {"attempt": len(state["attempts"]) + 1, "run_id": runtime.run_id, "status": "FAILED",
                       "phase": "create", "rollback_verified": False, "template": self.template.identity(),
                       "fix_unit_hash": digest(fix), "rendered_apply_sql": "\n".join(rendered)}
+            # Task 2: terminal screenshots of each changed setting (no-op unless terminal mode).
+            from . import terminal_capture
+            terminal_capture.begin(record)
+            shots = terminal_capture.setting_targets([c["param"] for c in fix["changes"]])
             terminal, start_error = False, None
             try:
                 runtime.start()
@@ -656,6 +660,7 @@ class CatalogFixLoop:
                     raise ContractError("The sandbox did not reproduce the source FAIL for this check")
                 if scope["tls"]:
                     record["tls_before"] = tls_evidence(runtime)
+                terminal_capture.stage(record, runtime, "before", shots)
                 record["phase"] = "apply"
                 try:
                     for sql in rendered:
@@ -687,6 +692,7 @@ class CatalogFixLoop:
                             or not record["health_after_apply"] or not record["functional_checks"]["passed"]
                             or (scope["tls"] and not tls_fixed(record["tls_after"]))):
                         raise RuntimeError("Fix failed acceptance: catalog check/regression/health/TLS")
+                    terminal_capture.stage(record, runtime, "after", shots)
                 except SandboxStartError as exc:
                     start_error = exc
                     record["apply_or_assessment_error"] = f"SandboxStartError: {exc}"
@@ -720,6 +726,7 @@ class CatalogFixLoop:
                             and not blocking_gaps(restored) and record["health_after_rollback"])
                         if not record["rollback_verified"]:
                             raise RuntimeError("Exact rollback verification failed")
+                        terminal_capture.stage(record, runtime, "rollback", shots)
                 record.update(status="VERIFIED", phase="complete")
             except SandboxStartError as exc:
                 # Deterministic (e.g. a library missing from the image): retrying cannot help.
@@ -731,6 +738,7 @@ class CatalogFixLoop:
             except Exception as exc:
                 record["error"] = f"{type(exc).__name__}: {exc}"
             finally:
+                terminal_capture.finish(record)
                 try:
                     record["cleanup"] = runtime.close()
                     if record["cleanup"].get("verified") is not True:

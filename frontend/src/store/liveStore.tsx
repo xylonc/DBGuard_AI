@@ -59,6 +59,8 @@ type LiveState = {
   demo: any
   handoffId: string
   result: any
+  // True when the result was restored from an earlier test, not run now.
+  resultRestored: boolean
   // Latest combined (multi-fix) test, tied to the snapshot and benchmark it ran on.
   batch: {
     snapshot_id: string
@@ -94,6 +96,7 @@ const fresh = (): LiveState => ({
   demo: null,
   handoffId: "",
   result: null,
+  resultRestored: false,
   batch: null,
   benchmark: "cis-pg17-v1.1.0",
   environment: "test",
@@ -150,6 +153,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       patch({ busy: "" })
     }
   }
+  // A result is "restored" only when it is a different run from the one on
+  // screen; the background refresh re-reading the same run keeps its label.
+  function restoredFlag(s: any, incoming: any): boolean {
+    const id = incoming?.run_id
+    return !(id && s.result?.run_id === id) || !!s.resultRestored
+  }
   async function sync() {
     const s = current.current
     const gen = generation.current
@@ -162,6 +171,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           snapshot: null,
           assessment: null,
           result: null,
+          resultRestored: false,
           batch: null,
           handoffId: "",
           verification: null,
@@ -171,7 +181,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       }
       patch({
         demo: context.workflow,
-        ...(context.last_result ? { result: context.last_result } : {}),
+        ...(context.last_result
+          ? {
+              result: context.last_result,
+              resultRestored: restoredFlag(s, context.last_result),
+            }
+          : {}),
       })
     } else if (!s.handoffId && s.snapshot) {
       const record = await api(
@@ -179,7 +194,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         `/api/v1/snapshots/${encodeURIComponent(s.snapshot.snapshot_id)}/runs?benchmark_id=${encodeURIComponent(s.benchmark)}`,
       )
       if (gen === generation.current && record.result)
-        patch({ result: record.result })
+        patch({
+          result: record.result,
+          resultRestored: restoredFlag(s, record.result),
+        })
     } else if (s.handoffId) {
       const h = await api(
         "main",
@@ -193,7 +211,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           ? await api("main", `/api/v1/history/${h.result.run_id}`)
           : null
         if (gen === generation.current)
-          patch({ result: detail?.result ?? h.result ?? null })
+          patch({
+            result: detail?.result ?? h.result ?? null,
+            resultRestored: restoredFlag(s, detail?.result ?? h.result),
+          })
       }
     }
   }
@@ -223,6 +244,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         templateVersion: d.template_version,
         retryMode: d.retry_mode,
         result: context.last_result,
+        resultRestored: !!context.last_result,
         handoffId: "",
         verification: null,
         messages: [],
@@ -241,6 +263,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         snapshot,
         assessment: null,
         result: null,
+        resultRestored: false,
         batch: null,
         handoffId: "",
         verification: null,
@@ -264,6 +287,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         snapshot,
         assessment: null,
         result: null,
+        resultRestored: false,
         batch: null,
         handoffId: "",
         verification: null,
@@ -292,6 +316,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       policyProfile: profile,
       assessment: null,
       result: null,
+      resultRestored: false,
       batch: null,
       handoffId: "",
       verification: null,
@@ -366,7 +391,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         `/api/v1/sandbox/handoffs/${id}/run`,
         {},
       )
-      patch({ result })
+      patch({ result, resultRestored: false })
     })
   }
   async function send(content: string) {
@@ -467,6 +492,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         ? { assessment: null, policyProfile: null }
         : {}),
       result: null,
+      resultRestored: false,
       batch: null,
       handoffId: "",
       verification: null,

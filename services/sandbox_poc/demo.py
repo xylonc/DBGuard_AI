@@ -19,7 +19,7 @@ from .shared import ContractError
 from .handoff import LIST_TEMPLATE_NAME, OBJECT_TEMPLATE_NAMES
 
 import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -250,6 +250,25 @@ def create_app(resource_factory=DemoResources, *, reviser=None, public_url="http
             return app.state.store.context(snapshot_id)
         except SnapshotNotFoundError as exc:
             raise HTTPException(404, "Snapshot not found") from exc
+
+    # The demo has no approved knowledge library or template registry to search.
+    # Answer honestly with no results (never 404, never fixture references), so
+    # HERMES reports "no approved guidance" instead of a failed search. The query
+    # is not echoed back.
+    NO_GUIDANCE = ("No approved guidance in this demo: the disposable demo has no "
+                   "approved knowledge library. Answer from the assessment evidence "
+                   "and say no approved guidance was found.")
+    NO_TEMPLATES = ("No approved templates to search in this demo. Demo fixture "
+                    "references come only from get_demo_workflow_context and are "
+                    "DEMO_FIXTURE_ONLY, not human approval.")
+
+    @app.get("/api/v1/knowledge/search")
+    def demo_knowledge_search(search_query: str = Query(min_length=1)):
+        return {"status": "ok", "results": [], "message": NO_GUIDANCE}
+
+    @app.get("/api/v1/templates/search")
+    def demo_template_search(search_query: str = Query(min_length=1)):
+        return {"status": "ok", "results": [], "message": NO_TEMPLATES}
 
     @app.get("/api/v1/demo/workflow")
     def demo_workflow():
